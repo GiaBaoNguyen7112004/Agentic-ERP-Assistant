@@ -15,6 +15,14 @@ from agentic_erp_assistant.llm.ports import (
     TransientProviderError,
     Usage,
 )
+from agentic_erp_assistant.llm.pricing import (
+    MODEL_RATES,
+    ModelRate,
+    PRICING_CHECKED_ON,
+    PRICING_SOURCE,
+    UnknownModelRateError,
+    estimate_cost_usd,
+)
 from agentic_erp_assistant.llm.prompts import (
     DEVELOPER_CONTRACT,
     NO_EVIDENCE,
@@ -47,13 +55,18 @@ __all__ = [
     "count_message_tokens",
     "count_tokens",
     "DEVELOPER_CONTRACT",
+    "estimate_cost_usd",
     "EvidenceSnippet",
     "FALLBACK_ENCODING",
     "GroundedAnswer",
     "LargeLanguageModelClient",
     "LLMClientError",
     "Message",
+    "MODEL_RATES",
+    "ModelRate",
     "NO_EVIDENCE",
+    "PRICING_CHECKED_ON",
+    "PRICING_SOURCE",
     "ProviderAuthError",
     "Role",
     "Route",
@@ -61,5 +74,6 @@ __all__ = [
     "TiktokenCounter",
     "TokenCounter",
     "TransientProviderError",
+    "UnknownModelRateError",
     "Usage",
 ]
