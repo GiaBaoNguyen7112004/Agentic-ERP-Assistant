@@ -29,6 +29,13 @@ from agentic_erp_assistant.llm.schemas import (
     GroundedAnswer,
     Route,
 )
+from agentic_erp_assistant.llm.tokenizer import (
+    FALLBACK_ENCODING,
+    TiktokenCounter,
+    TokenCounter,
+    count_message_tokens,
+    count_tokens,
+)
 
 __all__ = [
     "ApprovalRequest",
@@ -37,8 +44,11 @@ __all__ = [
     "ClassifiedIntent",
     "ClientConfigurationError",
     "CompletionResponse",
+    "count_message_tokens",
+    "count_tokens",
     "DEVELOPER_CONTRACT",
     "EvidenceSnippet",
+    "FALLBACK_ENCODING",
     "GroundedAnswer",
     "LargeLanguageModelClient",
     "LLMClientError",
@@ -48,6 +58,8 @@ __all__ = [
     "Role",
     "Route",
     "SYSTEM_POLICY",
+    "TiktokenCounter",
+    "TokenCounter",
     "TransientProviderError",
     "Usage",
 ]
