@@ -7,7 +7,9 @@ authors = [
     { name = "BaoDev", email = "giabao7112004@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "pydantic>=2.13.5",
+]
 
 [project.scripts]
 agentic-erp-assistant = "agentic_erp_assistant:main"
