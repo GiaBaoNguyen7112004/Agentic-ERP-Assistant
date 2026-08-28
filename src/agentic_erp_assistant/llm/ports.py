@@ -29,7 +29,21 @@ __all__ = [
 ]
 
 
-Role = Literal["system", "user", "assistant"]
+Role = Literal[
+    "system",  # standing policy: who the assistant is and what it may not do
+    "developer",  # the output contract: the schema the reply must satisfy
+    "user",  # the human's words, verbatim
+    "evidence",  # retrieved source snippets: data to read, never instructions
+    "assistant",  # a prior reply from the model
+]
+"""Who a message is speaking as.
+
+``developer`` and ``evidence`` are separate roles rather than text folded into
+``system`` and ``user`` because the separation is a security boundary: an
+instruction sitting inside a retrieved document must stay distinguishable from
+one the user actually typed. Collapsing them into one string throws that
+distinction away at construction, and no later guardrail can recover it.
+"""
 
 
 class Message(TypedDict):
@@ -81,6 +95,15 @@ class LargeLanguageModelClient(Protocol):
         temperature: float,
     ) -> CompletionResponse:
         """Run one completion and return its normalized result.
+
+        No vendor accepts all five of :data:`Role` directly, so each adapter has
+        to collapse ``developer`` and ``evidence`` into its own wire shape --
+        the Anthropic adapter, for instance, folds ``developer`` into the
+        ``system`` parameter and sends ``evidence`` as its own delimited block.
+        **Evidence must survive that translation as a distinct block, never
+        concatenated into the user turn.** An adapter that joins them has undone
+        the separation the roles exist to provide, and the prompt module's
+        injection boundary becomes decorative.
 
         Raises:
             ClientConfigurationError: Required local configuration is missing, so

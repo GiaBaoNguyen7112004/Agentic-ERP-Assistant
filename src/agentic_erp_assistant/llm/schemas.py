@@ -24,12 +24,13 @@ type system.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "ApprovalRequest",
     "Citation",
     "ClassifiedIntent",
+    "EvidenceSnippet",
     "GroundedAnswer",
     "Route",
 ]
@@ -81,6 +82,47 @@ class Citation(_Contract):
 
     quote: str | None = None
     """The supporting span, when the retriever can supply one."""
+
+
+_FORBIDDEN_IN_TAG = frozenset("[]#\n\r")
+
+
+class EvidenceSnippet(_Contract):
+    """One retrieved passage, on its way *into* a prompt.
+
+    Deliberately a different type from :class:`Citation`, which travels the other
+    way. They share only the identifier, and that is the point: keeping them
+    distinct is what turns "did the model cite something we actually gave it?"
+    into a question code can answer rather than a hope.
+    """
+
+    source_id: str = Field(min_length=1)
+    """The document this passage came from."""
+
+    locator: str = Field(min_length=1)
+    """Where inside it -- the same opaque form :class:`Citation` uses."""
+
+    text: str = Field(min_length=1)
+    """The passage itself. Read by the model as data, never as an instruction."""
+
+    @property
+    def tag(self) -> str:
+        """The exact token the model is told to cite, e.g. ``[doc-12#3.2]``."""
+        return f"[{self.source_id}#{self.locator}]"
+
+    @field_validator("source_id", "locator")
+    @classmethod
+    def _must_not_forge_a_tag(cls, value: str) -> str:
+        """Reject the characters that build a tag.
+
+        A security check, not tidiness. ``source_id`` and ``locator`` can arrive
+        from a retrieved document, so if they may contain ``[``, ``]``, ``#`` or
+        a newline then that document controls part of the rendered tag and can
+        manufacture a reference to a source that does not exist.
+        """
+        if _FORBIDDEN_IN_TAG & set(value):
+            raise ValueError("must not contain '[', ']', '#', or a line break")
+        return value
 
 
 class GroundedAnswer(_Contract):
