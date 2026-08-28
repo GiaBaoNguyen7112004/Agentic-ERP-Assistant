@@ -100,6 +100,62 @@ Design rules:
 - If work is a team submission, keep the contribution map current (owner per component,
   tests, evidence).
 
+## Finishing a change
+
+Do not report a task done until both steps below have actually run and passed. If a step
+fails, fix it — reporting a green result you did not observe is worse than reporting a
+red one.
+
+### 1. Verify it builds — backend *and* frontend
+
+Backend (Python has no build step, so force the equivalent):
+
+```bash
+uv run python -m compileall -q src   # syntax errors anywhere in the package
+uv run python -c "import agentic_erp_assistant"   # import-time errors
+uv run pytest -q                     # once tests exist
+```
+
+Add `uv run mypy src` / `uv run ruff check src` to this list as soon as those tools are
+installed, and update this file when they are.
+
+Frontend — the exact command depends on the web stack (see Open decisions); use whichever
+applies and record the real command here once the stack lands:
+
+```bash
+npm run build          # or: npx tsc --noEmit   (bundled/TypeScript UI)
+```
+
+If the UI stays dependency-free browser JS with no build step, the check is: start the
+server, load the chat page, and confirm the browser console is free of errors and a
+message round-trips. A UI that was never loaded has not been verified.
+
+### 2. Commit the step
+
+Commit at every meaningful step — a component finished, a bug fixed, a decision made —
+not once at the end of a long session. These commits are the project's readable history:
+a later session reads `git log` to recover what was built and why, so the message must
+carry the reasoning that is not visible in the diff.
+
+```
+<area>: <what changed, imperative, one line>
+
+Why this approach and what was rejected. Constraints honored (typed port,
+approval gating, trace coverage). Anything deliberately left for later.
+
+Co-Authored-By: Claude <noreply@anthropic.com>
+```
+
+Rules:
+
+- One logical change per commit; do not mix a refactor with a feature.
+- `<area>` matches a module directory (`runtime:`, `rag:`, `tools:`, `web:`, `eval:`).
+- Never commit with failing checks, and never use `--no-verify`.
+- Work on `dev` or a feature branch, never directly on `main`.
+- Standing authorization: committing at these checkpoints is expected and does not need
+  to be asked about each time. Pushing, force-pushing, opening PRs, and rewriting history
+  still require an explicit request.
+
 ## Open decisions
 
 Not yet chosen; ask before assuming, and update this file once settled.
