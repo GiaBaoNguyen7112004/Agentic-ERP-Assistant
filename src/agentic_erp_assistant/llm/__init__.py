@@ -1,16 +1,11 @@
-"""LLM access: the typed provider port, its adapters, and its response contracts.
+"""LLM access: the typed provider port, its response contracts, and its policies.
 
-Import the port, the schemas and the prompt builder from here; provider SDKs stay
-behind the adapter modules.
+Everything exported here is provider-neutral, and importing this package pulls in
+no HTTP client and no vendor dependency. The adapters live one level down, in
+``llm.adapters``, and are imported by name at the construction site -- see
+:mod:`agentic_erp_assistant.llm.adapters` for why they are not re-exported here.
 """
 
-from agentic_erp_assistant.llm.client import (
-    DEFAULT_BASE_URL,
-    DEFAULT_TIMEOUT,
-    EVIDENCE_PREAMBLE,
-    OpenAIChatClient,
-    RESPONSE_FORMAT_NAME,
-)
 from agentic_erp_assistant.llm.ports import (
     ClientConfigurationError,
     CompletionResponse,
@@ -62,11 +57,8 @@ __all__ = [
     "CompletionResponse",
     "count_message_tokens",
     "count_tokens",
-    "DEFAULT_BASE_URL",
-    "DEFAULT_TIMEOUT",
     "DEVELOPER_CONTRACT",
     "estimate_cost_usd",
-    "EVIDENCE_PREAMBLE",
     "EvidenceSnippet",
     "FALLBACK_ENCODING",
     "GroundedAnswer",
@@ -76,11 +68,9 @@ __all__ = [
     "MODEL_RATES",
     "ModelRate",
     "NO_EVIDENCE",
-    "OpenAIChatClient",
     "PRICING_CHECKED_ON",
     "PRICING_SOURCE",
     "ProviderAuthError",
-    "RESPONSE_FORMAT_NAME",
     "retry_with_backoff",
     "Role",
     "Route",

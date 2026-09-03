@@ -58,7 +58,8 @@ src/agentic_erp_assistant/
   state/       the reasoning state model (typed, serializable, versioned)
   memory/      short-term + adaptive long-term memory, promotion/eviction policy
   context/     context construction: what gets into the prompt and why
-  llm/         provider port (protocol) + adapters; streaming; token accounting
+  llm/         provider port (protocol), contracts, prompts, tokens, retry policy
+  llm/adapters/  vendor adapters (openai_chat.py); the only place a provider is named
   rag/         ingestion, chunking, index, retrieval, citation objects
   tools/       MCP-style tool boundary: typed schemas, router, approval gating
   erp/         optional ERP provider plugin over mock project data
@@ -164,7 +165,7 @@ Not yet chosen; ask before assuming, and update this file once settled.
   Python framework serving SSE plus a dependency-free browser UI, matching the
   Python-only repo — confirm before scaffolding.
 - ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
-  `llm/client.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
+  `llm/adapters/openai_chat.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
   repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
   also needs a reviewed row in `llm/pricing.py`. Routing policy behind the port is still
   open.

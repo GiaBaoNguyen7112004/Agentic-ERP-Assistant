@@ -1,11 +1,13 @@
 """The one place a real network call to a model provider is made.
 
-Everything else in ``llm/`` is provider-neutral: ``ports.py`` says what a client
-must offer, ``schemas.py`` says what an answer must look like, ``prompts.py``
-says how a request is assembled. This module is the adapter that turns those
-into an OpenAI Chat Completions request and turns the reply -- or the failure --
-back into port types. It is the only module in the package allowed to know that
-the provider is OpenAI, and the only one that imports an HTTP client.
+Everything directly under ``llm/`` is provider-neutral: ``ports.py`` says what a
+client must offer, ``schemas.py`` says what an answer must look like,
+``prompts.py`` says how a request is assembled, ``retry.py`` says when a failure
+is worth another attempt. This module -- one level down, in ``llm/adapters/``,
+which nothing in the core imports -- turns those into an OpenAI Chat Completions
+request and turns the reply, or the failure, back into port types. It is the only
+module in the package allowed to know the provider is OpenAI, and the only one
+that opens an HTTP connection.
 
 Three decisions worth defending:
 

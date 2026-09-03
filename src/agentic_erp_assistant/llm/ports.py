@@ -1,8 +1,9 @@
 """The typed provider port: the contract every real LLM call goes through.
 
-Nothing in this module may import a provider SDK. Adapters (``llm/anthropic.py``
-and friends) translate their vendor's request/response/exception shapes into the
-types declared here, so the runtime depends on this file and never on a vendor.
+Nothing in this module may import a provider SDK. Adapters (``llm/adapters/``,
+e.g. ``openai_chat.py``) translate their vendor's request/response/exception
+shapes into the types declared here, so the runtime depends on this file and
+never on a vendor.
 
 Two things live here:
 

@@ -13,12 +13,14 @@ mode, and the construction-time configuration checks.
 
 import ast
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
 import pytest
 
-from agentic_erp_assistant.llm.client import (
+from agentic_erp_assistant.llm.adapters.openai_chat import (
     EVIDENCE_PREAMBLE,
     RESPONSE_FORMAT_NAME,
     OpenAIChatClient,
@@ -434,9 +436,9 @@ def test_the_environment_supplies_both_values(monkeypatch: pytest.MonkeyPatch) -
 
 def test_no_model_is_assumed_when_the_environment_is_empty() -> None:
     """There is no default model anywhere in the adapter, by design."""
-    source = Path("src/agentic_erp_assistant/llm/client.py").read_text(
-        encoding="utf-8"
-    )
+    source = Path(
+        "src/agentic_erp_assistant/llm/adapters/openai_chat.py"
+    ).read_text(encoding="utf-8")
     assert "gpt-" not in source
 
 
@@ -476,19 +478,18 @@ def test_an_injected_client_is_left_open_because_the_caller_owns_it() -> None:
     borrowed.close()
 
 
-def test_no_other_llm_module_reaches_for_the_network() -> None:
+def test_the_core_of_llm_never_imports_a_provider_dependency() -> None:
     """The adapter boundary, checked rather than trusted.
 
-    Constraint: no provider-specific dependency outside the adapter layer. An
-    ``httpx`` or ``dotenv`` import appearing in ports, schemas or prompts would
-    mean the boundary had quietly moved.
+    Every module directly under ``llm/`` is provider-neutral; the adapters live
+    in ``llm/adapters/``. There is no exception list here any more -- when the
+    adapter moved out of the core, the rule stopped needing one, which is the
+    sign the boundary became structural rather than a convention.
     """
     package = Path("src/agentic_erp_assistant/llm")
     offenders = []
 
     for module in sorted(package.glob("*.py")):
-        if module.name == "client.py":
-            continue
         tree = ast.parse(module.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -502,3 +503,26 @@ def test_no_other_llm_module_reaches_for_the_network() -> None:
                     offenders.append(f"{module.name}: {name}")
 
     assert offenders == []
+
+
+def test_importing_the_core_pulls_in_no_http_client() -> None:
+    """The re-export removal, proven in a clean interpreter.
+
+    While ``llm/__init__.py`` imported the adapter, every consumer of the port
+    loaded httpx and dotenv too -- a provider-neutral core that imports its
+    provider is neutral by convention only. A subprocess is the only honest way
+    to assert this: in-process, some other test has already imported httpx.
+    """
+    probe = (
+        "import sys, agentic_erp_assistant.llm as core; "
+        "leaked = sorted({'httpx', 'dotenv'} & set(sys.modules)); "
+        "print(leaked)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "[]", result.stdout

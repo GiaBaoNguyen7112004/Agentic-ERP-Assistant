@@ -13,7 +13,7 @@ the point. Nothing here should be able to reach the network even by accident.
 
 import pytest
 
-from agentic_erp_assistant.llm import client as client_module
+from agentic_erp_assistant.llm.adapters import openai_chat as adapter_module
 
 _OPENAI_VARIABLES = (
     "OPENAI_API_KEY",
@@ -26,7 +26,7 @@ _OPENAI_VARIABLES = (
 def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Unset the provider variables and neutralize ``.env`` loading."""
     monkeypatch.setattr(
-        client_module, "load_dotenv", lambda *args, **kwargs: False
+        adapter_module, "load_dotenv", lambda *args, **kwargs: False
     )
     for name in _OPENAI_VARIABLES:
         monkeypatch.delenv(name, raising=False)

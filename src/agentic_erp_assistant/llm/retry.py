@@ -1,6 +1,6 @@
 """Retry as a policy, not as a reflex.
 
-``client.py`` deliberately does not retry: it classifies a failure and returns.
+An adapter deliberately does not retry: it classifies a failure and returns.
 This module is the other half of that split -- it decides whether a failure is
 worth another attempt, and how long to wait first. Keeping them apart means the
 decision is in one readable place, with a budget, instead of being a
