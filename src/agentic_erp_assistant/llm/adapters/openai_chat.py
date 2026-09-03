@@ -30,6 +30,7 @@ Three decisions worth defending:
   that tells the layer above whether retrying is even meaningful.
 """
 
+import json
 import logging
 import os
 from collections.abc import Mapping, Sequence
@@ -49,6 +50,7 @@ from agentic_erp_assistant.llm.ports import (
     Usage,
 )
 from agentic_erp_assistant.llm.schemas import GroundedAnswer
+from agentic_erp_assistant.llm.tools import DEFAULT_TOOLS, ToolCallResult, ToolSpec
 
 __all__ = [
     "DEFAULT_BASE_URL",
@@ -236,9 +238,14 @@ class OpenAIChatClient:
         )
 
         self.last_usage: dict[str, Any] | None = None
-        """The provider's own ``usage`` object from the most recent successful
-        call, copied verbatim -- provider key names, provider numbers, including
-        any nested detail blocks. ``None`` before the first call.
+        """The provider's own ``usage`` object from the most recent call that
+        reported one, copied verbatim -- provider key names, provider numbers,
+        including any nested detail blocks. ``None`` before the first call.
+
+        Recorded as soon as the block is read, before the reply is judged
+        usable. A completion this adapter then rejects -- content filtered,
+        arguments unparseable -- was still generated and still billed, and a
+        budget record that quietly omitted it would understate the run.
 
         Verbatim because this is the invoice. ``tokenizer.py`` produces the
         estimate used to decide whether to send a request at all; this is what
@@ -298,12 +305,183 @@ class OpenAIChatClient:
                 rejection.
         """
         payload = self._build_payload(messages, temperature=temperature)
+        body, usage = self._send(payload)
 
+        choice = self._first_choice(body)
+        text = self._read_text(choice)
+        stop_reason = choice.get("finish_reason")
+
+        return {
+            "text": text,
+            # The served model, which can be more specific than the alias that
+            # was asked for (a dated snapshot behind a moving name). The trace
+            # wants what actually answered, falling back to what was requested.
+            "model": body.get("model") or self.model_name,
+            "stop_reason": stop_reason if isinstance(stop_reason, str) else None,
+            "usage": usage,
+        }
+
+    def call_with_tools(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[ToolSpec] = DEFAULT_TOOLS,
+        temperature: float = 0.0,
+    ) -> ToolCallResult:
+        """Offer the model a set of tools and report what it decided.
+
+        A different question from :meth:`complete`, so a different request. This
+        one carries no ``response_format``: asking for a routing decision and a
+        grounded answer in the same call would have the model satisfying two
+        contracts at once, and the one it dropped would be whichever we needed.
+
+        ``parallel_tool_calls`` is false. The reply is read as a single call,
+        and rather than take ``tool_calls[0]`` and quietly discard the rest, the
+        request makes more than one impossible. Approval routing depends on
+        knowing exactly what is about to run.
+
+        Args:
+            messages: Port-role messages, folded to the wire the same way.
+            tools: What to offer. Defaults to
+                :data:`~agentic_erp_assistant.llm.tools.DEFAULT_TOOLS`, so the
+                registry stays data in the core rather than a branch here.
+            temperature: Defaults to 0.0 -- a routing decision is not a place
+                for variety.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: either a
+            tool name with parsed arguments, or direct content. Never both; the
+            result type refuses to hold both.
+
+        Raises:
+            ValueError: ``tools`` is empty. Offering nothing while asking the
+                model to choose is a caller bug.
+            TransientProviderError: The transport failed, or the reply cannot be
+                read as a decision -- including tool arguments that are not
+                valid JSON, which a resample may well fix.
+            ProviderAuthError: A definitive rejection, as in :meth:`complete`.
+        """
+        if not tools:
+            raise ValueError("call_with_tools needs at least one tool to offer")
+
+        payload = {
+            "model": self.model_name,
+            "messages": [self._to_wire(message) for message in messages],
+            "temperature": temperature,
+            "tools": [self._tool_payload(spec) for spec in tools],
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        }
+        body, _ = self._send(payload)
+        return self._read_decision(self._first_choice(body))
+
+    @staticmethod
+    def _tool_payload(spec: ToolSpec) -> dict[str, Any]:
+        """Render one neutral :class:`ToolSpec` into the OpenAI function shape.
+
+        ``strict`` is true here, unlike ``response_format`` in
+        :meth:`_build_payload`. Not an inconsistency: ``ToolSpec`` refuses to be
+        built from a schema strict mode would reject, so the guarantee is
+        established at import. Strict is what stops the model returning an
+        argument nobody declared.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": spec.name,
+                "description": spec.description,
+                "parameters": spec.schema,
+                "strict": True,
+            },
+        }
+
+    def _read_decision(self, choice: Mapping[str, Any]) -> ToolCallResult:
+        """Read one choice as either a tool call or a direct answer."""
+        message = choice.get("message")
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+
+        if not isinstance(tool_calls, list) or not tool_calls:
+            # No call: the content is the answer, and a null one is still the
+            # failure _read_text describes rather than an empty reply.
+            return ToolCallResult.from_content(self._read_text(choice))
+
+        if len(tool_calls) > 1:
+            # parallel_tool_calls is off, so this should be unreachable. If a
+            # provider does it anyway, say so loudly rather than dropping calls
+            # in silence -- the dropped one might have been the mutating one.
+            logger.warning(
+                "%s returned %d tool calls despite parallel_tool_calls=false; "
+                "using the first",
+                self.model_name,
+                len(tool_calls),
+            )
+
+        call = tool_calls[0]
+        function = call.get("function") if isinstance(call, dict) else None
+        if not isinstance(function, dict):
+            raise TransientProviderError(
+                f"unreadable tool call from {self.model_name}: {call!r}"
+            )
+
+        name = function.get("name")
+        raw_arguments = function.get("arguments")
+        if not isinstance(name, str) or not name.strip():
+            raise TransientProviderError(
+                f"tool call from {self.model_name} has no name: {function!r}"
+            )
+        if not isinstance(raw_arguments, str):
+            raise TransientProviderError(
+                f"tool call {name!r} from {self.model_name} has no arguments "
+                f"string: {function!r}"
+            )
+
+        # The API sends arguments as a JSON *string*, not a nested object. A
+        # caller that forgets is handed a str where it expects a mapping, and
+        # finds out on the first real conversation that exercises the tool.
+        try:
+            arguments = json.loads(raw_arguments)
+        except ValueError as error:
+            # Generation-level garbage rather than a broken contract: another
+            # sample may well be valid JSON, so this is the retryable type.
+            # Arguments that parse but violate the declared schema are a
+            # different failure -- see ToolSpec.validate_arguments.
+            raise TransientProviderError(
+                f"tool call {name!r} from {self.model_name} carried "
+                f"unparseable arguments: {error!r}"
+            ) from error
+
+        if not isinstance(arguments, dict):
+            raise TransientProviderError(
+                f"tool call {name!r} from {self.model_name} carried "
+                f"{type(arguments).__name__} arguments, expected an object"
+            )
+
+        if isinstance(message, dict) and message.get("content"):
+            # Some models narrate alongside a call. The result type allows one
+            # outcome, and the call is the one with consequences.
+            logger.debug(
+                "dropping content returned alongside a tool call to %s", name
+            )
+
+        call_id = call.get("id")
+        return ToolCallResult.from_tool_call(
+            tool_name=name,
+            arguments=arguments,
+            tool_call_id=call_id if isinstance(call_id, str) else None,
+        )
+
+    def _send(self, payload: Mapping[str, Any]) -> tuple[dict[str, Any], Usage]:
+        """Do the round trip: send, classify the status, read the envelope.
+
+        Everything both request shapes share lives here, so a second endpoint
+        cannot accidentally grow its own error taxonomy or forget to record what
+        it spent.
+        """
         logger.debug(
-            "chat completion request: model=%s messages=%d temperature=%s",
+            "chat completion request: model=%s messages=%d tools=%d",
             self.model_name,
             len(payload["messages"]),
-            temperature,
+            len(payload.get("tools") or ()),
         )
 
         try:
@@ -324,7 +502,23 @@ class OpenAIChatClient:
             ) from error
 
         self._raise_for_status(response)
-        return self._parse(response)
+
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise TransientProviderError(
+                f"unreadable body from {self.model_name}: {error!r}"
+            ) from error
+
+        if not isinstance(body, dict):
+            raise TransientProviderError(
+                f"expected a JSON object from {self.model_name}, got "
+                f"{type(body).__name__}"
+            )
+
+        reported_usage, usage = self._read_usage(body)
+        self.last_usage = dict(reported_usage)
+        return body, usage
 
     def _build_payload(
         self,
@@ -405,47 +599,6 @@ class OpenAIChatClient:
             f"{response.status_code} from {self.model_name} "
             f"(request id: {request_id}): {body}"
         )
-
-    def _parse(self, response: httpx.Response) -> CompletionResponse:
-        """Read a 2xx body into a :class:`CompletionResponse`.
-
-        Every unreadable shape here becomes a
-        :class:`TransientProviderError`. That is a judgement call: a truncated or
-        empty body is a symptom of the connection rather than of the request, so
-        a later attempt is a reasonable thing for the runtime to try. What this
-        must never do is fill a gap with a plausible value -- an invented token
-        count, or an absent answer treated as an empty one -- because a
-        fabricated number in a budget record is worse than a failed call.
-        """
-        try:
-            body = response.json()
-        except ValueError as error:
-            raise TransientProviderError(
-                f"unreadable body from {self.model_name}: {error!r}"
-            ) from error
-
-        if not isinstance(body, dict):
-            raise TransientProviderError(
-                f"expected a JSON object from {self.model_name}, got "
-                f"{type(body).__name__}"
-            )
-
-        choice = self._first_choice(body)
-        text = self._read_text(choice)
-        reported_usage, usage = self._read_usage(body)
-
-        self.last_usage = dict(reported_usage)
-
-        stop_reason = choice.get("finish_reason")
-        return {
-            "text": text,
-            # The served model, which can be more specific than the alias that
-            # was asked for (a dated snapshot behind a moving name). The trace
-            # wants what actually answered, falling back to what was requested.
-            "model": body.get("model") or self.model_name,
-            "stop_reason": stop_reason if isinstance(stop_reason, str) else None,
-            "usage": usage,
-        }
 
     def _first_choice(self, body: Mapping[str, Any]) -> Mapping[str, Any]:
         """Return the single choice this client asked for."""

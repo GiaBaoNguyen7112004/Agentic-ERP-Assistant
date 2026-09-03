@@ -34,6 +34,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import build_messages
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
+from agentic_erp_assistant.llm.tools import GET_PROJECT_STATUS_TOOL, ToolSpec
 
 MODEL = "test-model-1"
 API_KEY = "sk-test-not-a-real-key"
@@ -526,3 +527,257 @@ def test_importing_the_core_pulls_in_no_http_client() -> None:
     )
 
     assert result.stdout.strip() == "[]", result.stdout
+
+
+# --------------------------------------------------------------------------
+# call_with_tools: real function calling
+# --------------------------------------------------------------------------
+
+
+def tool_call_body(
+    *,
+    arguments: str = '{"milestone_id": "M2"}',
+    name: str = "get_project_status",
+    content: str | None = None,
+    calls: int = 1,
+) -> dict:
+    """A reply in which the model chose a tool.
+
+    ``arguments`` is a *string*, as the real API sends it. Every test that
+    asserts a parsed dict is therefore asserting the parse actually happened.
+    """
+    return {
+        "id": "chatcmpl-test",
+        "model": MODEL,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": [
+                        {
+                            "id": f"call_{index}",
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments},
+                        }
+                        for index in range(calls)
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": USAGE,
+    }
+
+
+def test_call_with_tools_sends_the_declared_schema_as_a_function(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    tools = recorder.body["tools"]
+    assert len(tools) == 1
+    assert tools[0]["type"] == "function"
+    function = tools[0]["function"]
+    assert function["name"] == "get_project_status"
+    assert function["description"] == GET_PROJECT_STATUS_TOOL.description
+    assert function["parameters"] == GET_PROJECT_STATUS_TOOL.schema
+
+
+def test_call_with_tools_marks_the_function_strict(messages) -> None:
+    """Strict is what stops the model returning an argument nobody declared."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    function = recorder.body["tools"][0]["function"]
+    assert function["strict"] is True
+    assert function["parameters"]["additionalProperties"] is False
+    assert function["parameters"]["required"] == ["milestone_id"]
+
+
+def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    assert recorder.body["tool_choice"] == "auto"
+
+
+def test_call_with_tools_forbids_parallel_calls(messages) -> None:
+    """Reading tool_calls[0] is only honest if a second one cannot arrive."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    assert recorder.body["parallel_tool_calls"] is False
+
+
+def test_call_with_tools_sends_no_response_format(messages) -> None:
+    """A routing decision and a grounded answer are two different questions."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    assert "response_format" not in recorder.body
+
+
+def test_call_with_tools_folds_roles_the_same_way_complete_does(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+
+    wire = recorder.body["messages"]
+    assert [message["role"] for message in wire] == [
+        "system",
+        "developer",
+        "user",
+        "developer",
+    ]
+    assert wire[3]["content"].startswith(EVIDENCE_PREAMBLE)
+
+
+def test_call_with_tools_returns_the_tool_name_and_parsed_arguments() -> None:
+    """The unit's own example, end to end."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        result = client.call_with_tools(
+            [{"role": "user", "content": "What is the status of milestone M2?"}]
+        )
+
+    assert result.tool_name == "get_project_status"
+    assert result.arguments == {"milestone_id": "M2"}
+    assert result.content is None
+    assert result.tool_call_id == "call_0"
+
+
+def test_call_with_tools_parses_arguments_that_arrive_as_a_json_string(
+    messages,
+) -> None:
+    """The documented trap: the API sends a string, not a nested object."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_body(arguments='{"milestone_id": "M7"}'))
+    )
+    with make_client(recorder) as client:
+        result = client.call_with_tools(messages)
+
+    assert isinstance(result.arguments, dict)
+    assert result.arguments["milestone_id"] == "M7"
+
+
+def test_call_with_tools_returns_content_when_no_tool_applies(messages) -> None:
+    recorder = Recorder(
+        httpx.Response(200, json=success_body(content="Hello, I can help."))
+    )
+    with make_client(recorder) as client:
+        result = client.call_with_tools(messages)
+
+    assert result.content == "Hello, I can help."
+    assert result.tool_name is None
+    assert result.arguments is None
+
+
+def test_call_with_tools_treats_an_empty_call_list_as_content(messages) -> None:
+    body = success_body(content="Nothing to look up.")
+    body["choices"][0]["message"]["tool_calls"] = []
+    recorder = Recorder(httpx.Response(200, json=body))
+
+    with make_client(recorder) as client:
+        result = client.call_with_tools(messages)
+
+    assert result.content == "Nothing to look up."
+    assert result.tool_name is None
+
+
+def test_call_with_tools_prefers_the_call_when_content_arrives_too(messages) -> None:
+    """Some models narrate alongside a call; the call is the one with
+    consequences, and the result type refuses to hold both."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_body(content="Let me check that."))
+    )
+    with make_client(recorder) as client:
+        result = client.call_with_tools(messages)
+
+    assert result.tool_name == "get_project_status"
+    assert result.content is None
+
+
+def test_call_with_tools_uses_the_first_call_if_several_arrive(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body(calls=3)))
+    with make_client(recorder) as client:
+        result = client.call_with_tools(messages)
+
+    assert result.tool_call_id == "call_0"
+
+
+def test_call_with_tools_rejects_unparseable_arguments(messages) -> None:
+    """Generation-level garbage: a resample may be valid, so it is retryable."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_body(arguments='{"milestone_id": '))
+    )
+    with make_client(recorder) as client:
+        with pytest.raises(TransientProviderError, match="unparseable"):
+            client.call_with_tools(messages)
+
+
+def test_call_with_tools_rejects_arguments_that_are_not_an_object(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body(arguments='"M2"')))
+    with make_client(recorder) as client:
+        with pytest.raises(TransientProviderError):
+            client.call_with_tools(messages)
+
+
+def test_call_with_tools_rejects_a_nameless_call(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body(name="")))
+    with make_client(recorder) as client:
+        with pytest.raises(TransientProviderError):
+            client.call_with_tools(messages)
+
+
+def test_call_with_tools_records_the_provider_usage(messages) -> None:
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages)
+        assert client.last_usage == USAGE
+
+
+def test_call_with_tools_maps_failures_the_same_way_complete_does(messages) -> None:
+    recorder = Recorder(httpx.Response(429, json={"error": {"message": "slow down"}}))
+    with make_client(recorder) as client:
+        with pytest.raises(TransientProviderError):
+            client.call_with_tools(messages)
+
+    recorder = Recorder(httpx.Response(401, json={"error": {"message": "no"}}))
+    with make_client(recorder) as client:
+        with pytest.raises(ProviderAuthError):
+            client.call_with_tools(messages)
+
+
+def test_call_with_tools_needs_something_to_offer(messages) -> None:
+    recorder = Recorder()
+    with make_client(recorder) as client:
+        with pytest.raises(ValueError):
+            client.call_with_tools(messages, tools=[])
+
+    assert recorder.requests == []
+
+
+def test_call_with_tools_offers_exactly_the_tools_it_was_given(messages) -> None:
+    """The registry is data: offering a different set is an argument, not a
+    branch in the adapter."""
+    other = ToolSpec(
+        name="get_sprint_burndown",
+        description="Return the burndown series for one sprint. Read-only.",
+        arguments=GET_PROJECT_STATUS_TOOL.arguments,
+        mutating=False,
+    )
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+
+    with make_client(recorder) as client:
+        client.call_with_tools(messages, tools=[GET_PROJECT_STATUS_TOOL, other])
+
+    assert [tool["function"]["name"] for tool in recorder.body["tools"]] == [
+        "get_project_status",
+        "get_sprint_burndown",
+    ]
