@@ -4,6 +4,13 @@ Import the port, the schemas and the prompt builder from here; provider SDKs sta
 behind the adapter modules.
 """
 
+from agentic_erp_assistant.llm.client import (
+    DEFAULT_BASE_URL,
+    DEFAULT_TIMEOUT,
+    EVIDENCE_PREAMBLE,
+    OpenAIChatClient,
+    RESPONSE_FORMAT_NAME,
+)
 from agentic_erp_assistant.llm.ports import (
     ClientConfigurationError,
     CompletionResponse,
@@ -54,8 +61,11 @@ __all__ = [
     "CompletionResponse",
     "count_message_tokens",
     "count_tokens",
+    "DEFAULT_BASE_URL",
+    "DEFAULT_TIMEOUT",
     "DEVELOPER_CONTRACT",
     "estimate_cost_usd",
+    "EVIDENCE_PREAMBLE",
     "EvidenceSnippet",
     "FALLBACK_ENCODING",
     "GroundedAnswer",
@@ -65,9 +75,11 @@ __all__ = [
     "MODEL_RATES",
     "ModelRate",
     "NO_EVIDENCE",
+    "OpenAIChatClient",
     "PRICING_CHECKED_ON",
     "PRICING_SOURCE",
     "ProviderAuthError",
+    "RESPONSE_FORMAT_NAME",
     "Role",
     "Route",
     "SYSTEM_POLICY",

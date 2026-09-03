@@ -163,6 +163,10 @@ Not yet chosen; ask before assuming, and update this file once settled.
 - Web layer: no HTTP framework or JS tooling is present yet. Default suggestion is a
   Python framework serving SSE plus a dependency-free browser UI, matching the
   Python-only repo — confirm before scaffolding.
-- LLM provider(s) and routing policy behind the port.
+- ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
+  `llm/client.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
+  repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
+  also needs a reviewed row in `llm/pricing.py`. Routing policy behind the port is still
+  open.
 - Retrieval backend (embedding store vs. lexical vs. hybrid) and citation format.
 - Trace persistence (files vs. SQLite) and eval report format.
