@@ -36,6 +36,7 @@ from agentic_erp_assistant.llm.prompts import (
     SYSTEM_POLICY,
     build_messages,
 )
+from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import (
     ApprovalRequest,
     Citation,
@@ -80,6 +81,7 @@ __all__ = [
     "PRICING_SOURCE",
     "ProviderAuthError",
     "RESPONSE_FORMAT_NAME",
+    "retry_with_backoff",
     "Role",
     "Route",
     "SYSTEM_POLICY",
