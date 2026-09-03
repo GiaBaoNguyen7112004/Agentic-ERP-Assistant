@@ -27,6 +27,7 @@ __all__ = [
     "Role",
     "TransientProviderError",
     "Usage",
+    "UsageReporting",
 ]
 
 
@@ -115,6 +116,25 @@ class LargeLanguageModelClient(Protocol):
                 may survive (timeout, connection reset, 429, 5xx).
         """
         ...
+
+
+@runtime_checkable
+class UsageReporting(Protocol):
+    """A client that remembers what the provider said the last call cost.
+
+    Separate from :class:`LargeLanguageModelClient` because it is only needed on
+    one path. A successful call reports its usage in the response it returns; a
+    call that never produced a response -- retries exhausted, a reply rejected
+    before it was read -- reports nothing, and yet the attempts were billed.
+    A caller that wants to record that spend asks for this protocol and gets a
+    typed answer instead of reaching for ``getattr``.
+
+    Optional on purpose: a client that cannot report it is still a valid client.
+    """
+
+    last_usage: dict[str, object] | None
+    """The provider's own usage object from the most recent call that reported
+    one, in the provider's own key names. ``None`` before the first call."""
 
 
 class LLMClientError(Exception):
