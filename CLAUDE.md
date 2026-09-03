@@ -56,6 +56,8 @@ and keep the dependency direction pointing inward (runtime never imports the web
 src/agentic_erp_assistant/
   runtime/     graph engine, node contracts, typed state, transitions, retry
   state/       the reasoning state model (typed, serializable, versioned)
+  reasoning/   the decision layer: what to do next (route, tool, approval) and
+               why a turn failed -- typed fields, never prose
   memory/      short-term + adaptive long-term memory, promotion/eviction policy
   context/     context construction: what gets into the prompt and why
   llm/         provider port (protocol), contracts, prompts, tokens, retry,
