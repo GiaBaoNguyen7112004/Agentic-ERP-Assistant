@@ -58,7 +58,8 @@ src/agentic_erp_assistant/
   state/       the reasoning state model (typed, serializable, versioned)
   memory/      short-term + adaptive long-term memory, promotion/eviction policy
   context/     context construction: what gets into the prompt and why
-  llm/         provider port (protocol), contracts, prompts, tokens, retry policy
+  llm/         provider port (protocol), contracts, prompts, tokens, retry,
+               tool specs, cost telemetry, and the gateway that orders them
   llm/adapters/  vendor adapters (openai_chat.py); the only place a provider is named
   rag/         ingestion, chunking, index, retrieval, citation objects
   tools/       MCP-style tool boundary: typed schemas, router, approval gating

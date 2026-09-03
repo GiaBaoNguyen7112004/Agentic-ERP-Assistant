@@ -6,6 +6,12 @@ no HTTP client and no vendor dependency. The adapters live one level down, in
 :mod:`agentic_erp_assistant.llm.adapters` for why they are not re-exported here.
 """
 
+from agentic_erp_assistant.llm.gateway import (
+    ContextWindowExceeded,
+    Evidence,
+    LLMGateway,
+    WHOLE_DOCUMENT,
+)
 from agentic_erp_assistant.llm.ports import (
     ClientConfigurationError,
     CompletionResponse,
@@ -40,6 +46,12 @@ from agentic_erp_assistant.llm.schemas import (
     GroundedAnswer,
     Route,
 )
+from agentic_erp_assistant.llm.telemetry import (
+    InMemoryTelemetry,
+    ModelCallRecord,
+    Outcome,
+    TelemetrySink,
+)
 from agentic_erp_assistant.llm.tokenizer import (
     FALLBACK_ENCODING,
     TiktokenCounter,
@@ -63,21 +75,27 @@ __all__ = [
     "ClassifiedIntent",
     "ClientConfigurationError",
     "CompletionResponse",
+    "ContextWindowExceeded",
     "count_message_tokens",
     "count_tokens",
     "DEFAULT_TOOLS",
     "DEVELOPER_CONTRACT",
     "estimate_cost_usd",
+    "Evidence",
     "EvidenceSnippet",
     "FALLBACK_ENCODING",
     "GET_PROJECT_STATUS_TOOL",
     "GroundedAnswer",
+    "InMemoryTelemetry",
     "LargeLanguageModelClient",
+    "LLMGateway",
     "LLMClientError",
     "Message",
     "MODEL_RATES",
+    "ModelCallRecord",
     "ModelRate",
     "NO_EVIDENCE",
+    "Outcome",
     "PRICING_CHECKED_ON",
     "PRICING_SOURCE",
     "ProjectStatusArguments",
@@ -89,9 +107,12 @@ __all__ = [
     "SYSTEM_POLICY",
     "TiktokenCounter",
     "TokenCounter",
+    "TelemetrySink",
     "ToolCallResult",
     "ToolSpec",
     "TransientProviderError",
     "UnknownModelRateError",
+    "UsageReporting",
     "Usage",
+    "WHOLE_DOCUMENT",
 ]
