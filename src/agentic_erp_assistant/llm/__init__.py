@@ -41,10 +41,8 @@ from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import (
     ApprovalRequest,
     Citation,
-    ClassifiedIntent,
     EvidenceSnippet,
     GroundedAnswer,
-    Route,
 )
 from agentic_erp_assistant.llm.telemetry import (
     InMemoryTelemetry,
@@ -72,7 +70,6 @@ __all__ = [
     "ApprovalRequest",
     "build_messages",
     "Citation",
-    "ClassifiedIntent",
     "ClientConfigurationError",
     "CompletionResponse",
     "ContextWindowExceeded",
@@ -102,7 +99,6 @@ __all__ = [
     "ProviderAuthError",
     "retry_with_backoff",
     "Role",
-    "Route",
     "StrictArguments",
     "SYSTEM_POLICY",
     "TiktokenCounter",

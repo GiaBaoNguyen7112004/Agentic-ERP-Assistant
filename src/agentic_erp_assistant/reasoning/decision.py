@@ -7,28 +7,39 @@ that no branch is allowed to read. If a reviewer has to parse English to find ou
 whether a call needed approval, the approval rule is not enforced anywhere -- it
 is merely described.
 
-Two axes, deliberately not merged
----------------------------------
+Where each route actually comes from
+-------------------------------------
 
-:data:`~agentic_erp_assistant.llm.schemas.Route` already exists and answers a
-different question. It classifies *what the user asked for*
-(``document_question``, ``erp_read``, ``erp_write``, ``smalltalk``) and it
-travels on the wire as part of a provider response contract.
-:data:`DecisionRoute` names *what the runtime does next*. The mapping is
-usually::
+:data:`DecisionRoute` is not filled in from a model self-report of intent --
+there is no upstream classification step to trust for it. Each value is
+produced by a different, independently-checkable mechanism:
 
-    document_question -> retrieve_project_documents
-    erp_read          -> call_tool
-    erp_write         -> request_approval
+``call_tool`` and ``request_approval``
+    Read off a live decision: whether
+    :class:`~agentic_erp_assistant.llm.tools.ToolCallResult` names a tool, and
+    whether that tool's :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating`
+    flag is set. The model choosing to call a tool is itself the routing
+    signal (native function calling); ``mutating`` -- declared on the tool,
+    never guessed by the model -- is what decides which of the two routes it
+    becomes. Collapsing them would cost the distinction that matters most
+    here: under one label, a mutating call could no longer tell "this needs a
+    human" apart from "a human already approved it, now run the call".
 
-Collapsing the two would cost the distinction that matters most here: under one
-label, ``erp_write`` could no longer tell "this needs a human" apart from
-"a human already approved it, now run the call".
+``retrieve_project_documents``
+    Decided by context construction -- the question needs grounding -- and is
+    independent of any tool call.
 
-``smalltalk`` maps to none of the five, and that is not an oversight. Every
-:data:`DecisionRoute` names a *preparatory* action, and answering directly is
-the absence of one. A later unit may add an ``answer`` route; inventing one here
-would be adding a branch the runtime cannot yet dispatch.
+``clarify`` and ``refuse``
+    Guardrail outcomes: low confidence, budget overflow, insufficient
+    evidence -- the same signals :func:`classify_failure` takes as input.
+    Neither corresponds to a tool the model could have called, which is
+    exactly why they carry no ``required_tool``.
+
+Answering directly (no retrieval, no tool) maps to none of the five, and that
+is not an oversight. Every :data:`DecisionRoute` names a *preparatory* action,
+and answering directly is the absence of one. A later unit may add an
+``answer`` route; inventing one here would be adding a branch the runtime
+cannot yet dispatch.
 
 What this module deliberately does not check
 --------------------------------------------
@@ -63,8 +74,8 @@ DecisionRoute = Literal[
 ]
 """The actions the runtime knows how to take next.
 
-A closed set, for the reason ``Route`` is closed: an action nobody can dispatch
-has to fail here, at the decision, rather than later as a missing branch.
+A closed set: an action nobody can dispatch has to fail here, at the
+decision, rather than later as a missing branch.
 """
 
 

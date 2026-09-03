@@ -22,47 +22,20 @@ output requires, and because an unmodelled field is behavior smuggled past the
 type system.
 """
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 __all__ = [
     "ApprovalRequest",
     "Citation",
-    "ClassifiedIntent",
     "EvidenceSnippet",
     "GroundedAnswer",
-    "Route",
 ]
-
-
-Route = Literal[
-    "document_question",  # retrieve, then answer with citations
-    "erp_read",  # a non-mutating ERP tool call
-    "erp_write",  # a mutating tool call -- routed through ApprovalRequest
-    "smalltalk",  # answer directly, no retrieval and no tools
-]
-"""The branches the runtime knows how to dispatch.
-
-A closed set, because routing is data: an unroutable label has to fail here, at
-classification, and not later as a missing branch at dispatch time.
-"""
 
 
 class _Contract(BaseModel):
     """Shared configuration for every response contract in this module."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-
-
-class ClassifiedIntent(_Contract):
-    """What the router decided a request is, and how sure it was."""
-
-    route: Route
-    """The branch to take. Constrained to :data:`Route`, never a free string."""
-
-    confidence: float = Field(ge=0.0, le=1.0)
-    """0.0-1.0. A low value is a signal to escalate, not a licence to guess."""
 
 
 class Citation(_Contract):

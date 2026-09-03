@@ -11,7 +11,6 @@ from pydantic import ValidationError
 from agentic_erp_assistant.llm.schemas import (
     ApprovalRequest,
     Citation,
-    ClassifiedIntent,
     GroundedAnswer,
 )
 
@@ -76,31 +75,12 @@ def test_a_validated_answer_cannot_be_edited_afterwards() -> None:
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
 def test_confidence_outside_zero_to_one_is_rejected(confidence: float) -> None:
     with pytest.raises(ValidationError):
-        ClassifiedIntent(route="erp_read", confidence=confidence)
-    with pytest.raises(ValidationError):
         GroundedAnswer(
             answer="ok",
             citations=[A_CITATION],
             grounded=True,
             confidence=confidence,
         )
-
-
-def test_an_unroutable_label_is_rejected_at_classification() -> None:
-    with pytest.raises(ValidationError):
-        ClassifiedIntent(route="delete_everything", confidence=1.0)  # type: ignore[arg-type]
-
-
-@pytest.mark.parametrize(
-    "route", ["document_question", "erp_read", "erp_write", "smalltalk"]
-)
-def test_every_declared_route_is_accepted(route: str) -> None:
-    assert ClassifiedIntent(route=route, confidence=0.7).route == route  # type: ignore[arg-type]
-
-
-def test_an_unmodelled_field_is_refused_rather_than_ignored() -> None:
-    with pytest.raises(ValidationError):
-        ClassifiedIntent(route="smalltalk", confidence=1.0, tool_name="x")  # type: ignore[call-arg]
 
 
 def test_a_citation_must_actually_point_somewhere() -> None:
@@ -134,9 +114,7 @@ def test_a_well_formed_approval_request_constructs() -> None:
     assert request.tool_name == "erp.update_sprint"
 
 
-@pytest.mark.parametrize(
-    "model", [ClassifiedIntent, Citation, GroundedAnswer, ApprovalRequest]
-)
+@pytest.mark.parametrize("model", [Citation, GroundedAnswer, ApprovalRequest])
 def test_the_emitted_schema_is_usable_as_a_provider_response_format(model) -> None:
     """Structured output requires additionalProperties: false on every object."""
     assert model.model_json_schema()["additionalProperties"] is False
