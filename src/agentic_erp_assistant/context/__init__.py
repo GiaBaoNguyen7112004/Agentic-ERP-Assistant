@@ -15,12 +15,28 @@ from agentic_erp_assistant.context.builder import (
     ExclusionReason,
 )
 from agentic_erp_assistant.context.candidate import CandidateKind, ContextCandidate
+from agentic_erp_assistant.context.compact import (
+    CompactedConversation,
+    compact_conversation,
+    PRESERVED_FIELDS,
+    structural_summary,
+    SUMMARY_MAX_CHARS,
+    SUMMARY_UNAVAILABLE,
+    Summarizer,
+)
 
 __all__ = [
     "CandidateKind",
+    "CompactedConversation",
+    "compact_conversation",
     "ContextBuilder",
     "ContextCandidate",
     "ContextPlan",
     "ExcludedCandidate",
     "ExclusionReason",
+    "PRESERVED_FIELDS",
+    "structural_summary",
+    "SUMMARY_MAX_CHARS",
+    "SUMMARY_UNAVAILABLE",
+    "Summarizer",
 ]

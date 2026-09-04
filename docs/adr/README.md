@@ -14,6 +14,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 |---|----------|--------|
 | [0001](0001-one-tokenizer-authority.md) | One tokenizer authority for both the budget check and the context plan | Accepted |
 | [0002](0002-context-builder-has-no-default-model.md) | `ContextBuilder` takes a model with no default | Accepted |
+| [0003](0003-compaction-is-an-allow-list.md) | Compaction is an allow-list, and the summary is best-effort | Accepted |
 
 ## Format
 
