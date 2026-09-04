@@ -99,7 +99,7 @@ Design rules:
 - Secrets come from the environment only. Never commit an API key; never log prompt
   contents containing credentials.
 - When a design decision is made (route policy, memory promotion rule, chunk strategy),
-  record the reasoning in the commit message or a short note under `docs/decisions/` —
+  record the reasoning in the commit message or an ADR under `docs/adr/` —
   the defense depends on being able to explain *why*, not just *what*.
 - If work is a team submission, keep the contribution map current (owner per component,
   tests, evidence).
