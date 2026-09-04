@@ -56,9 +56,13 @@ and keep the dependency direction pointing inward (runtime never imports the web
 src/agentic_erp_assistant/
   runtime/     graph engine, node contracts, typed state, transitions, retry
   state/       the reasoning state model (typed, serializable, versioned)
+  reasoning/   the decision layer: what to do next (route, tool, approval) and
+               why a turn failed -- typed fields, never prose
   memory/      short-term + adaptive long-term memory, promotion/eviction policy
   context/     context construction: what gets into the prompt and why
-  llm/         provider port (protocol) + adapters; streaming; token accounting
+  llm/         provider port (protocol), contracts, prompts, tokens, retry,
+               tool specs, cost telemetry, and the gateway that orders them
+  llm/adapters/  vendor adapters (openai_chat.py); the only place a provider is named
   rag/         ingestion, chunking, index, retrieval, citation objects
   tools/       MCP-style tool boundary: typed schemas, router, approval gating
   erp/         optional ERP provider plugin over mock project data
@@ -95,7 +99,7 @@ Design rules:
 - Secrets come from the environment only. Never commit an API key; never log prompt
   contents containing credentials.
 - When a design decision is made (route policy, memory promotion rule, chunk strategy),
-  record the reasoning in the commit message or a short note under `docs/decisions/` —
+  record the reasoning in the commit message or an ADR under `docs/adr/` —
   the defense depends on being able to explain *why*, not just *what*.
 - If work is a team submission, keep the contribution map current (owner per component,
   tests, evidence).
@@ -163,6 +167,10 @@ Not yet chosen; ask before assuming, and update this file once settled.
 - Web layer: no HTTP framework or JS tooling is present yet. Default suggestion is a
   Python framework serving SSE plus a dependency-free browser UI, matching the
   Python-only repo — confirm before scaffolding.
-- LLM provider(s) and routing policy behind the port.
+- ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
+  `llm/adapters/openai_chat.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
+  repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
+  also needs a reviewed row in `llm/pricing.py`. Routing policy behind the port is still
+  open.
 - Retrieval backend (embedding store vs. lexical vs. hybrid) and citation format.
 - Trace persistence (files vs. SQLite) and eval report format.
