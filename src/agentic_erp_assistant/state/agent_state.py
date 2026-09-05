@@ -39,13 +39,23 @@ the runtime decides how many are allowed. Putting the ceiling here would fix
 one policy for every graph and hide it from the place a reviewer looks for it.
 """
 
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
     "AgentState",
@@ -115,6 +125,22 @@ class AgentState(BaseModel):
     actor cannot be audited afterwards.
     """
 
+    scopes: frozenset[str] = frozenset()
+    """What the actor is entitled to do, snapshotted when the turn began.
+
+    Here rather than fetched at the call site because
+    :class:`~agentic_erp_assistant.state.tool_request.ToolRequest` requires it
+    and a node has nowhere else to get it. Snapshotted rather than re-read per
+    call for a reason worth defending: entitlements that could change midway
+    would let one turn make two calls under two different permissions, and the
+    trace would show neither.
+
+    Defaults to empty, and empty means entitled to nothing. A caller that omits
+    it gets every tool refused, which is the direction an omission should fail
+    in -- the alternative default, "whatever the tool needs", is the one that
+    turns a forgotten field into a granted write.
+    """
+
     trace_id: str = Field(min_length=1)
     """The run this state belongs to.
 
@@ -145,8 +171,49 @@ class AgentState(BaseModel):
     reviewer cannot trust.
     """
 
+    observations: tuple[ToolOutcome, ...] = ()
+    """What running things produced, in the order they were produced.
+
+    The observation half of the reason-act cycle: a node acts, the outcome
+    lands here, and the next planning step reads it. Kept as the outcomes
+    themselves rather than as rendered text because the planner branches on
+    ``status`` and the answer step reads ``source_ids``; a turn that stored the
+    prose would have to parse its own history back.
+
+    A tuple for the same reason :attr:`evidence` is one, and accumulated rather
+    than overwritten so a turn that called two tools can still say what the
+    first one said.
+    """
+
     tool_name: str | None = Field(default=None, min_length=1)
     """The tool this turn is calling, once one has been chosen."""
+
+    tool_arguments: Mapping[str, Any] | None = None
+    """The arguments the chosen tool will be called with.
+
+    Carried on the state, not held in a node's locals, because of the pause: a
+    write stops for a human, the run returns to its caller, and whatever
+    resumes it must rebuild the identical call. An approver who read "record a
+    high-severity risk on PRJ-1" has to be approving the call that actually
+    runs, and arguments that lived only in a stack frame could not survive the
+    wait -- or worse, could be rebuilt slightly differently.
+
+    Stored behind a read-only view, like
+    :attr:`~agentic_erp_assistant.state.tool_request.ToolRequest.arguments` and
+    for the same reason.
+    """
+
+    tool_mutating: bool = False
+    """Whether the chosen tool changes ERP data.
+
+    Read from the tool's own
+    :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by the
+    layer that looked the tool up, and carried here so
+    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition` can be
+    told the truth at every transition that turns on it -- including the one
+    after a pause, where the decision that knew the answer is long gone. The
+    runtime deliberately cannot look this up itself; see that module for why.
+    """
 
     approval: ApprovalDecision = "not_required"
     """Where a pending call stands with its approver. See
@@ -214,6 +281,19 @@ class AgentState(BaseModel):
         if self.tool_name is not None and not self.tool_name.strip():
             raise ValueError("tool_name: must not be blank")
 
+        if self.tool_arguments is not None and self.tool_name is None:
+            raise ValueError(
+                "tool_arguments: present without a tool_name -- arguments that "
+                "do not say what they are arguments to cannot be executed or "
+                "reviewed"
+            )
+
+        if self.tool_mutating and self.tool_name is None:
+            raise ValueError(
+                "tool_mutating: set without a tool_name -- the flag describes a "
+                "tool, so there has to be one"
+            )
+
         if self.approval != "not_required" and self.tool_name is None:
             raise ValueError(
                 f"approval: {self.approval!r} without a tool_name -- an approval "
@@ -228,6 +308,27 @@ class AgentState(BaseModel):
             )
 
         return self
+
+    @field_validator("tool_arguments")
+    @classmethod
+    def _freeze_arguments(
+        cls, value: Mapping[str, Any] | None
+    ) -> Mapping[str, Any] | None:
+        """Take a copy behind a read-only view.
+
+        A frozen model holding a plain dict is not frozen, it merely looks it.
+        Here that matters more than usual: the caller who passed the dict in
+        would otherwise keep a handle on the arguments an approver has already
+        read, and could edit them during the pause.
+        """
+        return None if value is None else MappingProxyType(dict(value))
+
+    @field_serializer("tool_arguments")
+    def _unwrap_arguments(
+        self, value: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Hand a plain dict to the serializer; the view is an in-process guard."""
+        return None if value is None else dict(value)
 
     # -- the only way to move ---------------------------------------------
 

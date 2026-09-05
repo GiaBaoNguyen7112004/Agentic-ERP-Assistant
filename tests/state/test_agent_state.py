@@ -10,6 +10,7 @@ from agentic_erp_assistant.state.agent_state import (
 )
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 
 def initial() -> AgentState:
@@ -324,3 +325,83 @@ def test_a_state_survives_a_round_trip_through_plain_data() -> None:
 def test_an_unmodelled_field_is_rejected_at_construction() -> None:
     with pytest.raises(ValidationError):
         AgentState(request="q", actor="bao", trace_id="run-1", escalate=True)
+
+
+# --------------------------------------------------------------------------
+# What a paused turn has to survive on
+# --------------------------------------------------------------------------
+
+
+def test_an_actor_with_no_declared_scopes_is_entitled_to_nothing() -> None:
+    """The direction an omission has to fail in."""
+    assert initial().scopes == frozenset()
+
+
+def test_arguments_are_carried_beside_the_tool_they_belong_to() -> None:
+    state = initial().evolve(
+        tool_name="create_risk",
+        tool_arguments={"project_id": "PRJ-1", "title": "Vendor slip"},
+        tool_mutating=True,
+    )
+
+    assert state.tool_arguments == {"project_id": "PRJ-1", "title": "Vendor slip"}
+
+
+def test_arguments_without_a_tool_name_cannot_exist() -> None:
+    with pytest.raises(ValidationError, match="tool_arguments"):
+        initial().evolve(tool_arguments={"project_id": "PRJ-1"})
+
+
+def test_the_mutating_flag_without_a_tool_name_cannot_exist() -> None:
+    with pytest.raises(ValidationError, match="tool_mutating"):
+        initial().evolve(tool_mutating=True)
+
+
+def test_the_caller_cannot_edit_arguments_an_approver_has_read() -> None:
+    """The pause is the reason: a handle kept on the dict would outlive the
+    approval decision made about it."""
+    arguments = {"project_id": "PRJ-1", "severity": "high"}
+    state = initial().evolve(tool_name="create_risk", tool_arguments=arguments)
+
+    arguments["severity"] = "low"
+
+    assert state.tool_arguments["severity"] == "high"
+    with pytest.raises(TypeError):
+        state.tool_arguments["severity"] = "low"
+
+
+def test_observations_accumulate_rather_than_replace() -> None:
+    first = ToolOutcome(
+        tool_name="list_risks", status="ok", summary="2 open", source_ids=("PRJ-1",)
+    )
+    second = ToolOutcome(
+        tool_name="get_budget_summary",
+        status="ok",
+        summary="61%",
+        source_ids=("PRJ-1",),
+    )
+    state = initial().evolve(observations=(first,))
+
+    state = state.evolve(observations=state.observations + (second,))
+
+    assert state.observations == (first, second)
+
+
+def test_a_paused_write_survives_a_round_trip_through_plain_data() -> None:
+    """The pause can outlive the process; what resumes it reads this back."""
+    state = initial().evolve(
+        route="request_approval",
+        tool_name="create_risk",
+        tool_arguments={"project_id": "PRJ-1", "title": "Vendor slip"},
+        tool_mutating=True,
+        approval="pending",
+        scopes=frozenset({"project.risk.write"}),
+        observations=(ToolOutcome(
+                tool_name="list_risks",
+                status="ok",
+                summary="2",
+                source_ids=("PRJ-1",),
+            ),),
+    )
+
+    assert AgentState.model_validate(state.model_dump()) == state
