@@ -26,14 +26,23 @@ model inventing an argument nobody declared.
 """
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "BudgetSummaryArguments",
+    "CREATE_RISK_TOOL",
+    "CreateRiskArguments",
     "DEFAULT_TOOLS",
+    "GET_BUDGET_SUMMARY_TOOL",
+    "GET_PROJECT_STATUS_FLAKY_TOOL",
     "GET_PROJECT_STATUS_TOOL",
+    "GET_SPRINT_PROGRESS_TOOL",
+    "LIST_RISKS_TOOL",
+    "ListRisksArguments",
     "ProjectStatusArguments",
+    "SprintProgressArguments",
     "StrictArguments",
     "ToolCallResult",
     "ToolSpec",
@@ -166,6 +175,67 @@ class ToolSpec:
         return self.arguments.model_validate(dict(raw))
 
 
+class SprintProgressArguments(StrictArguments):
+    """Arguments for ``get_sprint_progress``."""
+
+    sprint_id: str = Field(
+        min_length=1,
+        description="The sprint to report on, e.g. 'SPR-13'.",
+    )
+
+
+class BudgetSummaryArguments(StrictArguments):
+    """Arguments for ``get_budget_summary``.
+
+    ``include_forecast`` is required rather than defaulted, which looks odd for
+    a flag until you remember why: strict function calling demands every
+    property appear in ``required``. A flag with a default would have to be
+    modelled as required-and-nullable, which is a worse contract than simply
+    making the caller state what it wants.
+    """
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project to report on, e.g. 'atlas'.",
+    )
+    include_forecast: bool = Field(
+        description=(
+            "Whether to include the forecast at completion alongside approved "
+            "and spent amounts."
+        ),
+    )
+
+
+class ListRisksArguments(StrictArguments):
+    """Arguments for ``list_risks``."""
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project whose open risks to list, e.g. 'atlas'.",
+    )
+
+
+class CreateRiskArguments(StrictArguments):
+    """Arguments for ``create_risk`` -- the one tool that changes anything.
+
+    ``severity`` is a Literal, not a string. The model picks this value, and a
+    free string would let it invent a severity nobody can sort, filter or
+    escalate on, discovered only when a report tried to group by it.
+    """
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project to record the risk against, e.g. 'atlas'.",
+    )
+    title: str = Field(
+        min_length=1,
+        description="One line describing the risk, as it will be stored.",
+    )
+    severity: Literal["low", "medium", "high"] = Field(
+        description="How serious the risk is.",
+    )
+
+
 GET_PROJECT_STATUS_TOOL = ToolSpec(
     name="get_project_status",
     description=(
@@ -180,11 +250,89 @@ GET_PROJECT_STATUS_TOOL = ToolSpec(
 recorded in the declaration rather than an assumption made at the call site."""
 
 
-DEFAULT_TOOLS: tuple[ToolSpec, ...] = (GET_PROJECT_STATUS_TOOL,)
+GET_PROJECT_STATUS_FLAKY_TOOL = ToolSpec(
+    name="get_project_status_flaky",
+    description=(
+        "Identical to get_project_status, but its backend fails intermittently. "
+        "Present so the retry budget can be exercised end to end."
+    ),
+    arguments=ProjectStatusArguments,
+    mutating=False,
+)
+"""A deliberately unreliable twin, and deliberately not in :data:`DEFAULT_TOOLS`.
+
+It exists to be executed, not to be offered: a model shown two tools that do
+the same thing would sometimes pick the broken one, and the trace would record
+a retry nobody asked for. Which is the distinction between the registry and
+this tuple -- the registry holds everything the runtime can run, the tuple
+holds what the model is invited to choose from.
+"""
+
+
+GET_SPRINT_PROGRESS_TOOL = ToolSpec(
+    name="get_sprint_progress",
+    description=(
+        "Report one sprint's committed and completed points and days "
+        "remaining. Read-only. Use it for questions about sprint burn-down or "
+        "whether a sprint will land."
+    ),
+    arguments=SprintProgressArguments,
+    mutating=False,
+)
+
+
+GET_BUDGET_SUMMARY_TOOL = ToolSpec(
+    name="get_budget_summary",
+    description=(
+        "Report a project's approved budget, amount spent, and optionally the "
+        "forecast at completion. Read-only. Use it for questions about money."
+    ),
+    arguments=BudgetSummaryArguments,
+    mutating=False,
+)
+
+
+LIST_RISKS_TOOL = ToolSpec(
+    name="list_risks",
+    description=(
+        "List the open risks recorded against a project, with their severity. "
+        "Read-only. Use it before answering questions about what could go "
+        "wrong, and before proposing a new risk that may already exist."
+    ),
+    arguments=ListRisksArguments,
+    mutating=False,
+)
+
+
+CREATE_RISK_TOOL = ToolSpec(
+    name="create_risk",
+    description=(
+        "Record a new risk against a project. This changes ERP data and "
+        "requires a human to approve it first. Use it only when the user has "
+        "asked for a risk to be recorded, and check list_risks first so an "
+        "existing risk is not duplicated."
+    ),
+    arguments=CreateRiskArguments,
+    mutating=True,
+)
+"""The only mutating tool. ``mutating=True`` is what the transition guard and
+the gateway both read; the sentence about approval in the description is for
+the model, and is not what enforces anything."""
+
+
+DEFAULT_TOOLS: tuple[ToolSpec, ...] = (
+    GET_PROJECT_STATUS_TOOL,
+    GET_SPRINT_PROGRESS_TOOL,
+    GET_BUDGET_SUMMARY_TOOL,
+    LIST_RISKS_TOOL,
+    CREATE_RISK_TOOL,
+)
 """What the model is offered when a caller does not say otherwise.
 
 A tuple, and the offering is data: adding a tool is an edit here, not a new
-branch in the adapter.
+branch in the adapter. Note what is absent --
+:data:`GET_PROJECT_STATUS_FLAKY_TOOL` is executable but not offered; see its
+docstring.
 """
 
 

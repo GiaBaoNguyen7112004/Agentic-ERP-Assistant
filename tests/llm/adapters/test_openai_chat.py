@@ -34,7 +34,11 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import build_messages
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
-from agentic_erp_assistant.llm.tools import GET_PROJECT_STATUS_TOOL, ToolSpec
+from agentic_erp_assistant.llm.tools import (
+    DEFAULT_TOOLS,
+    GET_PROJECT_STATUS_TOOL,
+    ToolSpec,
+)
 
 MODEL = "test-model-1"
 API_KEY = "sk-test-not-a-real-key"
@@ -577,10 +581,18 @@ def test_call_with_tools_sends_the_declared_schema_as_a_function(messages) -> No
         client.call_with_tools(messages)
 
     tools = recorder.body["tools"]
-    assert len(tools) == 1
-    assert tools[0]["type"] == "function"
-    function = tools[0]["function"]
-    assert function["name"] == "get_project_status"
+    # Against the offering itself, not a literal count: DEFAULT_TOOLS is data
+    # that grows, and a test pinning its length would fail every time a tool is
+    # added without saying anything about the rendering it was written to check.
+    assert [tool["function"]["name"] for tool in tools] == [
+        spec.name for spec in DEFAULT_TOOLS
+    ]
+    assert all(tool["type"] == "function" for tool in tools)
+    function = next(
+        tool["function"]
+        for tool in tools
+        if tool["function"]["name"] == "get_project_status"
+    )
     assert function["description"] == GET_PROJECT_STATUS_TOOL.description
     assert function["parameters"] == GET_PROJECT_STATUS_TOOL.schema
 
@@ -591,10 +603,14 @@ def test_call_with_tools_marks_the_function_strict(messages) -> None:
     with make_client(recorder) as client:
         client.call_with_tools(messages)
 
-    function = recorder.body["tools"][0]["function"]
-    assert function["strict"] is True
-    assert function["parameters"]["additionalProperties"] is False
-    assert function["parameters"]["required"] == ["milestone_id"]
+    functions = [tool["function"] for tool in recorder.body["tools"]]
+    assert all(function["strict"] is True for function in functions)
+    assert all(
+        function["parameters"]["additionalProperties"] is False
+        for function in functions
+    )
+    status = next(f for f in functions if f["name"] == "get_project_status")
+    assert status["parameters"]["required"] == ["milestone_id"]
 
 
 def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:
