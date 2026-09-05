@@ -24,7 +24,12 @@ def test_a_tool_call_without_a_tool_name_cannot_exist() -> None:
 def test_approval_cannot_be_required_on_a_route_that_executes_nothing() -> None:
     """'clarify, but get it approved first' is not a state the runtime has."""
     with pytest.raises(ValidationError, match="approval_required"):
-        ReasoningDecision(route="clarify", confidence=0.4, approval_required=True)
+        ReasoningDecision(
+            route="clarify",
+            confidence=0.4,
+            message="Which milestone?",
+            approval_required=True,
+        )
 
 
 def test_the_invariants_run_before_the_object_exists() -> None:
@@ -76,7 +81,11 @@ def test_retrieval_records_the_sources_it_expects_to_need() -> None:
 
 @pytest.mark.parametrize("route", ["clarify", "refuse", "fail"])
 def test_the_terminal_routes_need_neither_tool_nor_evidence(route: str) -> None:
-    decision = ReasoningDecision(route=route, confidence=0.2)
+    decision = ReasoningDecision(
+        route=route,
+        confidence=0.2,
+        **({} if route == "fail" else {"message": "nothing to run"}),
+    )
 
     assert decision.required_tool is None
     assert decision.required_evidence == ()
@@ -111,7 +120,7 @@ def test_a_broken_turn_ends_on_its_own_route_not_on_refuse() -> None:
     """A refusal is policy working as designed; a failure is the system not
     working. A reviewer counting refusals must not be counting outages."""
     broke = ReasoningDecision(route="fail", confidence=0.0)
-    refused = ReasoningDecision(route="refuse", confidence=0.0)
+    refused = ReasoningDecision(route="refuse", confidence=0.0, message="No.")
 
     assert broke.route != refused.route
 
@@ -141,7 +150,9 @@ def test_the_intent_route_names_are_not_accepted_here() -> None:
 
 @pytest.mark.parametrize("confidence", [0.0, 1.0])
 def test_confidence_admits_both_ends_of_the_range(confidence: float) -> None:
-    decision = ReasoningDecision(route="refuse", confidence=confidence)
+    decision = ReasoningDecision(
+        route="refuse", confidence=confidence, message="No."
+    )
 
     assert decision.confidence == confidence
 
@@ -149,13 +160,14 @@ def test_confidence_admits_both_ends_of_the_range(confidence: float) -> None:
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
 def test_confidence_outside_zero_to_one_is_rejected(confidence: float) -> None:
     with pytest.raises(ValidationError, match="confidence"):
-        ReasoningDecision(route="refuse", confidence=confidence)
+        ReasoningDecision(route="refuse", confidence=confidence, message="No.")
 
 
 def test_a_rationale_at_the_cap_is_accepted() -> None:
     decision = ReasoningDecision(
         route="refuse",
         confidence=0.1,
+        message="No.",
         rationale="x" * RATIONALE_MAX_CHARS,
     )
 
@@ -169,6 +181,7 @@ def test_a_rationale_over_the_cap_is_rejected() -> None:
         ReasoningDecision(
             route="refuse",
             confidence=0.1,
+            message="No.",
             rationale="x" * (RATIONALE_MAX_CHARS + 1),
         )
 
@@ -179,6 +192,7 @@ def test_a_tool_name_on_a_route_that_calls_nothing_is_rejected() -> None:
         ReasoningDecision(
             route="clarify",
             confidence=0.4,
+            message="Which milestone?",
             required_tool="get_project_status",
         )
 
@@ -199,7 +213,9 @@ def test_a_blank_source_id_is_rejected() -> None:
 
 def test_an_unmodelled_field_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        ReasoningDecision(route="refuse", confidence=0.1, escalate=True)
+        ReasoningDecision(
+            route="refuse", confidence=0.1, message="No.", escalate=True
+        )
 
 
 def test_a_decision_cannot_be_edited_after_it_is_audited() -> None:
@@ -302,3 +318,70 @@ def test_a_negative_evidence_count_is_a_caller_bug() -> None:
         classify_failure(
             evidence_count=-1, budget_overflow=False, provider_error=False
         )
+
+
+# --------------------------------------------------------------------------
+# What a write, and what a reply, must carry
+# --------------------------------------------------------------------------
+
+
+def test_a_mutating_call_cannot_route_past_the_approval_gate() -> None:
+    """The one implication that runs in a single direction."""
+    with pytest.raises(ValidationError, match="mutating"):
+        ReasoningDecision(
+            route="request_approval",
+            confidence=0.9,
+            required_tool="create_risk",
+            mutating=True,
+            approval_required=False,
+        )
+
+
+def test_an_escalated_read_is_approval_required_without_being_mutating() -> None:
+    """Policy can put a read in front of a human; that does not make it a write."""
+    decision = ReasoningDecision(
+        route="request_approval",
+        confidence=0.9,
+        required_tool="get_budget_summary",
+        approval_required=True,
+    )
+
+    assert decision.approval_required and not decision.mutating
+
+
+def test_nothing_mutates_on_a_route_that_executes_nothing() -> None:
+    with pytest.raises(ValidationError, match="mutating"):
+        ReasoningDecision(route="answer", confidence=0.9, mutating=True)
+
+
+def test_a_clarification_must_carry_the_question_it_asks() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(route="clarify", confidence=0.3)
+
+
+def test_a_refusal_must_carry_its_reason() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(route="refuse", confidence=0.9)
+
+
+def test_an_answer_may_defer_its_words_to_a_later_step() -> None:
+    """Retrieval still has to run before the reply exists."""
+    assert ReasoningDecision(route="answer", confidence=0.8).message is None
+
+
+def test_words_on_a_route_that_says_nothing_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(
+            route="call_tool",
+            confidence=0.9,
+            required_tool="list_risks",
+            message="here you go",
+        )
+
+
+def test_thinking_is_a_route_and_carries_nothing_else() -> None:
+    """Where a turn goes to decide, once an action has produced an observation."""
+    decision = ReasoningDecision(route="think", confidence=0.5)
+
+    assert decision.required_tool is None
+    assert decision.message is None

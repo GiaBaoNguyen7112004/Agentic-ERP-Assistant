@@ -294,3 +294,58 @@ def test_the_guard_would_actually_catch_an_offender(tmp_path: Path) -> None:
 def test_transitions_is_the_one_module_that_does_set_route() -> None:
     """And it is excluded above by name, so the exemption is one file, visible."""
     assert sets_route_directly(RUNTIME_PACKAGE / "transitions.py")
+
+
+# --------------------------------------------------------------------------
+# The cycle: an action can hand back to a second thought
+# --------------------------------------------------------------------------
+
+
+def test_a_turn_starts_by_thinking() -> None:
+    state = AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+
+    assert advance(state, "think").route == "think"
+
+
+def test_a_read_tool_can_hand_its_observation_back_to_the_planner() -> None:
+    """Without this edge the graph is a single shot and the step budget guards
+    nothing."""
+    state = AgentState(
+        request="q",
+        actor="bao",
+        trace_id="run-1",
+        route="call_tool",
+        tool_name="list_risks",
+    )
+
+    assert advance(state, "think", mutating=False).route == "think"
+
+
+def test_retrieval_can_hand_back_to_the_planner() -> None:
+    state = AgentState(
+        request="q", actor="bao", trace_id="run-1", route="retrieve_project_documents"
+    )
+
+    assert advance(state, "think").route == "think"
+
+
+def test_a_second_thought_is_not_a_move_the_table_allows() -> None:
+    """A think that produced no route is a planner bug, not an edge."""
+    state = AgentState(request="q", actor="bao", trace_id="run-1", route="think")
+
+    with pytest.raises(IllegalTransition):
+        advance(state, "think")
+
+
+def test_an_unapproved_write_still_cannot_leave_call_tool_for_a_new_thought() -> None:
+    state = AgentState(
+        request="q",
+        actor="bao",
+        trace_id="run-1",
+        route="call_tool",
+        tool_name="create_risk",
+        approval="pending",
+    )
+
+    with pytest.raises(IllegalTransition, match="approval"):
+        advance(state, "think", mutating=True)

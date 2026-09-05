@@ -26,8 +26,22 @@ produced by a different, independently-checkable mechanism:
     human" apart from "a human already approved it, now run the call".
 
 ``retrieve_project_documents``
-    Decided by context construction -- the question needs grounding -- and is
-    independent of any tool call.
+    Read off the same live decision as ``call_tool``: retrieval is offered to
+    the model as a tool like any other, so the model choosing it is the routing
+    signal. It is a separate route rather than a tool the gateway runs because
+    its observation is a different type -- typed passages carrying locators,
+    which have to reach the prompt intact, not a
+    :class:`~agentic_erp_assistant.state.tool_outcome.ToolOutcome` summary
+    bound for an audit row. Routes are execution shapes; the decision is
+    uniform either way.
+
+``think``
+    Not chosen by anyone. It is where a turn goes to decide, so the runtime
+    moves onto it whenever an action has produced an observation and the next
+    action is not yet known. Having it as a route rather than as an implicit
+    return to ``None`` is what lets the reason-act cycle repeat while staying
+    inside the transition table: every re-plan is a declared edge, and the step
+    budget is what stops the cycle from being unbounded.
 
 ``clarify`` and ``refuse``
     Guardrail outcomes: low confidence, budget overflow, insufficient
@@ -86,6 +100,7 @@ __all__ = [
 
 
 DecisionRoute = Literal[
+    "think",                       # decide what to do next, from what is known
     "retrieve_project_documents",  # go to RAG before answering
     "call_tool",                   # a tool call that may run unattended
     "request_approval",            # a tool call that must stop for a human
@@ -105,9 +120,20 @@ FailureMode = Literal[
     "context_budget_exceeded",
     "provider_failure",
     "insufficient_evidence",
+    "tool_failure",
+    "max_steps_exceeded",
     "none",
 ]
 """Why a turn could not produce a grounded answer -- including "it could".
+
+The last two are not produced by :func:`classify_failure`, and cannot be: that
+function reads three signals from one attempted answer, while ``tool_failure``
+is assigned by the node that watched a call come back unusable and
+``max_steps_exceeded`` by the loop guard, which is not answering anything at
+all. Both are still :data:`FailureMode` members rather than free text in
+``error_detail`` -- a reviewer counting how runs end has to be counting typed
+values, and the loop guard firing is exactly the outcome nobody wants to
+discover by grepping prose.
 
 ``"none"`` is the string, not ``None``. A ``None`` return invites callers to
 write ``if failure:`` and quietly collapse four outcomes into two; a Literal
@@ -127,6 +153,20 @@ decision whose substance is already in the typed fields above it.
 
 _TOOL_ROUTES = frozenset({"call_tool", "request_approval"})
 """The routes for which naming a tool is meaningful -- in both directions."""
+
+
+_MESSAGE_ROUTES = frozenset({"answer", "clarify", "refuse"})
+"""The routes that end the turn by saying something to the user."""
+
+
+_MESSAGE_REQUIRED_ROUTES = frozenset({"clarify", "refuse"})
+"""The routes that cannot be carried out without those words.
+
+``answer`` is absent: an answer may still have to be composed from evidence
+after this decision is made, so the decision is allowed not to carry one. A
+clarification or a refusal has no later step to fill it in -- the decision is
+the whole of it.
+"""
 
 
 class ReasoningDecision(BaseModel):
@@ -164,6 +204,34 @@ class ReasoningDecision(BaseModel):
     approval_required: bool = False
     """Whether a human decision must be recorded before anything executes."""
 
+    mutating: bool = False
+    """Whether the named tool changes ERP data.
+
+    Copied off the tool's own
+    :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by whoever
+    looked the tool up, and carried here because the runtime is not allowed to
+    look it up itself:
+    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition`
+    requires the answer at every transition that touches execution, and
+    :mod:`agentic_erp_assistant.runtime.transitions` deliberately does not
+    import the tool registry.
+
+    Separate from ``approval_required``, and not merely a synonym for it. This
+    one is about what the tool does; that one is about what policy demands --
+    a read-only tool can be escalated to an approver without ever becoming a
+    write. The implication only runs one way, and the validator enforces it: a
+    write always needs approval.
+    """
+
+    message: str | None = Field(default=None, min_length=1)
+    """The words the user gets, on the routes where the decision is the reply.
+
+    Kept apart from ``rationale`` on purpose. This is addressed to the person
+    who asked; ``rationale`` is addressed to whoever audits the run, is capped,
+    and is never shown. One field serving both would mean either shipping audit
+    notes to users or truncating answers at the audit cap.
+    """
+
     rationale: str = Field(default="", max_length=RATIONALE_MAX_CHARS)
     """A one-line summary for a reader. Never parsed, never dispatched on."""
 
@@ -183,6 +251,29 @@ class ReasoningDecision(BaseModel):
             )
         if self.required_tool is not None and not self.required_tool.strip():
             raise ValueError("required_tool: must not be blank")
+
+        if self.mutating and not names_tool:
+            raise ValueError(
+                f"mutating: route {self.route!r} executes no tool, so there is "
+                f"nothing here that could change ERP data"
+            )
+        if self.mutating and not self.approval_required:
+            raise ValueError(
+                "mutating: a call that changes ERP data always needs a recorded "
+                "approval; a decision that says otherwise would route a write "
+                "straight past the gate"
+            )
+
+        if self.route in _MESSAGE_REQUIRED_ROUTES and self.message is None:
+            raise ValueError(
+                f"message: route {self.route!r} ends the turn by saying "
+                f"something, and no later step exists to supply the words"
+            )
+        if self.message is not None and self.route not in _MESSAGE_ROUTES:
+            raise ValueError(
+                f"message: route {self.route!r} says nothing to the user, so "
+                f"text here is a reply that would never be delivered"
+            )
 
         if self.approval_required and not names_tool:
             raise ValueError(

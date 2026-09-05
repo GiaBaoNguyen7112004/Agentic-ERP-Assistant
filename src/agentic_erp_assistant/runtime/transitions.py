@@ -82,6 +82,7 @@ ALLOWED: Mapping[DecisionRoute | None, frozenset[DecisionRoute]] = {
     # second one would leave it unguarded.
     None: frozenset(
         {
+            "think",
             "retrieve_project_documents",
             "call_tool",
             "request_approval",
@@ -91,10 +92,30 @@ ALLOWED: Mapping[DecisionRoute | None, frozenset[DecisionRoute]] = {
             "fail",
         }
     ),
-    # Retrieval grounds a reply, or discovers it cannot.
-    "retrieve_project_documents": frozenset({"answer", "clarify", "refuse", "fail"}),
-    # A tool ran. Either its result answers the question or the turn broke.
-    "call_tool": frozenset({"answer", "fail"}),
+    # Where a turn decides. Every action is reachable from here, and so is
+    # every ending: a planner that finds nothing worth doing must be able to
+    # say so without first pretending to act.
+    "think": frozenset(
+        {
+            "retrieve_project_documents",
+            "call_tool",
+            "request_approval",
+            "answer",
+            "clarify",
+            "refuse",
+            "fail",
+        }
+    ),
+    # Retrieval grounds a reply, discovers it cannot, or hands back to a second
+    # thought -- passages can reveal that a tool call is what was needed.
+    "retrieve_project_documents": frozenset(
+        {"think", "answer", "clarify", "refuse", "fail"}
+    ),
+    # A tool ran. Its result answers the question, or feeds the next thought,
+    # or the turn broke. The edge back to "think" is what makes this a cycle
+    # rather than a single shot, and it is the reason the runtime carries a
+    # step budget: an unbounded cycle needs a guard, not an absent edge.
+    "call_tool": frozenset({"think", "answer", "fail"}),
     # Waiting on a human: granted goes on to the call, denied ends in a
     # refusal, and anything breaking on the way ends in a failure.
     "request_approval": frozenset({"call_tool", "refuse", "fail"}),
