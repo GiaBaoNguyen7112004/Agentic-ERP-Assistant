@@ -244,7 +244,7 @@ class GraphNodes:
                 decision.route,
                 mutating=decision.mutating if decision.route == "call_tool" else None,
                 tool_name=decision.required_tool,
-                tool_arguments=self._pending_arguments(state, decision.required_tool),
+                tool_arguments=decision.tool_arguments,
                 tool_mutating=decision.mutating,
                 approval="pending" if asked else state.approval,
                 events=events
@@ -283,20 +283,6 @@ class GraphNodes:
             or "the planner could not produce an actionable decision",
             events=events + (_event("think", "failed", decision.rationale),),
         )
-
-    def _pending_arguments(
-        self, state: AgentState, tool_name: str | None
-    ) -> Mapping[str, object] | None:
-        """Keep arguments already chosen for this tool; otherwise start empty.
-
-        The planner names the tool; the arguments come from the same function
-        call, and the decision does not carry them (a tool call's arguments are
-        the gateway's to validate). Reusing what the state already holds is what
-        lets a re-planned turn keep the call an approver was shown.
-        """
-        if state.tool_name == tool_name and state.tool_arguments is not None:
-            return state.tool_arguments
-        return None
 
     # -- act: documents ----------------------------------------------------
 

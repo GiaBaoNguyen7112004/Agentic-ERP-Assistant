@@ -51,6 +51,7 @@ def test_a_tool_call_that_names_its_tool_is_valid() -> None:
         route="call_tool",
         confidence=0.9,
         required_tool="get_project_status",
+        tool_arguments={},
     )
 
     assert decision.required_tool == "get_project_status"
@@ -62,6 +63,7 @@ def test_a_mutating_call_carries_both_the_tool_and_the_approval_flag() -> None:
         route="request_approval",
         confidence=0.8,
         required_tool="close_milestone",
+        tool_arguments={},
         approval_required=True,
         rationale="Mutating call; a human must confirm before it runs.",
     )
@@ -108,6 +110,7 @@ def test_the_answer_route_cannot_carry_a_tool_name() -> None:
             route="answer",
             confidence=0.9,
             required_tool="get_project_status",
+            tool_arguments={},
         )
 
 
@@ -195,6 +198,7 @@ def test_a_tool_name_on_a_route_that_calls_nothing_is_rejected() -> None:
             confidence=0.4,
             message="Which milestone?",
             required_tool="get_project_status",
+            tool_arguments={},
         )
 
 
@@ -226,6 +230,7 @@ def test_a_decision_cannot_be_edited_after_it_is_audited() -> None:
         route="call_tool",
         confidence=0.9,
         required_tool="get_project_status",
+        tool_arguments={},
     )
 
     with pytest.raises(ValidationError):
@@ -335,6 +340,7 @@ def test_a_mutating_call_cannot_route_past_the_approval_gate() -> None:
             route="request_approval",
             confidence=0.9,
             required_tool="create_risk",
+            tool_arguments={},
             mutating=True,
             approval_required=False,
         )
@@ -346,6 +352,7 @@ def test_an_escalated_read_is_approval_required_without_being_mutating() -> None
         route="request_approval",
         confidence=0.9,
         required_tool="get_budget_summary",
+        tool_arguments={},
         approval_required=True,
     )
 
@@ -378,6 +385,7 @@ def test_words_on_a_route_that_says_nothing_are_rejected() -> None:
             route="call_tool",
             confidence=0.9,
             required_tool="list_risks",
+            tool_arguments={},
             message="here you go",
         )
 
@@ -388,3 +396,32 @@ def test_thinking_is_a_route_and_carries_nothing_else() -> None:
 
     assert decision.required_tool is None
     assert decision.message is None
+
+
+def test_a_call_must_say_what_it_is_calling_with() -> None:
+    """An approver cannot be shown a call whose arguments are missing."""
+    with pytest.raises(ValidationError, match="tool_arguments"):
+        ReasoningDecision(
+            route="call_tool", confidence=0.9, required_tool="list_risks"
+        )
+
+
+def test_arguments_on_a_route_that_calls_nothing_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="tool_arguments"):
+        ReasoningDecision(
+            route="answer", confidence=0.9, tool_arguments={"project_id": "atlas"}
+        )
+
+
+def test_the_carried_arguments_cannot_be_edited_after_the_decision() -> None:
+    arguments = {"project_id": "atlas"}
+    decision = ReasoningDecision(
+        route="call_tool",
+        confidence=0.9,
+        required_tool="list_risks",
+        tool_arguments=arguments,
+    )
+
+    arguments["project_id"] = "other"
+
+    assert decision.tool_arguments["project_id"] == "atlas"

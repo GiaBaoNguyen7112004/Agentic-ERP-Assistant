@@ -153,6 +153,7 @@ def test_a_write_decision_pauses_the_turn_and_says_so_in_the_trace() -> None:
                 route="request_approval",
                 confidence=0.5,
                 required_tool="create_risk",
+                tool_arguments={"project_id": "atlas", "title": "x", "severity": "low"},
                 mutating=True,
                 approval_required=True,
             )
@@ -171,7 +172,10 @@ def test_a_read_decision_goes_straight_to_execution() -> None:
     graph = nodes(
         planner=FakePlanner(
             ReasoningDecision(
-                route="call_tool", confidence=0.5, required_tool="list_risks"
+                route="call_tool",
+                confidence=0.5,
+                required_tool="list_risks",
+                tool_arguments={"project_id": "atlas"},
             )
         )
     )

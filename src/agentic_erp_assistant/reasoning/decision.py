@@ -86,9 +86,18 @@ router owns that check, against ``DEFAULT_TOOLS``, where the failure has
 somewhere to be recorded.
 """
 
-from typing import Literal
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 __all__ = [
     "classify_failure",
@@ -205,6 +214,20 @@ class ReasoningDecision(BaseModel):
     required_tool: str | None = Field(default=None, min_length=1)
     """The tool to call, for the two routes where that means anything."""
 
+    tool_arguments: Mapping[str, Any] | None = None
+    """The arguments the model called the tool with, exactly as they arrived.
+
+    Parsed, not validated. Validating them here would move the check away from
+    the boundary that has to make it anyway and would turn "the model invented
+    an argument" into an object that cannot be constructed, when it should be a
+    routed, audited ``invalid_arguments`` outcome. The tool gateway checks them
+    against the tool's own model; this field just carries them there.
+
+    Required on the two tool routes and rejected on the rest: a call that does
+    not say what it is calling with cannot be executed, and cannot be shown to
+    an approver either -- which is the more important half.
+    """
+
     approval_required: bool = False
     """Whether a human decision must be recorded before anything executes."""
 
@@ -253,6 +276,20 @@ class ReasoningDecision(BaseModel):
     rationale: str = Field(default="", max_length=RATIONALE_MAX_CHARS)
     """A one-line summary for a reader. Never parsed, never dispatched on."""
 
+    @field_validator("tool_arguments")
+    @classmethod
+    def _freeze_arguments(
+        cls, value: Mapping[str, Any] | None
+    ) -> Mapping[str, Any] | None:
+        """Take a copy behind a read-only view, as every carried call is."""
+        return None if value is None else MappingProxyType(dict(value))
+
+    @field_serializer("tool_arguments")
+    def _unwrap_arguments(
+        self, value: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        return None if value is None else dict(value)
+
     @model_validator(mode="after")
     def _fields_must_match_the_route(self) -> "ReasoningDecision":
         names_tool = self.route in _TOOL_ROUTES
@@ -269,6 +306,17 @@ class ReasoningDecision(BaseModel):
             )
         if self.required_tool is not None and not self.required_tool.strip():
             raise ValueError("required_tool: must not be blank")
+
+        if names_tool and self.tool_arguments is None:
+            raise ValueError(
+                f"tool_arguments: route {self.route!r} calls a tool, and an "
+                f"approver cannot be shown a call whose arguments are missing"
+            )
+        if not names_tool and self.tool_arguments is not None:
+            raise ValueError(
+                f"tool_arguments: route {self.route!r} calls nothing, so "
+                f"arguments here are an input no branch will ever read"
+            )
 
         if self.mutating and not names_tool:
             raise ValueError(

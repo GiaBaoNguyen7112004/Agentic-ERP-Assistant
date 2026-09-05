@@ -178,7 +178,7 @@ class Planner:
 
         if spec.name in CONTROL_ROUTES:
             return self._control(spec, result.arguments or {})
-        return self._tool_call(spec)
+        return self._tool_call(spec, result.arguments or {})
 
     # -- the three shapes a choice can take --------------------------------
 
@@ -218,7 +218,9 @@ class Planner:
             rationale=f"called {spec.name}",
         )
 
-    def _tool_call(self, spec: ToolSpec) -> ReasoningDecision:
+    def _tool_call(
+        self, spec: ToolSpec, arguments: Mapping[str, Any]
+    ) -> ReasoningDecision:
         """A tool the gateway will run -- once, and only after any approval.
 
         The approval rule, stated once: a tool whose own ``mutating`` flag is
@@ -237,6 +239,7 @@ class Planner:
             route="request_approval" if spec.mutating else "call_tool",
             confidence=UNSCORED_CONFIDENCE,
             required_tool=spec.name,
+            tool_arguments=arguments,
             mutating=spec.mutating,
             approval_required=spec.mutating,
             rationale=f"called {spec.name}",
