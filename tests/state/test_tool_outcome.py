@@ -83,6 +83,22 @@ def test_a_blank_reason_is_no_reason(status: str) -> None:
         ToolOutcome(tool_name="close_milestone", status=status, error="   ")
 
 
+def test_never_asked_and_said_no_are_different_statuses() -> None:
+    """They look alike -- nothing ran either way -- and lead to opposite moves.
+    Under one label the graph would either re-ask a human who already refused,
+    or abandon a call that was never put to anyone."""
+    unasked = ToolOutcome(
+        tool_name="create_risk",
+        status="approval_required",
+        error="a write needs a human decision before it runs",
+    )
+    refused = ToolOutcome(
+        tool_name="create_risk", status="denied", error="approval was denied"
+    )
+
+    assert unasked.status != refused.status
+
+
 def test_a_refusal_and_a_breakage_are_different_statuses() -> None:
     """One is the safety layer working, the other is the system not working.
     A reviewer counting refusals must not be counting outages."""
@@ -148,7 +164,9 @@ def test_retry_after_is_accepted_on_a_transient_failure() -> None:
     assert outcome.retry_after_seconds == 2.5
 
 
-@pytest.mark.parametrize("status", ["ok", "denied", "invalid_arguments", "failed"])
+@pytest.mark.parametrize(
+    "status", ["ok", "denied", "approval_required", "invalid_arguments", "failed"]
+)
 def test_retry_after_is_rejected_where_nothing_could_act_on_it(status: str) -> None:
     """Constrained rather than merely optional -- an early field that no branch
     can read is how an early field becomes one nobody trusts."""

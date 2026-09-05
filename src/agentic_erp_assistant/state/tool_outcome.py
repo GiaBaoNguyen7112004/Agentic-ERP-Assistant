@@ -43,20 +43,31 @@ __all__ = ["ToolOutcome", "ToolStatus"]
 
 
 ToolStatus = Literal[
-    "ok",                 # the tool did what it was asked to do
-    "invalid_arguments",  # the call did not satisfy the tool's declaration
-    "denied",             # policy or an approver refused it; nothing ran
-    "transient_failure",  # it may work later: timeout, 429, connection reset
-    "failed",             # it ran and could not complete, and will not later
+    "ok",                  # the tool did what it was asked to do
+    "invalid_arguments",   # the call did not satisfy the tool's declaration
+    "approval_required",   # nobody has been asked yet; nothing ran
+    "denied",              # policy or an approver refused it; nothing ran
+    "transient_failure",   # it may work later: timeout, 429, connection reset
+    "failed",              # it ran and could not complete, and will not later
 ]
 """How a tool call ended.
 
-Closed, and every member is a distinct next move. ``denied`` and ``failed`` are
-kept apart for the reason ``refuse`` and ``fail`` are kept apart in
+Closed, and every member is a distinct next move.
+
+``denied`` and ``failed`` are kept apart for the reason ``refuse`` and ``fail``
+are kept apart in
 :data:`~agentic_erp_assistant.reasoning.decision.DecisionRoute`: one is the
 safety layer working, the other is the system not working, and a reviewer
-counting refusals must not be counting outages. ``transient_failure`` is the
-only status a retry engine is allowed to act on.
+counting refusals must not be counting outages.
+
+``approval_required`` and ``denied`` are kept apart for a sharper reason.
+"Nobody has been asked yet" and "a human said no" look alike -- nothing ran
+either way -- and lead to opposite moves: the first goes to
+``request_approval`` and may still succeed, the second ends the turn. Under one
+label the graph would either re-ask a human who already refused, or abandon a
+call that was never put to anyone.
+
+``transient_failure`` is the only status a retry engine is allowed to act on.
 """
 
 
