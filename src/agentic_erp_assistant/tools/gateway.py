@@ -1,22 +1,41 @@
 """One ordered path from a request to an outcome, and the order is the safety.
 
-:meth:`ToolGateway.execute` is seven steps, in this order and no other:
+:meth:`ToolGateway.execute` is eight steps, in this order and no other:
 
 1. find the tool in the registry
 2. validate the arguments against its declaration
 3. check the actor holds the tool's scope
-4. stop for approval, if the tool needs one
-5. write the audit row for a gated call
-6. run the handler, inside its retry budget and its timeout
-7. emit a trace event
+4. check the actor has budget left for this tool
+5. stop for approval, if the tool needs one
+6. write the audit row for a gated call
+7. count the call and run the handler, inside its retry budget and its timeout
+8. emit a trace event
 
-Steps 3 and 4 come before step 6, and that is the whole point of writing this
-as one function. A gateway that checked permission after execution, or asked
-for approval after calling the handler, would have already changed ERP data by
-the time it refused -- and every test of the refusal would still pass, because
-the refusal is returned either way. The order is the invariant, so it is
-written once, in one place a reader can follow top to bottom, and the tests
-assert on what did *not* happen as much as on what came back.
+Steps 3, 4 and 5 come before step 7, and that is the whole point of writing
+this as one function. A gateway that checked permission after execution, asked
+for approval after calling the handler, or counted a call against a limit it
+had already served, would have already changed ERP data by the time it refused
+-- and every test of the refusal would still pass, because the refusal is
+returned either way. The order is the invariant, so it is written once, in one
+place a reader can follow top to bottom, and the tests assert on what did
+*not* happen as much as on what came back.
+
+Why the limit is checked before approval and counted after it
+-------------------------------------------------------------
+
+Checking and counting are the same policy at two different moments, and
+splitting them is deliberate. The check sits above the approval gate so a human
+is never asked to decide a call that policy will refuse whatever they say --
+spending an approver's attention on a foregone refusal is the expensive
+mistake. The count sits below it, at the moment the handler is about to run, so
+that a call which merely stops for a human costs no budget, and the
+approve-then-resubmit round trip is charged once rather than twice.
+
+Retries do not count either. One call is one unit however many attempts it
+takes, because :class:`~agentic_erp_assistant.tools.registry.RetryPolicy`
+already bounds attempts, and charging per attempt would make an actor's real
+budget a function of how flaky the backend was that minute -- which is the one
+thing a limit described as deterministic must not be.
 
 No branching on tool names
 --------------------------
@@ -54,6 +73,7 @@ from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEven
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 from agentic_erp_assistant.tools.audit import AuditSink, InMemoryAuditLog
+from agentic_erp_assistant.tools.limits import InMemoryRateLimiter, RateLimiter
 from agentic_erp_assistant.tools.models import (
     ARGUMENTS_SUMMARY_MAX_CHARS,
     AuditRow,
@@ -76,6 +96,20 @@ renames the class.
 
 _VALUE_MAX_CHARS = 40
 """How much of one argument value reaches the audit line before it is elided."""
+
+_REFUSAL_EVENT: dict[ToolStatus, str] = {
+    "approval_required": "approval_requested",
+    "rate_limited": "rate_limited",
+}
+"""Which trace event a refusal before execution emits, by the status it carries.
+
+A table rather than a chain of conditionals, and the fallback is ``"failed"``
+only for the statuses that really are failures. The two named here are the
+safety layer working, and a reviewer counting outages must not be counting
+them -- the same distinction
+:data:`~agentic_erp_assistant.state.tool_outcome.ToolStatus` draws between
+``denied`` and ``failed``.
+"""
 
 
 def _summarize(request: ToolRequest) -> str:
@@ -117,6 +151,15 @@ class ToolGateway:
 
     audit: AuditSink = field(default_factory=InMemoryAuditLog)
     """Where the record of a gated call goes."""
+
+    limiter: RateLimiter = field(default_factory=InMemoryRateLimiter)
+    """Where the count of what an actor has already called is kept.
+
+    Injected for the reason the audit sink is: the in-process default is right
+    for one worker and wrong for four, and the gateway should not have to know
+    which it is running in. It reads its window off the injected clock below,
+    so a limit and the wait it reports are both assertable.
+    """
 
     on_event: Callable[[TraceEvent], object] | None = None
     """Called with each trace event as it happens.
@@ -191,7 +234,27 @@ class ToolGateway:
                 ),
             )
 
-        # 4. Approval, for the tools that need one, before the handler exists
+        # 4. Budget. Above the approval gate on purpose: a human should never
+        #    be asked to decide a call that will be refused whatever they say.
+        #    Nothing is counted here -- see the module docstring.
+        wait = self.limiter.check(
+            request.actor, definition.name, definition.rate_limit, self.now()
+        )
+        if wait is not None:
+            return self._refused(
+                request,
+                definition=definition,
+                status="rate_limited",
+                error=(
+                    f"actor {request.actor!r} has spent its budget of "
+                    f"{definition.rate_limit.max_calls} calls to "
+                    f"{definition.name!r} per "
+                    f"{definition.rate_limit.per_seconds:g}s"
+                ),
+                retry_after_seconds=wait,
+            )
+
+        # 5. Approval, for the tools that need one, before the handler exists
         #    in this function's future at all.
         if definition.approval_required and request.approval != "approved":
             asked = request.approval == "denied"
@@ -207,7 +270,7 @@ class ToolGateway:
                 ),
             )
 
-        # 5, 6, 7. Run it, record it, trace it.
+        # 6, 7, 8. Run it, record it, trace it.
         outcome = self._run(definition, arguments, request)
         self._write_audit_row(request, definition, outcome)
         self._emit(
@@ -226,6 +289,12 @@ class ToolGateway:
         request: ToolRequest,
     ) -> ToolOutcome:
         """Call the handler inside its budget, and turn any raise into a status."""
+        # One call, one unit, whatever the retry budget goes on to spend.
+        # Counted here rather than at the check above so a call stopped for a
+        # human costs nothing -- see the module docstring.
+        self.limiter.record(
+            request.actor, definition.name, definition.rate_limit, self.now()
+        )
         attempts = 0
 
         def attempt() -> Any:
@@ -298,16 +367,19 @@ class ToolGateway:
     ) -> None:
         """Record a gated call, whatever became of it.
 
-        Only tools that require approval produce rows. An audit trail with one
-        row per read is one where the writes are buried, and the writes are the
-        reason it exists.
+        Tools that require approval produce rows, and so does any call refused
+        for a spent budget. An audit trail with one row per read is one where
+        the writes are buried, and the writes are the reason it exists -- but a
+        limit that fires silently on reads hides exactly the runaway pattern it
+        was added to catch, and that pattern is worth a row wherever it shows
+        up.
 
         The row is written after execution because it carries the real status,
         and a row saying "approved, then unknown" is not evidence. Nothing can
         execute and skip this: every path out of :meth:`_run` returns an
         outcome rather than raising.
         """
-        if not definition.approval_required:
+        if not (definition.approval_required or outcome.status == "rate_limited"):
             return
 
         self.audit.record(
@@ -334,6 +406,7 @@ class ToolGateway:
         status: ToolStatus,
         error: str,
         definition: ToolDefinition | None = None,
+        retry_after_seconds: float | None = None,
     ) -> ToolOutcome:
         """Build the outcome for a call that never reached a handler.
 
@@ -342,14 +415,18 @@ class ToolGateway:
         retry that never happened.
         """
         outcome = ToolOutcome(
-            tool_name=request.tool_name, status=status, error=error, attempts=1
+            tool_name=request.tool_name,
+            status=status,
+            error=error,
+            attempts=1,
+            retry_after_seconds=retry_after_seconds,
         )
         if definition is not None:
             self._write_audit_row(request, definition, outcome)
-        self._emit(
-            "approval_requested" if status == "approval_required" else "failed",
-            f"{request.tool_name} refused before execution: {status}",
-        )
+        detail = f"{request.tool_name} refused before execution: {status}"
+        if retry_after_seconds is not None:
+            detail += f"; retry in {retry_after_seconds:.2f}s"
+        self._emit(_REFUSAL_EVENT.get(status, "failed"), detail)
         return outcome
 
     def _emit(self, kind: str, detail: str) -> None:

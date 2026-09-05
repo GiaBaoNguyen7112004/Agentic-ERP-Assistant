@@ -1,14 +1,20 @@
 """The order is the safety, so the tests assert on what did not happen."""
 
 import ast
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from agentic_erp_assistant.erp.mock import MockErp
-from agentic_erp_assistant.llm.tools import CREATE_RISK_TOOL, GET_PROJECT_STATUS_TOOL
+from agentic_erp_assistant.llm.tools import (
+    CREATE_RISK_TOOL,
+    GET_PROJECT_STATUS_FLAKY_TOOL,
+    GET_PROJECT_STATUS_TOOL,
+    LIST_RISKS_TOOL,
+    ToolSpec,
+)
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.tool_request import ToolRequest
 from agentic_erp_assistant.tools.gateway import GATEWAY_NODE, ToolGateway
@@ -17,6 +23,7 @@ from agentic_erp_assistant.tools.models import ToolError, TransientToolError
 from agentic_erp_assistant.tools.registry import (
     build_default_registry,
     NO_RETRY,
+    RateLimitPolicy,
     RetryPolicy,
     ToolDefinition,
     ToolRegistry,
@@ -542,3 +549,322 @@ def test_a_gateway_with_no_listener_still_works(erp: MockErp) -> None:
     gateway = ToolGateway(build_default_registry(erp))
 
     assert gateway.execute(call("list_risks", {"project_id": "atlas"})).status == "ok"
+
+
+# --------------------------------------------------------------------------
+# The budget is registry policy, and it fires before the handler
+# --------------------------------------------------------------------------
+
+
+class Clock:
+    """A clock a test moves by hand.
+
+    The gateway fixture pins ``now`` to a constant, which is what makes an
+    audit timestamp assertable; a window needs the opposite, so this advances
+    on demand. Still no wall clock anywhere: a limit that only fails on a slow
+    machine is a limit nobody can debug.
+    """
+
+    def __init__(self, start: datetime = WHEN) -> None:
+        self.now = start
+
+    def __call__(self) -> datetime:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += timedelta(seconds=seconds)
+
+
+STATUS_ARGS = {"milestone_id": "M2"}
+
+
+def limited(
+    spec: ToolSpec,
+    handler: object,
+    *,
+    max_calls: int = 1,
+    per_seconds: float = 60.0,
+    scope: str = "project.status.read",
+    approval_required: bool = False,
+    retry: RetryPolicy = NO_RETRY,
+) -> ToolDefinition:
+    """One tool whose only unusual policy is a budget small enough to hit."""
+    return ToolDefinition(
+        spec=spec,
+        required_scope=scope,
+        approval_required=approval_required,
+        timeout_seconds=5.0,
+        retry=retry,
+        rate_limit=RateLimitPolicy(max_calls=max_calls, per_seconds=per_seconds),
+        handler=handler,  # type: ignore[arg-type]
+    )
+
+
+def gateway_over(
+    *definitions: ToolDefinition,
+    events: list[TraceEvent] | None = None,
+    clock: Clock | None = None,
+) -> ToolGateway:
+    return ToolGateway(
+        ToolRegistry(definitions),
+        on_event=(events.append if events is not None else None),
+        now=clock if clock is not None else (lambda: WHEN),
+        sleep=lambda _: None,
+        jitter=lambda: 0.0,
+    )
+
+
+def test_the_call_at_the_limit_runs_and_the_next_never_reaches_the_handler(
+    events: list[TraceEvent],
+) -> None:
+    """The acceptance case. The assertion that matters is ``spy.calls``: a
+    limit checked after execution would return the same outcome having already
+    served the load it exists to refuse."""
+    spy = SpyHandler()
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, spy, max_calls=1), events=events
+    )
+
+    allowed = gateway.execute(call("get_project_status", STATUS_ARGS))
+    refused = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    assert allowed.status == "ok"
+    assert refused.status == "rate_limited"
+    assert refused.attempts == 1
+    assert spy.calls == 1
+
+
+def test_a_refusal_says_when_to_come_back(events: list[TraceEvent]) -> None:
+    """A rate limiter always knows the answer -- it is holding the window --
+    so a refusal that made the caller guess would be withholding the one fact
+    it was in a position to give."""
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, SpyHandler(), max_calls=1, per_seconds=45.0),
+        events=events,
+    )
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    refused = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    assert refused.retry_after_seconds == 45.0
+
+
+def test_the_wait_it_reports_is_the_wait_that_actually_works() -> None:
+    """The honesty check on the sliding log: waiting exactly as long as the
+    refusal asked for is enough, and no longer."""
+    clock = Clock()
+    spy = SpyHandler()
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, spy, max_calls=1, per_seconds=10.0),
+        clock=clock,
+    )
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+    refused = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    clock.advance(refused.retry_after_seconds or 0.0)
+    allowed = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    assert allowed.status == "ok"
+    assert spy.calls == 2
+
+
+def test_a_rate_limited_read_is_audited_even_though_reads_are_not(
+    events: list[TraceEvent],
+) -> None:
+    """Reads produce no rows, on purpose -- but a limit that fires silently on
+    reads hides exactly the runaway pattern it was added to catch."""
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, SpyHandler(), max_calls=1), events=events
+    )
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    rows = gateway.audit.rows  # type: ignore[union-attr]
+    assert [row.status for row in rows] == ["rate_limited"]
+    assert rows[0].actor == "pm@example.com"
+    assert rows[0].tool_name == "get_project_status"
+    assert rows[0].occurred_at == WHEN
+
+
+def test_a_refusal_for_a_budget_is_not_traced_as_a_failure(
+    events: list[TraceEvent],
+) -> None:
+    """A reviewer counting outages must not be counting the safety layer
+    working."""
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, SpyHandler(), max_calls=1), events=events
+    )
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    kinds = [event.kind for event in events]
+    assert "rate_limited" in kinds
+    assert "failed" not in kinds
+
+
+def test_one_actor_spending_its_budget_does_not_spend_another_s() -> None:
+    """Per-actor, never global: a shared counter makes one busy user the reason
+    another user's read is refused."""
+    spy = SpyHandler()
+    gateway = gateway_over(limited(GET_PROJECT_STATUS_TOOL, spy, max_calls=1))
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    other = gateway.execute(
+        call("get_project_status", STATUS_ARGS, actor="lead@example.com")
+    )
+
+    assert other.status == "ok"
+    assert spy.calls == 2
+
+
+def test_a_budget_is_spent_per_tool_and_not_across_them() -> None:
+    """The other half of the key. A counter shared across tools would let a
+    cheap read exhaust the budget for an expensive one."""
+    status = SpyHandler()
+    risks = SpyHandler()
+    gateway = gateway_over(
+        limited(GET_PROJECT_STATUS_TOOL, status, max_calls=1),
+        limited(LIST_RISKS_TOOL, risks, max_calls=1, scope="project.risk.read"),
+    )
+    gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    other_tool = gateway.execute(call("list_risks", {"project_id": "atlas"}))
+
+    assert other_tool.status == "ok"
+    assert status.calls == 1
+    assert risks.calls == 1
+
+
+def test_a_call_refused_for_a_missing_scope_costs_no_budget() -> None:
+    """Quota is consumption of the backend, and a denial consumed nothing. If
+    it counted, a model firing calls it is not entitled to could lock the
+    actor out of the tools it is."""
+    spy = SpyHandler()
+    gateway = gateway_over(limited(GET_PROJECT_STATUS_TOOL, spy, max_calls=1))
+    gateway.execute(call("get_project_status", STATUS_ARGS, scopes=frozenset()))
+
+    allowed = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    assert allowed.status == "ok"
+    assert spy.calls == 1
+
+
+def test_a_call_with_invented_arguments_costs_no_budget() -> None:
+    spy = SpyHandler()
+    gateway = gateway_over(limited(GET_PROJECT_STATUS_TOOL, spy, max_calls=1))
+    gateway.execute(call("get_project_status", {"milestone_id": "M2", "force": True}))
+
+    allowed = gateway.execute(call("get_project_status", STATUS_ARGS))
+
+    assert allowed.status == "ok"
+    assert spy.calls == 1
+
+
+def test_stopping_for_a_human_costs_no_budget() -> None:
+    """The reason the check and the count are split. A pending approval that
+    charged the budget would make the approve-then-resubmit round trip cost
+    two units, so a limit of one could never be used at all."""
+    spy = SpyHandler()
+    gateway = gateway_over(
+        limited(
+            CREATE_RISK_TOOL,
+            spy,
+            max_calls=1,
+            scope="project.risk.write",
+            approval_required=True,
+        )
+    )
+    pending = gateway.execute(new_risk())
+
+    approved = gateway.execute(new_risk(approval="approved"))
+
+    assert pending.status == "approval_required"
+    assert approved.status == "ok"
+    assert spy.calls == 1
+
+
+def test_a_human_is_never_asked_to_approve_a_call_the_budget_will_refuse() -> None:
+    """Why the check sits above the approval gate: spending an approver's
+    attention on a foregone refusal is the expensive mistake."""
+    spy = SpyHandler()
+    gateway = gateway_over(
+        limited(
+            CREATE_RISK_TOOL,
+            spy,
+            max_calls=1,
+            scope="project.risk.write",
+            approval_required=True,
+        )
+    )
+    gateway.execute(new_risk(approval="approved"))
+
+    second = gateway.execute(new_risk())
+
+    assert second.status == "rate_limited"
+    assert spy.calls == 1
+
+
+def test_a_retried_call_costs_one_unit_and_not_one_per_attempt(
+    erp: MockErp,
+) -> None:
+    """Otherwise an actor's real budget would be a function of how flaky the
+    backend was that minute -- which is the one thing a limit described as
+    deterministic must not be."""
+    handlers = build_default_registry(erp).get("get_project_status_flaky").handler
+    gateway = gateway_over(
+        limited(
+            GET_PROJECT_STATUS_FLAKY_TOOL,
+            handlers,
+            max_calls=2,
+            retry=RetryPolicy(max_attempts=2),
+        )
+    )
+
+    first = gateway.execute(call("get_project_status_flaky", STATUS_ARGS))
+    second = gateway.execute(call("get_project_status_flaky", STATUS_ARGS))
+
+    assert first.attempts == 2
+    assert second.status == "ok"
+
+
+def test_a_permitted_call_is_still_summarized_rather_than_returned_whole(
+    gateway: ToolGateway,
+) -> None:
+    """The limit changed the refusal path and nothing else: a call inside its
+    budget still comes back as a sentence plus source identifiers, not as the
+    ERP records it read."""
+    outcome = gateway.execute(call("list_risks", {"project_id": "atlas"}))
+
+    assert outcome.status == "ok"
+    assert outcome.retry_after_seconds is None
+    assert outcome.source_ids
+    assert "{" not in outcome.summary and "source_id" not in outcome.summary
+
+
+# --------------------------------------------------------------------------
+# The declared budgets
+# --------------------------------------------------------------------------
+
+
+def test_every_registered_tool_carries_a_real_budget(erp: MockErp) -> None:
+    """There is no spelling for "unlimited", so a tool added later inherits a
+    limit whether or not its author thought about one."""
+    registry = build_default_registry(erp)
+
+    for name in registry.names():
+        policy = registry.get(name).rate_limit
+        assert policy.max_calls >= 1
+        assert policy.per_seconds > 0
+
+
+def test_the_write_is_budgeted_more_tightly_than_the_reads(erp: MockErp) -> None:
+    """Not because the write is the primary risk -- approval already covers
+    that -- but because the limit is the backstop for what approval cannot
+    see: a resubmission loop replaying one approved call."""
+    registry = build_default_registry(erp)
+
+    assert (
+        registry.get("create_risk").rate_limit.max_calls
+        < registry.get("list_risks").rate_limit.max_calls
+    )
+
