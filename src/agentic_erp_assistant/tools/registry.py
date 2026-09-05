@@ -29,9 +29,16 @@ to disagree with the first.
 derivable. Every write needs approval -- enforced below -- but a read may need
 it too: an export of a whole ledger is read-only and still worth stopping for a
 human. Deriving it would make that policy unexpressible.
+
+:attr:`ToolDefinition.rate_limit` is stored for the same reason and has no
+"unlimited" spelling: there is no ``None`` and no sentinel meaning "as often as
+you like". A tool added a year from now inherits a real budget whether or not
+its author thought about one, which is the opposite of what an optional field
+would do -- the same argument ``required_scope`` makes by rejecting a blank
+string.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,12 +57,15 @@ from agentic_erp_assistant.tools.handlers import build_handlers, Handler
 
 __all__ = [
     "build_default_registry",
+    "DEFAULT_RATE_LIMIT",
     "NO_RETRY",
+    "RateLimitPolicy",
     "RetryPolicy",
     "SideEffect",
     "ToolDefinition",
     "ToolRegistry",
     "UnknownTool",
+    "WRITE_RATE_LIMIT",
 ]
 
 
@@ -89,6 +99,55 @@ class RetryPolicy(BaseModel):
 NO_RETRY = RetryPolicy()
 """One attempt, no waiting. Shared so the common case reads as a decision
 rather than as a constructor nobody looked at."""
+
+
+class RateLimitPolicy(BaseModel):
+    """How often one actor may call one tool, and over what window.
+
+    Per tool and per actor, never global. A global counter makes one busy user
+    the reason another user's read is refused, and a per-tool-only counter lets
+    a single actor spend the whole budget. The pair ``(actor, tool)`` is the
+    only key under which "you have had enough" is a statement about the party
+    that actually did the calling.
+
+    Sibling of :class:`RetryPolicy` and declared in the same place, because
+    both answer the same kind of question -- how much of a backend this tool is
+    allowed to consume -- and a reviewer should find both budgets in one diff.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_calls: int = Field(ge=1)
+    """Calls one actor may make to one tool inside the window.
+
+    No default. The two numbers only mean something together, and a defaulted
+    count beside a required window would let half a policy be declared.
+    """
+
+    per_seconds: float = Field(gt=0.0)
+    """The width of the window, in seconds. Strictly positive -- a zero-width
+    window is a limit that refuses everything or nothing depending on how the
+    comparison is written."""
+
+
+DEFAULT_RATE_LIMIT = RateLimitPolicy(max_calls=30, per_seconds=60.0)
+"""The budget a read gets unless it says otherwise.
+
+Thirty a minute is well above what one turn of an assistant needs and well
+below what a runaway loop produces, which is the band a limit like this is
+for: it is a circuit breaker on a stuck agent, not a quota anyone should feel.
+"""
+
+
+WRITE_RATE_LIMIT = RateLimitPolicy(max_calls=5, per_seconds=60.0)
+"""The budget a mutating tool gets, and it is deliberately tight.
+
+Every write here already stops for a human, so this is not the primary gate --
+it is the backstop for the case the approval gate cannot see: an approve-and-
+resubmit loop, or a client replaying the same approved call. Five a minute is
+more writes than a person approves in a minute, so the limit only ever fires
+on something that is not a person.
+"""
 
 
 class UnknownTool(KeyError):
@@ -131,6 +190,16 @@ class ToolDefinition:
 
     retry: RetryPolicy
     """The attempt budget. See :class:`RetryPolicy`."""
+
+    rate_limit: RateLimitPolicy = field(
+        default=DEFAULT_RATE_LIMIT, kw_only=True
+    )
+    """How often one actor may call this. See :class:`RateLimitPolicy`.
+
+    Keyword-only with a default so it can be read here, next to the other
+    budget, instead of after the handler where a dataclass would otherwise put
+    every field that has one.
+    """
 
     handler: Handler
     """The code that runs, already bound to its data store.
@@ -266,6 +335,7 @@ def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
                 # One attempt, on purpose. A retried write is how one approved
                 # risk becomes three, and the approval was for one.
                 retry=NO_RETRY,
+                rate_limit=WRITE_RATE_LIMIT,
                 handler=handlers["create_risk"],
             ),
         )
