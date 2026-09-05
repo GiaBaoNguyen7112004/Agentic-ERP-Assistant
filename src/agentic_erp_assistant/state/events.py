@@ -46,6 +46,7 @@ EventKind = Literal[
     "retry_scheduled",    # an attempt was spent and another will follow
     "rate_limited",       # a call was refused because a budget was spent
     "failed",             # a FailureMode was assigned
+    "run_failed",         # the loop guard ended a run that would not end
 ]
 """The transitions the audit depends on.
 
@@ -53,6 +54,13 @@ Closed for the same reason
 :data:`~agentic_erp_assistant.reasoning.decision.DecisionRoute` is: a kind
 nobody reports on has to fail at construction rather than appear later as a
 category that quietly showed up in an evidence bundle.
+
+``run_failed`` is separate from ``failed`` on the same principle. ``failed``
+means a node looked at what happened and assigned a reason; ``run_failed``
+means no node did -- the loop guard stopped a run that kept producing states
+and never produced an ending. One is the system reporting an outcome, the other
+is the system admitting it lost control of the graph, and a reviewer must be
+able to count the second without the first burying it.
 
 ``rate_limited`` is its own kind rather than a ``failed`` event for the reason
 ``route_selected`` is not one either: a reviewer counting outages must not be
