@@ -115,7 +115,12 @@ ALLOWED: Mapping[DecisionRoute | None, frozenset[DecisionRoute]] = {
     # or the turn broke. The edge back to "think" is what makes this a cycle
     # rather than a single shot, and it is the reason the runtime carries a
     # step budget: an unbounded cycle needs a guard, not an absent edge.
-    "call_tool": frozenset({"think", "answer", "fail"}),
+    #
+    # The edge to request_approval is the escalated read: the registry may put
+    # a non-mutating tool in front of a human, the gateway refuses the call
+    # with "approval_required", and the node has to be able to go and ask.
+    # Without it that policy would be unreachable and would fail the turn.
+    "call_tool": frozenset({"think", "request_approval", "answer", "fail"}),
     # Waiting on a human: granted goes on to the call, denied ends in a
     # refusal, and anything breaking on the way ends in a failure.
     "request_approval": frozenset({"call_tool", "refuse", "fail"}),
