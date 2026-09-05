@@ -21,6 +21,15 @@ agentic-erp-assistant = "agentic_erp_assistant:main"
 requires = ["uv_build>=0.12.0,<0.13.0"]
 build-backend = "uv_build"
 
+[tool.pytest.ini_options]
+# Two test files may share a basename -- tests/llm/test_gateway.py and
+# tests/tools/test_gateway.py both describe "the gateway" for their own layer,
+# and renaming one to avoid a collision would make the suite's layout stop
+# mirroring the package's. importlib import mode gives each file its own module
+# identity, so the mirror can stay exact.
+addopts = "--import-mode=importlib"
+consider_namespace_packages = true
+
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
