@@ -35,11 +35,20 @@ produced by a different, independently-checkable mechanism:
     Neither corresponds to a tool the model could have called, which is
     exactly why they carry no ``required_tool``.
 
-Answering directly (no retrieval, no tool) maps to none of the five, and that
-is not an oversight. Every :data:`DecisionRoute` names a *preparatory* action,
-and answering directly is the absence of one. A later unit may add an
-``answer`` route; inventing one here would be adding a branch the runtime
-cannot yet dispatch.
+``answer``
+    Everything the reply needs is already in state, so no preparatory step is
+    left to take. Read off the same live decision as ``call_tool``: a
+    :class:`~agentic_erp_assistant.llm.tools.ToolCallResult` that names no tool
+    is the model electing to answer.
+
+Five of the six name a *preparatory* action; ``answer`` names the absence of
+one, and it is a member of the set rather than an implied ``None`` on purpose.
+A ``None`` route would give "the runtime decided to reply" and "nothing has
+been decided yet" the same value, and the graph has to tell those apart: the
+first is a node to dispatch, the second is a turn that never routed. It is
+added now, and was not present before, because only now is there a graph node
+that can dispatch it -- a label with no branch behind it is a lie the type
+system helps tell.
 
 What this module deliberately does not check
 --------------------------------------------
@@ -69,6 +78,7 @@ DecisionRoute = Literal[
     "retrieve_project_documents",  # go to RAG before answering
     "call_tool",                   # a tool call that may run unattended
     "request_approval",            # a tool call that must stop for a human
+    "answer",                      # nothing left to prepare; reply from state
     "clarify",                     # the request is under-specified; ask back
     "refuse",                      # do not proceed at all
 ]

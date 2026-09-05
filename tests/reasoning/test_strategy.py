@@ -82,6 +82,31 @@ def test_the_terminal_routes_need_neither_tool_nor_evidence(route: str) -> None:
     assert decision.required_evidence == ()
 
 
+def test_answering_directly_is_a_route_and_not_an_absent_one() -> None:
+    """The graph dispatches a reply node; 'no route yet' has to stay a
+    different value from 'the runtime decided to reply'."""
+    decision = ReasoningDecision(route="answer", confidence=0.9)
+
+    assert decision.route == "answer"
+    assert decision.required_tool is None
+
+
+def test_the_answer_route_cannot_carry_a_tool_name() -> None:
+    """It is the absence of a preparatory action, so there is nothing to name."""
+    with pytest.raises(ValidationError, match="required_tool"):
+        ReasoningDecision(
+            route="answer",
+            confidence=0.9,
+            required_tool="get_project_status",
+        )
+
+
+def test_approval_cannot_be_required_on_the_answer_route() -> None:
+    """Nothing executes on the way to a reply, so there is nothing to approve."""
+    with pytest.raises(ValidationError, match="approval_required"):
+        ReasoningDecision(route="answer", confidence=0.9, approval_required=True)
+
+
 def test_an_unroutable_label_is_rejected_at_the_decision() -> None:
     """Closed set, so a label nobody can dispatch fails here, not at dispatch."""
     with pytest.raises(ValidationError):
