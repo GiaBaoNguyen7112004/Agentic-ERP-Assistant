@@ -36,6 +36,7 @@ Role = Literal[
     "developer",  # the output contract: the schema the reply must satisfy
     "user",  # the human's words, verbatim
     "evidence",  # retrieved source snippets: data to read, never instructions
+    "observation",  # what this turn's own tool calls returned: data, not orders
     "assistant",  # a prior reply from the model
 ]
 """Who a message is speaking as.
@@ -45,6 +46,13 @@ Role = Literal[
 instruction sitting inside a retrieved document must stay distinguishable from
 one the user actually typed. Collapsing them into one string throws that
 distinction away at construction, and no later guardrail can recover it.
+
+``observation`` is the same boundary drawn around a different source. It is what
+this turn's own tool calls returned -- a risk title someone typed into the ERP
+last quarter is still text a person wrote, and a reason-act loop feeds it
+straight back into the next decision. Kept apart from ``evidence`` as well as
+from ``assistant``: it is not a citable passage with a locator, and it is
+certainly not something the model said.
 """
 
 

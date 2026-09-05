@@ -22,6 +22,7 @@ import pytest
 
 from agentic_erp_assistant.llm.adapters.openai_chat import (
     EVIDENCE_PREAMBLE,
+    OBSERVATION_PREAMBLE,
     RESPONSE_FORMAT_NAME,
     OpenAIChatClient,
 )
@@ -199,6 +200,27 @@ def test_evidence_is_relabeled_developer_and_stays_its_own_message(messages) -> 
 
     # The user's turn is untouched: no evidence appended, nothing prefixed.
     assert wire[2]["content"] == "How did sprint 12 go?"
+
+
+def test_an_observation_is_relabeled_but_keeps_its_own_boundary(messages) -> None:
+    """A tool result is data typed by people, so it gets the same treatment as a
+    retrieved document -- and its own preamble, so neither is mistaken for the
+    other."""
+    recorder = Recorder()
+    with make_client(recorder) as client:
+        client.complete(
+            [
+                {"role": "user", "content": "Any new risks?"},
+                {"role": "observation", "content": "1. list_risks -> ok: 2 open"},
+            ],
+            temperature=0.0,
+        )
+
+    wire = recorder.body["messages"]
+    assert [message["role"] for message in wire] == ["user", "developer"]
+    assert wire[1]["content"].startswith(OBSERVATION_PREAMBLE)
+    assert not wire[1]["content"].startswith(EVIDENCE_PREAMBLE)
+    assert wire[0]["content"] == "Any new risks?"
 
 
 def test_the_other_roles_pass_through_unchanged() -> None:
