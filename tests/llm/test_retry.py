@@ -393,3 +393,57 @@ def test_an_invalid_budget_is_a_caller_bug(budget: dict) -> None:
         retry_with_backoff(operation, sleep=lambda _: None, **budget)
 
     assert operation.calls == 0
+
+
+# --------------------------------------------------------------------------
+# retry_on: the same loop, told which failure is worth repeating
+# --------------------------------------------------------------------------
+
+
+class _OtherTransient(Exception):
+    """Stands in for TransientToolError: a transient failure from a different
+    boundary, which must not be made a subclass of a provider error just to
+    reuse this loop."""
+
+
+def test_a_caller_can_name_a_different_failure_to_retry() -> None:
+    attempts = []
+
+    def flaky() -> str:
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise _OtherTransient("the ERP timed out")
+        return "ok"
+
+    result = retry_with_backoff(
+        flaky, max_attempts=2, sleep=lambda _: None, retry_on=_OtherTransient
+    )
+
+    assert result == "ok"
+    assert len(attempts) == 2
+
+
+def test_naming_one_type_still_lets_every_other_failure_through() -> None:
+    """The narrow except is the enforcement; pointing it elsewhere must not
+    widen it."""
+
+    def broken() -> str:
+        raise TransientProviderError("a provider failure, not a tool one")
+
+    with pytest.raises(TransientProviderError):
+        retry_with_backoff(
+            broken, max_attempts=3, sleep=lambda _: None, retry_on=_OtherTransient
+        )
+
+
+def test_the_default_is_still_the_provider_failure() -> None:
+    """So no existing call site had to say anything."""
+    attempts = []
+
+    def flaky() -> str:
+        attempts.append(1)
+        if len(attempts) < 2:
+            raise TransientProviderError("429")
+        return "ok"
+
+    assert retry_with_backoff(flaky, max_attempts=2, sleep=lambda _: None) == "ok"
