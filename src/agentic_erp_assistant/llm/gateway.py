@@ -31,10 +31,11 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
+    ToolCallingClient,
     Usage,
     UsageReporting,
 )
-from agentic_erp_assistant.llm.prompts import build_messages
+from agentic_erp_assistant.llm.prompts import build_messages, build_planner_messages
 from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.llm.telemetry import (
@@ -46,6 +47,8 @@ from agentic_erp_assistant.llm.telemetry import (
     price,
 )
 from agentic_erp_assistant.llm.tokenizer import TiktokenCounter, TokenCounter
+from agentic_erp_assistant.llm.tools import PLANNING_TOOLS, ToolCallResult, ToolSpec
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = ["ContextWindowExceeded", "Evidence", "LLMGateway", "WHOLE_DOCUMENT"]
 
@@ -233,6 +236,113 @@ class LLMGateway:
             model=response["model"],
         )
         return answer
+
+    def decide(
+        self,
+        question: str,
+        evidence: Evidence = (),
+        observations: Sequence[ToolOutcome] = (),
+        *,
+        tools: Sequence[ToolSpec] = PLANNING_TOOLS,
+        temperature: float = 0.0,
+    ) -> ToolCallResult:
+        """Ask the model what to do next, and report the one choice it made.
+
+        The sibling of :meth:`answer`, through the same four steps -- build,
+        budget, call with retry, record -- because a routing call costs money
+        and can fail exactly like an answering one, and a decision that skipped
+        the budget check would be the request that blows the window right
+        before the reply that needed the room.
+
+        What comes back is transport-shaped on purpose: a tool name and parsed
+        arguments, or content. Turning that into a route is policy
+        (:mod:`agentic_erp_assistant.reasoning.planner`), and policy in the
+        gateway would be a second place routing is decided.
+
+        Args:
+            question: The user's words, verbatim.
+            evidence: Whatever retrieval has supplied so far this turn.
+            observations: What this turn's calls have returned, in order.
+            tools: What to offer. Defaults to
+                :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS`.
+            temperature: 0.0. A routing decision is not a place for variety.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
+
+        Raises:
+            TypeError: The configured client cannot make tool calls. Raised
+                before anything is sent, and raised rather than routed: a
+                gateway wired to a text-only client is a deployment mistake,
+                not a turn that failed.
+            ContextWindowExceeded: The estimate does not leave room for a reply.
+            TransientProviderError: Retries were exhausted.
+            ProviderAuthError: A definitive rejection from the provider.
+            ValueError: ``question`` is blank, or ``tools`` is empty.
+        """
+        client = self.client
+        if not isinstance(client, ToolCallingClient):
+            raise TypeError(
+                f"{type(client).__name__} cannot make tool calls, so this "
+                f"gateway cannot route; wire a client satisfying "
+                f"ToolCallingClient to use decide()"
+            )
+
+        messages = build_planner_messages(
+            question, _as_snippets(evidence), observations
+        )
+
+        estimated = self.counter.count_message_tokens(
+            messages, model=client.model_name
+        )
+        self._check_budget(estimated)
+
+        attempts = 0
+
+        def one_attempt() -> ToolCallResult:
+            nonlocal attempts
+            attempts += 1
+            return client.call_with_tools(
+                messages, tools=tools, temperature=temperature
+            )
+
+        started = time.perf_counter()
+        try:
+            decision = retry_with_backoff(
+                one_attempt,
+                max_attempts=self.max_attempts,
+                sleep=self.sleep,
+                **({"jitter": self.jitter} if self.jitter is not None else {}),
+            )
+        except Exception as error:
+            self._record(
+                outcome="provider_failure",
+                estimated=estimated,
+                usage=self._reported_usage(),
+                latency=time.perf_counter() - started,
+                attempts=attempts,
+                detail=f"{type(error).__name__}: {error}",
+            )
+            raise
+        latency = time.perf_counter() - started
+
+        # No response object comes back from a decision -- the port returns the
+        # choice, not the envelope -- so the provider's own usage is the only
+        # record of what it cost. Zeros when the client cannot report it, which
+        # is visible in the trace rather than silently absent.
+        self._record(
+            outcome="routed",
+            estimated=estimated,
+            usage=self._reported_usage(),
+            latency=latency,
+            attempts=attempts,
+            detail=(
+                f"chose {decision.tool_name}"
+                if decision.tool_name
+                else "answered without a tool"
+            ),
+        )
+        return decision
 
     def _check_budget(self, estimated: int) -> None:
         """Refuse a request that cannot fit, before it costs anything.

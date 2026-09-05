@@ -493,3 +493,150 @@ def test_a_blank_question_never_reaches_the_provider() -> None:
 
     assert recorder.requests == []
     assert telemetry.records == []
+
+
+# --------------------------------------------------------------------------
+# decide(): the same four steps, asking a different question
+# --------------------------------------------------------------------------
+
+
+def tool_call_reply(name: str, arguments: dict) -> dict:
+    return {
+        "id": "chatcmpl-test",
+        "model": MODEL,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ],
+        "usage": USAGE,
+    }
+
+
+def test_a_decision_comes_back_as_the_call_the_model_chose() -> None:
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    decision = gateway.decide("What could go wrong on atlas?")
+
+    assert decision.tool_name == "list_risks"
+    assert decision.arguments == {"project_id": "atlas"}
+    assert decision.content is None
+
+
+def test_the_planner_request_carries_the_offered_functions() -> None:
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    body = json.loads(recorder.requests[0].content)
+    offered = {tool["function"]["name"] for tool in body["tools"]}
+    assert "search_project_documents" in offered
+    assert "create_risk" in offered
+    assert body["tool_choice"] == "auto"
+    assert body["parallel_tool_calls"] is False
+
+
+def test_observations_reach_the_model_in_their_own_block() -> None:
+    """The reason a second decision can differ from the first."""
+    from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+    recorder = Recorder(httpx.Response(200, json=reply("Two risks are open.")))
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.decide(
+        "What could go wrong on atlas?",
+        observations=(
+            ToolOutcome(
+                tool_name="list_risks",
+                status="ok",
+                summary="2 open",
+                source_ids=("atlas",),
+            ),
+        ),
+    )
+
+    body = json.loads(recorder.requests[0].content)
+    blocks = [message["content"] for message in body["messages"]]
+    assert any("list_risks -> ok: 2 open" in block for block in blocks)
+
+
+def test_content_with_no_call_is_the_answer_route() -> None:
+    recorder = Recorder(httpx.Response(200, json=reply("Nothing is at risk.")))
+    gateway, _, _ = make_gateway(recorder)
+
+    decision = gateway.decide("Anything at risk?")
+
+    assert decision.tool_name is None
+    assert decision.content == "Nothing is at risk."
+
+
+def test_a_routing_call_is_recorded_as_its_own_kind_of_spend() -> None:
+    """A cost report that grouped routing under 'answered' would be wrong about
+    what the money bought."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    assert [record.outcome for record in telemetry.records] == ["routed"]
+    assert telemetry.records[0].detail is not None
+    assert "list_risks" in telemetry.records[0].detail
+
+
+def test_a_decision_too_large_to_send_is_refused_before_it_costs_anything() -> None:
+    recorder = Recorder()
+    gateway, telemetry, _ = make_gateway(
+        recorder, context_window=100, counter=FixedCounter(99), output_reserve=10
+    )
+
+    with pytest.raises(ContextWindowExceeded):
+        gateway.decide("What could go wrong on atlas?")
+
+    assert recorder.requests == []
+    assert [record.outcome for record in telemetry.records] == ["budget_exceeded"]
+
+
+def test_a_failed_decision_is_retried_and_then_recorded() -> None:
+    recorder = Recorder(
+        httpx.Response(503, text="upstream down"),
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"})),
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    decision = gateway.decide("What could go wrong on atlas?")
+
+    assert decision.tool_name == "list_risks"
+    assert len(recorder.requests) == 2
+    assert [record.outcome for record in telemetry.records] == ["routed"]
+    assert telemetry.records[0].attempts == 2
+
+
+def test_a_text_only_client_cannot_route_and_says_so_before_sending() -> None:
+    """A deployment mistake, not a turn that failed."""
+    gateway = LLMGateway(FakePortClient(), context_window=128_000)
+
+    with pytest.raises(TypeError, match="ToolCallingClient"):
+        gateway.decide("What could go wrong on atlas?")

@@ -28,12 +28,16 @@ from collections.abc import Sequence
 
 from agentic_erp_assistant.llm.ports import Message
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
     "DEVELOPER_CONTRACT",
     "NO_EVIDENCE",
+    "NO_OBSERVATIONS",
+    "PLANNER_CONTRACT",
     "SYSTEM_POLICY",
     "build_messages",
+    "build_planner_messages",
 ]
 
 
@@ -102,6 +106,119 @@ def _render_evidence(evidence: Sequence[EvidenceSnippet]) -> str:
         f"{index}. {snippet.tag} {' '.join(snippet.text.split())}"
         for index, snippet in enumerate(evidence, start=1)
     )
+
+
+PLANNER_CONTRACT = (
+    "Decide the single next action for this turn, and take it by calling exactly\n"
+    "one of the functions you were given. Do not call two. Do not explain the call\n"
+    "in prose beside it.\n"
+    "\n"
+    "How to choose:\n"
+    "\n"
+    "1. If the question needs something written down in a project document -- a\n"
+    "decision, a commitment, an explanation, anything that has to be quoted -- call\n"
+    "search_project_documents first. Facts that must be cited come from documents,\n"
+    "not from memory.\n"
+    "2. If the question asks for a field the ERP holds -- a milestone's status, a\n"
+    "sprint's burn-down, a budget, the open risks -- call that tool with the\n"
+    "identifier the user gave.\n"
+    "3. If the request does not say what it is about, and guessing the subject\n"
+    "would produce a confident answer about the wrong thing, call ask_clarification\n"
+    "with the one question that unblocks it.\n"
+    "4. If the request is outside project delivery, or nothing available could\n"
+    "support an answer, call refuse with the reason.\n"
+    "5. Only when the observations already contain everything the reply needs, and\n"
+    "no further action would add to it, answer directly in plain text with no\n"
+    "function call.\n"
+    "\n"
+    "Two things that are not negotiable:\n"
+    "\n"
+    "* create_risk changes project data. Calling it does not perform it -- the call\n"
+    "stops and waits for a human to approve or deny. Never say or imply that\n"
+    "anything has been recorded, and never call it before checking list_risks for a\n"
+    "risk that already covers the same thing.\n"
+    "* Do not repeat a call that already appears in the observations with the same\n"
+    "arguments. If it failed, either choose a different action or say what is\n"
+    "missing; repeating it will fail the same way."
+)
+"""What the planner asks for, in the role that carries instructions.
+
+The routing rules live here rather than in the tool descriptions because a
+description says what a tool is for, while these say which to prefer when two
+could apply -- and preference is policy, which belongs in one readable block a
+reviewer can diff.
+
+There is no schema in this contract, unlike :data:`DEVELOPER_CONTRACT`. The
+shape of a decision is carried by the function definitions themselves, so
+restating it here would create a second, drifting copy of the same contract.
+"""
+
+
+NO_OBSERVATIONS = "(nothing has been run yet)"
+"""Stands in for an empty observation block.
+
+Emitted even when nothing has run, for the reason :data:`NO_EVIDENCE` is: the
+block shape stays constant, and the model is told in the role it expects
+results in that there are none -- which is the difference between "the first
+action of this turn" and "an action whose result went missing".
+"""
+
+
+def _render_observations(observations: Sequence[ToolOutcome]) -> str:
+    """Render one line per outcome: ordinal, tool, status, then what it said.
+
+    Whitespace is collapsed for the same load-bearing reason it is in
+    :func:`_render_evidence`: an ERP field containing a line break could
+    otherwise be rendered as an additional observation line and manufacture a
+    result that no call produced.
+
+    The status is included, always. A planner that could only see summaries
+    would read a refusal and a success the same way, and the next decision it
+    made would be built on a call that never ran.
+    """
+    if not observations:
+        return NO_OBSERVATIONS
+    return "\n".join(
+        f"{index}. {outcome.tool_name} -> {outcome.status}: "
+        f"{' '.join((outcome.summary or outcome.error or '').split())}"
+        for index, outcome in enumerate(observations, start=1)
+    )
+
+
+def build_planner_messages(
+    question: str,
+    evidence: Sequence[EvidenceSnippet] = (),
+    observations: Sequence[ToolOutcome] = (),
+) -> list[Message]:
+    """Build the five role blocks for one routing decision.
+
+    One more block than :func:`build_messages`, and the extra one is the reason
+    a reason-act loop can exist at all: the model is shown what its own earlier
+    actions returned, in a role that says those results are data.
+
+    Args:
+        question: The user's words, verbatim. Never wrapped or prefixed.
+        evidence: Whatever retrieval has already supplied this turn. Empty on
+            the first decision.
+        observations: What this turn's tool calls returned, in order. Empty on
+            the first decision.
+
+    Returns:
+        Five messages: system, developer, user, evidence, observation.
+
+    Raises:
+        ValueError: ``question`` is blank.
+    """
+    if not question.strip():
+        raise ValueError("question must not be blank")
+
+    return [
+        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "developer", "content": PLANNER_CONTRACT},
+        {"role": "user", "content": question},
+        {"role": "evidence", "content": _render_evidence(evidence)},
+        {"role": "observation", "content": _render_observations(observations)},
+    ]
 
 
 def build_messages(
