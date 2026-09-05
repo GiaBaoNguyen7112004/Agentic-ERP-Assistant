@@ -44,6 +44,7 @@ EventKind = Literal[
     "approval_requested", # a mutating call stopped for a human
     "approval_recorded",  # the human answered
     "retry_scheduled",    # an attempt was spent and another will follow
+    "rate_limited",       # a call was refused because a budget was spent
     "failed",             # a FailureMode was assigned
 ]
 """The transitions the audit depends on.
@@ -52,6 +53,12 @@ Closed for the same reason
 :data:`~agentic_erp_assistant.reasoning.decision.DecisionRoute` is: a kind
 nobody reports on has to fail at construction rather than appear later as a
 category that quietly showed up in an evidence bundle.
+
+``rate_limited`` is its own kind rather than a ``failed`` event for the reason
+``route_selected`` is not one either: a reviewer counting outages must not be
+counting the safety layer working. A run that was throttled and a run whose
+backend fell over look identical under one label, and only one of them is a
+bug.
 """
 
 
