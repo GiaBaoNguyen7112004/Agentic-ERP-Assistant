@@ -6,14 +6,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from agentic_erp_assistant.runtime.ports import (
     DocumentRetrieverPort,
     ToolGatewayPort,
     ToolOutcome,
 )
-from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.tool_request import ToolRequest
 
 
 # --------------------------------------------------------------------------
@@ -38,17 +39,10 @@ class FakeRetriever:
 class FakeGateway:
     def __init__(self, outcome: ToolOutcome) -> None:
         self.outcome = outcome
-        self.calls: list[tuple[str, Mapping[str, Any], str, str]] = []
+        self.calls: list[ToolRequest] = []
 
-    def execute(
-        self,
-        tool_name: str,
-        arguments: Mapping[str, Any],
-        *,
-        actor: str,
-        approval: ApprovalDecision,
-    ) -> ToolOutcome:
-        self.calls.append((tool_name, arguments, actor, approval))
+    def execute(self, request: ToolRequest) -> ToolOutcome:
+        self.calls.append(request)
         return self.outcome
 
 
@@ -145,25 +139,35 @@ def test_finding_nothing_is_an_answer_and_not_an_exception() -> None:
 def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     """The last boundary in front of a write does not get to assume someone
     upstream checked."""
-    gateway = FakeGateway(succeeded("close_milestone"))
-
-    gateway.execute(
-        "close_milestone", {"milestone_id": "M2"}, actor="bao", approval="approved"
+    gateway = FakeGateway(succeeded("create_risk"))
+    request = ToolRequest(
+        tool_name="create_risk",
+        arguments={"project_id": "atlas", "title": "x", "severity": "low"},
+        actor="bao",
+        scopes=frozenset({"project.risk.write"}),
+        approval="approved",
     )
 
-    assert gateway.calls == [
-        ("close_milestone", {"milestone_id": "M2"}, "bao", "approved")
-    ]
+    gateway.execute(request)
+
+    assert gateway.calls == [request]
 
 
-@pytest.mark.parametrize("missing", ["actor", "approval"])
-def test_neither_audit_argument_can_be_omitted(missing: str) -> None:
-    gateway = FakeGateway(succeeded("close_milestone"))
-    kwargs: dict[str, Any] = {"actor": "bao", "approval": "approved"}
-    del kwargs[missing]
+@pytest.mark.parametrize("missing", ["actor", "scopes"])
+def test_no_audit_fact_can_be_left_out_of_a_call(missing: str) -> None:
+    """Loose arguments were the alternative, and each audit fact would then be
+    one more parameter a caller could omit -- the one that gets omitted being a
+    scope."""
+    fields: dict[str, Any] = {
+        "tool_name": "create_risk",
+        "arguments": {},
+        "actor": "bao",
+        "scopes": frozenset({"project.risk.write"}),
+    }
+    del fields[missing]
 
-    with pytest.raises(TypeError):
-        gateway.execute("close_milestone", {}, **kwargs)
+    with pytest.raises(ValidationError, match=missing):
+        ToolRequest(**fields)
 
 
 # --------------------------------------------------------------------------

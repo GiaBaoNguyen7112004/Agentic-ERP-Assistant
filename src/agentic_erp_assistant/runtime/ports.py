@@ -32,21 +32,21 @@ Writing the port to match whatever a backend happens to expose puts that
 backend's shape into the core, which is the coupling the port exists to avoid.
 """
 
-from collections.abc import Mapping, Sequence
-from typing import Any, Protocol, runtime_checkable
+from collections.abc import Sequence
+from typing import Protocol, runtime_checkable
 
-from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+from agentic_erp_assistant.state.tool_request import ToolRequest
 
-__all__ = ["DocumentRetrieverPort", "ToolGatewayPort", "ToolOutcome"]
+__all__ = ["DocumentRetrieverPort", "ToolGatewayPort", "ToolOutcome", "ToolRequest"]
 
-# ToolOutcome is re-exported, not defined here. It is what execute() returns,
-# so this module has to name it -- but the tool layer has to build it, and a
-# definition living in the port would drag runtime/ into every implementation.
-# Declaring the gateway as a Protocol exists precisely to stop that, so the
-# type sits in state/, which both sides may depend on. See
-# :mod:`agentic_erp_assistant.state.tool_outcome`.
+# ToolRequest and ToolOutcome are re-exported, not defined here. They are the
+# two halves of execute()'s signature, so this module has to name them -- but
+# the tool layer has to build both, and definitions living in the port would
+# drag runtime/ into every implementation. Declaring the gateway as a Protocol
+# exists precisely to stop that, so the types sit in state/, which both sides
+# may depend on.
 
 
 @runtime_checkable
@@ -86,39 +86,34 @@ class ToolGatewayPort(Protocol):
     """What the graph assumes about the boundary where a tool actually runs.
 
     The gateway is the last thing between a decision and a change to ERP data,
-    which is why :meth:`execute` is told about the approval instead of trusting
-    that someone upstream checked. A boundary that cannot see whether a call
-    was approved has to trust every caller that will ever exist, and the one
-    that forgets is the one that matters.
+    which is why the request carries the approval and the actor's scopes
+    instead of the gateway trusting that someone upstream checked. A boundary
+    that cannot see whether a call was permitted and approved has to trust
+    every caller that will ever exist, and the one that forgets is the one that
+    matters.
     """
 
-    def execute(
-        self,
-        tool_name: str,
-        arguments: Mapping[str, Any],
-        *,
-        actor: str,
-        approval: ApprovalDecision,
-    ) -> ToolOutcome:
+    def execute(self, request: ToolRequest) -> ToolOutcome:
         """Run one tool call and report what happened.
 
-        ``actor`` and ``approval`` are keyword-only and required. They are not
-        bookkeeping the gateway passes through to a log: a mutating tool must
-        refuse to run unless ``approval`` is ``"approved"``, and ``actor``
-        names who the write is performed on behalf of. Whether a tool mutates
-        is read from its own
-        :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag, never
-        guessed from the name here.
+        One object in, one object out. The request carries the actor, the
+        scopes they hold and where the call stands with an approver, and none
+        of that is optional: a mutating tool must refuse to run unless
+        ``request.approval`` is ``"approved"``, and a call must be refused
+        outright unless the actor holds the tool's declared scope. Whether a
+        tool mutates is read from its own registry entry, never guessed from
+        the name here.
 
-        A refusal comes back as a :class:`ToolOutcome` carrying the status
-        ``"denied"``, not as an exception -- see that class for why.
+        Loose arguments were the alternative, and they are worse in a specific
+        way: the audit facts would each be one more parameter a caller could
+        omit, and the one that gets omitted is a scope.
+
+        A refusal comes back as a :class:`ToolOutcome` carrying ``"denied"``,
+        and a call nobody has approved yet as ``"approval_required"`` -- not as
+        exceptions; see that class for why.
 
         Args:
-            tool_name: The tool to run, as declared in the registry.
-            arguments: Parsed arguments. The gateway validates them against the
-                tool's own schema; a caller cannot pre-approve a shape.
-            actor: Who the call is made on behalf of.
-            approval: Where the call stands with its approver.
+            request: The call to make, with everything a check will consult.
 
         Returns:
             A :class:`ToolOutcome` describing success or failure.

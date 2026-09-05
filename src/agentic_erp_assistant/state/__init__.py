@@ -19,6 +19,7 @@ from agentic_erp_assistant.state.events import (
 )
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome, ToolStatus
+from agentic_erp_assistant.state.tool_request import ToolRequest
 
 __all__ = [
     "AgentState",
@@ -29,6 +30,7 @@ __all__ = [
     "EvidenceSnippet",
     "STATE_VERSION",
     "ToolOutcome",
+    "ToolRequest",
     "ToolStatus",
     "TraceEvent",
 ]
