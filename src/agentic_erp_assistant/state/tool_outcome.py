@@ -47,6 +47,7 @@ ToolStatus = Literal[
     "invalid_arguments",   # the call did not satisfy the tool's declaration
     "approval_required",   # nobody has been asked yet; nothing ran
     "denied",              # policy or an approver refused it; nothing ran
+    "rate_limited",        # the actor's budget for this tool is spent; nothing ran
     "transient_failure",   # it may work later: timeout, 429, connection reset
     "failed",              # it ran and could not complete, and will not later
 ]
@@ -67,7 +68,17 @@ either way -- and lead to opposite moves: the first goes to
 label the graph would either re-ask a human who already refused, or abandon a
 call that was never put to anyone.
 
+``denied`` and ``rate_limited`` are kept apart on a third axis: permanence. A
+missing scope will still be missing on the next attempt, so ``denied`` ends the
+call for good; a spent budget refills, so ``rate_limited`` carries a
+:attr:`ToolOutcome.retry_after_seconds` and the call is worth making again
+later. Collapsed into one status the graph would either abandon a call that
+would succeed in forty seconds, or re-offer one that will be refused forever.
+
 ``transient_failure`` is the only status a retry engine is allowed to act on.
+``rate_limited`` is deliberately not one of them: the wait is reported upward
+for the caller to schedule, because retrying inside the same turn would spend
+the attempt budget proving a limit that is, by construction, still in force.
 """
 
 
@@ -128,14 +139,15 @@ class ToolOutcome(BaseModel):
     retry_after_seconds: float | None = Field(default=None, ge=0.0)
     """How long the caller was told to wait, when it was told anything.
 
-    Defined now although nothing sets it yet: the full contract settled once is
-    cheaper than a schema change later, and every consumer written in between
-    would otherwise be written against a shape that is about to move.
+    Constrained rather than merely optional -- it is only meaningful on the two
+    statuses that describe a call worth making again: ``transient_failure``,
+    where the backend may recover, and ``rate_limited``, where a budget refills.
+    On any other status it would be a number no branch could act on.
 
-    Constrained rather than merely optional -- it is only meaningful on
-    ``transient_failure``. On any other status it would be a number no branch
-    could act on, which is how a field defined early becomes a field nobody
-    trusts.
+    Required on ``rate_limited``, and only there. A transient failure may
+    genuinely not know when to come back; a rate limiter always does, because it
+    is the thing holding the window, and a refusal that cannot say when to
+    retry leaves the caller guessing at the one fact the refusal was for.
     """
 
     @model_validator(mode="after")
@@ -165,10 +177,17 @@ class ToolOutcome(BaseModel):
         if any(not source.strip() for source in self.source_ids):
             raise ValueError("source_ids: identifiers must not be blank")
 
-        if self.retry_after_seconds is not None and self.status != "transient_failure":
+        waitable = self.status in ("transient_failure", "rate_limited")
+        if self.retry_after_seconds is not None and not waitable:
             raise ValueError(
                 f"retry_after_seconds: meaningless on status {self.status!r} -- "
-                f"only a transient failure is worth waiting to repeat"
+                f"only a call worth repeating is worth waiting to repeat"
+            )
+        if self.status == "rate_limited" and self.retry_after_seconds is None:
+            raise ValueError(
+                "retry_after_seconds: a rate-limited call must say when to try "
+                "again -- the limiter holds the window, and no one else can "
+                "recover the answer"
             )
 
         return self

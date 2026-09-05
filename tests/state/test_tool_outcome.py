@@ -152,8 +152,7 @@ def test_an_outcome_cannot_claim_it_was_never_attempted() -> None:
 
 
 def test_retry_after_is_accepted_on_a_transient_failure() -> None:
-    """Defined before anything sets it: settling the contract once is cheaper
-    than a schema change once consumers exist."""
+    """One of the two statuses that describe a call worth making again."""
     outcome = ToolOutcome(
         tool_name="get_project_status",
         status="transient_failure",
@@ -162,6 +161,29 @@ def test_retry_after_is_accepted_on_a_transient_failure() -> None:
     )
 
     assert outcome.retry_after_seconds == 2.5
+
+
+def test_a_rate_limited_call_must_say_when_to_try_again() -> None:
+    """The limiter is holding the window, so it is the only party that can
+    answer; a refusal without the wait leaves the caller guessing at the one
+    fact the refusal was for."""
+    with pytest.raises(ValidationError, match="retry_after_seconds"):
+        ToolOutcome(
+            tool_name="get_project_status",
+            status="rate_limited",
+            error="budget spent",
+        )
+
+
+def test_retry_after_is_accepted_on_a_rate_limited_call() -> None:
+    outcome = ToolOutcome(
+        tool_name="get_project_status",
+        status="rate_limited",
+        error="budget spent",
+        retry_after_seconds=41.5,
+    )
+
+    assert outcome.retry_after_seconds == 41.5
 
 
 @pytest.mark.parametrize(
