@@ -8,11 +8,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from agentic_erp_assistant.reasoning.decision import ReasoningDecision
 from agentic_erp_assistant.runtime.ports import (
+    AnswerComposerPort,
     DocumentRetrieverPort,
+    PlannerPort,
     ToolGatewayPort,
     ToolOutcome,
 )
+from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -233,3 +237,64 @@ def test_the_guard_would_actually_catch_an_offender() -> None:
     assert any(
         module == part or module.startswith(part + ".") for part in REPLACEABLE_PARTS
     )
+
+
+# --------------------------------------------------------------------------
+# The two model-facing ports
+# --------------------------------------------------------------------------
+
+
+class FakePlanner:
+    """A routing test's whole planner: a scripted decision, no provider."""
+
+    def __init__(self, *decisions: ReasoningDecision) -> None:
+        self.decisions = list(decisions)
+        self.seen: list[AgentState] = []
+
+    def plan(self, state: AgentState) -> ReasoningDecision:
+        self.seen.append(state)
+        return self.decisions[min(len(self.seen) - 1, len(self.decisions) - 1)]
+
+
+class FakeComposer:
+    def __init__(self, answer_text: str = "M2 is on track.") -> None:
+        self.answer_text = answer_text
+
+    def answer(self, question: str, evidence):
+        return {"answer": self.answer_text, "evidence": tuple(evidence)}
+
+
+def test_a_planner_satisfies_its_port_without_inheriting_from_it() -> None:
+    planner = FakePlanner(ReasoningDecision(route="answer", confidence=0.9))
+
+    assert isinstance(planner, PlannerPort)
+
+
+def test_a_composer_satisfies_its_port_without_inheriting_from_it() -> None:
+    assert isinstance(FakeComposer(), AnswerComposerPort)
+
+
+def test_a_planner_is_handed_the_whole_state_it_decides_from() -> None:
+    """Not a question and a history assembled at the call site -- that is how a
+    loop re-decides on a stale view and repeats a call it already made."""
+    planner = FakePlanner(ReasoningDecision(route="answer", confidence=0.9))
+    state = AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+
+    planner.plan(state)
+
+    assert planner.seen == [state]
+
+
+def test_the_runtime_package_pulls_in_no_part_of_llm_at_import_time() -> None:
+    """The composer port names the answer contract under TYPE_CHECKING for
+    exactly this reason: a node should not drag a tokenizer and an HTTP client
+    behind it."""
+    source = Path("src/agentic_erp_assistant/runtime/ports.py")
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    executed = {
+        node.module
+        for node in tree.body  # module level only: the TYPE_CHECKING block is not
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+
+    assert not any(module.startswith("agentic_erp_assistant.llm") for module in executed)

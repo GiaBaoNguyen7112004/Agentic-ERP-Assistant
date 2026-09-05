@@ -1,6 +1,6 @@
 """The graph engine and the contracts its nodes run against.
 
-Today it holds the two ports the workflow depends on and the table of moves
+Today it holds the four ports the workflow depends on and the table of moves
 the graph is allowed to make; the node contracts, retry budget and the engine
 itself land here as they are built.
 
@@ -12,7 +12,9 @@ replaceable part, and ``tests/runtime/test_ports.py`` checks that it has not.
 """
 
 from agentic_erp_assistant.runtime.ports import (
+    AnswerComposerPort,
     DocumentRetrieverPort,
+    PlannerPort,
     ToolGatewayPort,
     ToolOutcome,
 )
@@ -26,10 +28,12 @@ from agentic_erp_assistant.runtime.transitions import (
 
 __all__ = [
     "ALLOWED",
+    "AnswerComposerPort",
     "advance",
     "assert_transition",
     "DocumentRetrieverPort",
     "IllegalTransition",
+    "PlannerPort",
     "TERMINAL_ROUTES",
     "ToolGatewayPort",
     "ToolOutcome",

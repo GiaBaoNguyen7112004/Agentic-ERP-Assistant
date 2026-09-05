@@ -1,11 +1,24 @@
-"""The only two things outside itself the graph is allowed to depend on.
+"""The only four things outside itself the graph is allowed to depend on.
 
-A retriever, and a way to run a tool. Everything else a turn needs is already
-in :class:`~agentic_erp_assistant.state.agent_state.AgentState`. Keeping both
+A retriever, a way to run a tool, something that decides what to do next, and
+something that turns evidence into a grounded answer. Everything else a turn
+needs is already in
+:class:`~agentic_erp_assistant.state.agent_state.AgentState`. Keeping all four
 declarations in one file is the point of the file: the workflow's entire
-external surface is two protocols on one screen, so "what does the graph
+external surface is four protocols on one screen, so "what does the graph
 depend on?" is answered by reading rather than by grepping imports across a
 package.
+
+Two of them are the model, and they are separate for a reason
+-------------------------------------------------------------
+
+:class:`PlannerPort` decides; :class:`AnswerComposerPort` writes the grounded
+reply. One object may satisfy both, and in this project the second is satisfied
+by :class:`~agentic_erp_assistant.llm.gateway.LLMGateway` exactly as it already
+stands. They are declared apart because they are implemented apart -- the
+planner is a policy layer over a tool-calling call, the composer is a
+schema-validated answering call -- and a node that only answers should not have
+to be handed something that can also route.
 
 Protocols, so implementations never import this module
 ------------------------------------------------------
@@ -33,13 +46,31 @@ backend's shape into the core, which is the coupling the port exists to avoid.
 """
 
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from agentic_erp_assistant.reasoning.decision import ReasoningDecision
+from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
-__all__ = ["DocumentRetrieverPort", "ToolGatewayPort", "ToolOutcome", "ToolRequest"]
+if TYPE_CHECKING:  # pragma: no cover - names a contract without depending on it
+    # The answer contract is declared in llm/schemas.py, and the composer port
+    # has to name it in a signature. Imported under TYPE_CHECKING so a type
+    # checker sees the real class while this package still pulls in no part of
+    # llm/ at import time -- importing it for real would drag the gateway, the
+    # tokenizer and an HTTP client behind it into every node and every runtime
+    # test, for a name that is only ever read off the returned object.
+    from agentic_erp_assistant.llm.schemas import GroundedAnswer
+
+__all__ = [
+    "AnswerComposerPort",
+    "DocumentRetrieverPort",
+    "PlannerPort",
+    "ToolGatewayPort",
+    "ToolOutcome",
+    "ToolRequest",
+]
 
 # ToolRequest and ToolOutcome are re-exported, not defined here. They are the
 # two halves of execute()'s signature, so this module has to name them -- but
@@ -117,5 +148,74 @@ class ToolGatewayPort(Protocol):
 
         Returns:
             A :class:`ToolOutcome` describing success or failure.
+        """
+        ...
+
+
+@runtime_checkable
+class PlannerPort(Protocol):
+    """What the graph assumes about whatever decides the next action.
+
+    One method, and it returns a
+    :class:`~agentic_erp_assistant.reasoning.decision.ReasoningDecision` rather
+    than a provider reply. That boundary is the reason this port exists at all:
+    reading a tool call and deciding that a mutating tool means
+    ``request_approval`` is routing policy, and policy inside a graph node is
+    policy nobody can test without a fake provider speaking wire JSON. Here, a
+    routing test scripts one typed decision.
+
+    The runtime therefore never sees a prompt, a tool schema or a token count.
+    It sees a route, and a rationale it writes into the trace.
+    """
+
+    def plan(self, state: AgentState) -> ReasoningDecision:
+        """Decide what this turn should do next, from everything it knows.
+
+        Takes the whole state, not a question plus a history. The planner reads
+        the request, the evidence gathered so far and the observations already
+        produced, and a signature that passed those separately would be one a
+        caller could assemble inconsistently -- which is how a loop ends up
+        deciding on a stale view and repeating a call it has already made.
+
+        Returns:
+            A decision the runtime will still check against the transition
+            table before acting on it. A planner is not trusted to know the
+            graph.
+
+        Raises:
+            Exception: Whatever the underlying model call raises. The runtime
+                turns a failure here into a routed, traced ``fail``; a planner
+                is not asked to classify its own outage.
+        """
+        ...
+
+
+@runtime_checkable
+class AnswerComposerPort(Protocol):
+    """What the graph assumes about writing a grounded reply.
+
+    Named here rather than typed as the concrete gateway, so ``runtime/`` keeps
+    depending on shapes. It adds no mechanism: the implementation this project
+    ships is
+    :meth:`~agentic_erp_assistant.llm.gateway.LLMGateway.answer`, unchanged and
+    satisfying this structurally.
+    """
+
+    def answer(
+        self,
+        question: str,
+        evidence: Sequence[EvidenceSnippet],
+    ) -> "GroundedAnswer":
+        """Answer ``question`` from ``evidence``, or refuse in a typed way.
+
+        The return type is the part that matters: an answer either carries
+        citations or says why it refused. The node that calls this still checks
+        every citation against the evidence actually retrieved before the reply
+        reaches anyone -- a composer is trusted to write, not to have cited
+        something real.
+
+        Raises:
+            Exception: Provider failures and contract violations propagate. The
+                node turns them into a routed ``fail`` with the reason traced.
         """
         ...
