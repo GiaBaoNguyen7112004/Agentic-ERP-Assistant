@@ -5,10 +5,12 @@ e.g. ``openai_chat.py``) translate their vendor's request/response/exception
 shapes into the types declared here, so the runtime depends on this file and
 never on a vendor.
 
-Two things live here:
+Three things live here:
 
 * :class:`LargeLanguageModelClient` -- the callable surface, plus the message and
   response shapes that cross it.
+* :class:`ToolCallingClient` -- the second, optional surface: offering the model
+  a set of tools and reading back which one it picked.
 * Three failure types that the caller is expected to tell apart. They are
   siblings, never subclasses of one another, so ``except TransientProviderError``
   cannot silently swallow an auth or configuration failure and retry it forever.
@@ -16,6 +18,8 @@ Two things live here:
 
 from collections.abc import Sequence
 from typing import Literal, Protocol, TypedDict, runtime_checkable
+
+from agentic_erp_assistant.llm.tools import ToolCallResult, ToolSpec
 
 __all__ = [
     "ClientConfigurationError",
@@ -25,6 +29,7 @@ __all__ = [
     "Message",
     "ProviderAuthError",
     "Role",
+    "ToolCallingClient",
     "TransientProviderError",
     "Usage",
     "UsageReporting",
@@ -122,6 +127,64 @@ class LargeLanguageModelClient(Protocol):
                 request itself; retrying it unchanged cannot succeed.
             TransientProviderError: The call failed in a way that a later attempt
                 may survive (timeout, connection reset, 429, 5xx).
+        """
+        ...
+
+
+@runtime_checkable
+class ToolCallingClient(Protocol):
+    """A client that can also be asked which tool to use.
+
+    Separate from :class:`LargeLanguageModelClient` rather than a method added
+    to it, and the precedent is :class:`UsageReporting` two definitions below:
+    an adapter that can only produce text is still a valid provider, and every
+    test fake would otherwise have to implement function calling to be one.
+    Widening the base port would make tool calling mandatory for implementations
+    that will never route anything.
+
+    A client may satisfy both, and the real adapter does. The gateway asks for
+    this one only on the path that needs it, so the requirement shows up where
+    the capability is used instead of at construction of everything.
+    """
+
+    model_name: str
+    """The model this client is bound to. Recorded in the trace for every call."""
+
+    def call_with_tools(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[ToolSpec],
+        temperature: float,
+    ) -> ToolCallResult:
+        """Offer ``tools`` and report the single choice that came back.
+
+        A different question from :meth:`LargeLanguageModelClient.complete`, and
+        so a different method rather than a flag on that one: this call asks
+        what to do next, that one asks for a grounded answer against a schema,
+        and a request carrying both contracts would have the model satisfy
+        whichever it preferred.
+
+        At most one call comes back. An adapter that receives several must not
+        pick one and discard the rest -- approval routing depends on knowing
+        exactly what is about to run, so several is a provider contract
+        violation and belongs in the transient-failure path.
+
+        Args:
+            messages: The same port-role messages ``complete`` takes.
+            tools: What to offer. Never empty -- offering nothing while asking
+                the model to choose is a caller bug.
+            temperature: A routing decision is not a place for variety; callers
+                pass 0.0.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: a tool
+            name with parsed arguments, or direct content. Never both.
+
+        Raises:
+            TransientProviderError: The transport failed, or the reply cannot be
+                read as a decision.
+            ProviderAuthError: A definitive rejection from the provider.
         """
         ...
 

@@ -13,8 +13,11 @@ from agentic_erp_assistant.llm.ports import (
     LLMClientError,
     Message,
     ProviderAuthError,
+    ToolCallingClient,
     TransientProviderError,
 )
+from agentic_erp_assistant.llm.adapters.openai_chat import OpenAIChatClient
+from agentic_erp_assistant.llm.tools import DEFAULT_TOOLS, ToolCallResult
 
 
 class FakeClient:
@@ -107,7 +110,13 @@ def test_a_missing_key_is_configuration_not_auth() -> None:
 
 
 def test_ports_imports_nothing_outside_the_standard_typing_surface() -> None:
-    """The acceptance criterion: no provider-specific type reaches this module."""
+    """The acceptance criterion: no provider-specific type reaches this module.
+
+    ``llm.tools`` is allowed alongside the typing surface because it is our own
+    vendor-neutral declaration of what a tool is -- the tool-calling port has to
+    name it in a signature. It imports nothing from this package and nothing
+    from a provider, so the direction the rest of this test protects is intact.
+    """
     source = Path("src/agentic_erp_assistant/llm/ports.py").read_text(encoding="utf-8")
     modules = {
         node.module
@@ -119,4 +128,58 @@ def test_ports_imports_nothing_outside_the_standard_typing_surface() -> None:
         if isinstance(node, ast.Import)
         for alias in node.names
     }
-    assert modules <= {"typing", "collections.abc"}
+    assert modules <= {
+        "typing",
+        "collections.abc",
+        "agentic_erp_assistant.llm.tools",
+    }
+
+
+# --------------------------------------------------------------------------
+# The second, optional surface: asking the model which tool to use
+# --------------------------------------------------------------------------
+
+
+class FakeToolCallingClient(FakeClient):
+    """A provider that can also route. No SDK, no network."""
+
+    def call_with_tools(self, messages, *, tools, temperature: float):
+        return ToolCallResult.from_tool_call(
+            tool_name=tools[0].name, arguments={"milestone_id": "M2"}
+        )
+
+
+def test_a_text_only_client_is_still_a_valid_provider() -> None:
+    """The reason this is a second protocol and not a wider first one."""
+    client = FakeClient()
+
+    assert isinstance(client, LargeLanguageModelClient)
+    assert not isinstance(client, ToolCallingClient)
+
+
+def test_a_client_can_satisfy_both_surfaces() -> None:
+    client = FakeToolCallingClient()
+
+    assert isinstance(client, LargeLanguageModelClient)
+    assert isinstance(client, ToolCallingClient)
+
+
+def test_the_real_adapter_satisfies_the_tool_calling_port() -> None:
+    """Structurally, with no inheritance and no change to the adapter."""
+    client = OpenAIChatClient(api_key="test-key", model="fake-model-1")
+
+    assert isinstance(client, ToolCallingClient)
+    assert isinstance(client, LargeLanguageModelClient)
+
+
+def test_call_with_tools_returns_one_choice_and_never_two_outcomes() -> None:
+    client: ToolCallingClient = FakeToolCallingClient()
+
+    result = client.call_with_tools(
+        [{"role": "user", "content": "How is M2 tracking?"}],
+        tools=DEFAULT_TOOLS,
+        temperature=0.0,
+    )
+
+    assert result.tool_name == DEFAULT_TOOLS[0].name
+    assert result.content is None
