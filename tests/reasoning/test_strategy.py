@@ -74,7 +74,7 @@ def test_retrieval_records_the_sources_it_expects_to_need() -> None:
     assert decision.required_evidence == ("sprint-12-report.md", "budget-q3.md")
 
 
-@pytest.mark.parametrize("route", ["clarify", "refuse"])
+@pytest.mark.parametrize("route", ["clarify", "refuse", "fail"])
 def test_the_terminal_routes_need_neither_tool_nor_evidence(route: str) -> None:
     decision = ReasoningDecision(route=route, confidence=0.2)
 
@@ -105,6 +105,20 @@ def test_approval_cannot_be_required_on_the_answer_route() -> None:
     """Nothing executes on the way to a reply, so there is nothing to approve."""
     with pytest.raises(ValidationError, match="approval_required"):
         ReasoningDecision(route="answer", confidence=0.9, approval_required=True)
+
+
+def test_a_broken_turn_ends_on_its_own_route_not_on_refuse() -> None:
+    """A refusal is policy working as designed; a failure is the system not
+    working. A reviewer counting refusals must not be counting outages."""
+    broke = ReasoningDecision(route="fail", confidence=0.0)
+    refused = ReasoningDecision(route="refuse", confidence=0.0)
+
+    assert broke.route != refused.route
+
+
+def test_approval_cannot_be_required_on_the_fail_route() -> None:
+    with pytest.raises(ValidationError, match="approval_required"):
+        ReasoningDecision(route="fail", confidence=0.0, approval_required=True)
 
 
 def test_an_unroutable_label_is_rejected_at_the_decision() -> None:

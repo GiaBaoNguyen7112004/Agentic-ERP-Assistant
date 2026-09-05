@@ -41,14 +41,25 @@ produced by a different, independently-checkable mechanism:
     :class:`~agentic_erp_assistant.llm.tools.ToolCallResult` that names no tool
     is the model electing to answer.
 
-Five of the six name a *preparatory* action; ``answer`` names the absence of
-one, and it is a member of the set rather than an implied ``None`` on purpose.
-A ``None`` route would give "the runtime decided to reply" and "nothing has
-been decided yet" the same value, and the graph has to tell those apart: the
-first is a node to dispatch, the second is a turn that never routed. It is
-added now, and was not present before, because only now is there a graph node
-that can dispatch it -- a label with no branch behind it is a lie the type
-system helps tell.
+``fail``
+    Not a choice anyone made: something broke, and the turn still has to end
+    somewhere the trace can name. Produced together with a
+    :data:`FailureMode` from :func:`classify_failure` -- the route says the
+    turn ended in failure, the mode says which failure. Deliberately not
+    folded into ``refuse``: a refusal is policy working as designed and a
+    failure is the system not working, so a reviewer counting refusals must
+    not be counting outages.
+
+The set splits three ways. ``retrieve_project_documents``, ``call_tool`` and
+``request_approval`` name a *preparatory* action -- something to do before a
+reply can exist. The other four end the turn.
+
+``answer`` is a member rather than an implied ``None`` on purpose. A ``None``
+route would give "the runtime decided to reply" and "nothing has been decided
+yet" the same value, and the graph has to tell those apart: the first is a node
+to dispatch, the second is a turn that never routed. It and ``fail`` were both
+added at the point a graph node existed to dispatch them -- a label with no
+branch behind it is a lie the type system helps tell.
 
 What this module deliberately does not check
 --------------------------------------------
@@ -81,6 +92,7 @@ DecisionRoute = Literal[
     "answer",                      # nothing left to prepare; reply from state
     "clarify",                     # the request is under-specified; ask back
     "refuse",                      # do not proceed at all
+    "fail",                        # the turn broke; end and report the failure
 ]
 """The actions the runtime knows how to take next.
 
