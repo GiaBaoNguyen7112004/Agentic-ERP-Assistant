@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pydantic import ValidationError
 
 from agentic_erp_assistant.runtime.ports import (
     DocumentRetrieverPort,
@@ -59,6 +58,15 @@ def snippet(locator: str) -> EvidenceSnippet:
     )
 
 
+def succeeded(tool_name: str) -> ToolOutcome:
+    """A minimal successful outcome. Its own rules are tested with the type,
+    in tests/state/test_tool_outcome.py."""
+    return ToolOutcome(
+        tool_name=tool_name, status="ok", summary="M2 is on track.",
+        source_ids=("milestone:M2",),
+    )
+
+
 # --------------------------------------------------------------------------
 # Conformance is structural: an implementation never imports the port
 # --------------------------------------------------------------------------
@@ -74,7 +82,7 @@ def test_a_retriever_conforms_without_inheriting() -> None:
 
 
 def test_a_gateway_conforms_without_inheriting() -> None:
-    gateway = FakeGateway(ToolOutcome(tool_name="get_project_status", ok=True))
+    gateway = FakeGateway(succeeded("get_project_status"))
 
     assert isinstance(gateway, ToolGatewayPort)
     assert ToolGatewayPort not in FakeGateway.__mro__
@@ -103,6 +111,14 @@ def test_the_runtime_check_sees_methods_only_and_not_signatures() -> None:
 # --------------------------------------------------------------------------
 
 
+def test_the_result_type_is_the_one_the_state_layer_defines() -> None:
+    """Re-exported, not redefined: the tool layer builds these and must not
+    have to import runtime/ to name what it returns."""
+    from agentic_erp_assistant.state.tool_outcome import ToolOutcome as Defined
+
+    assert ToolOutcome is Defined
+
+
 def test_a_caller_typed_against_the_port_works_with_the_fake() -> None:
     retriever: DocumentRetrieverPort = FakeRetriever([snippet("3.1"), snippet("3.2")])
 
@@ -129,7 +145,7 @@ def test_finding_nothing_is_an_answer_and_not_an_exception() -> None:
 def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     """The last boundary in front of a write does not get to assume someone
     upstream checked."""
-    gateway = FakeGateway(ToolOutcome(tool_name="close_milestone", ok=True))
+    gateway = FakeGateway(succeeded("close_milestone"))
 
     gateway.execute(
         "close_milestone", {"milestone_id": "M2"}, actor="bao", approval="approved"
@@ -142,60 +158,12 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
 
 @pytest.mark.parametrize("missing", ["actor", "approval"])
 def test_neither_audit_argument_can_be_omitted(missing: str) -> None:
-    gateway = FakeGateway(ToolOutcome(tool_name="close_milestone", ok=True))
+    gateway = FakeGateway(succeeded("close_milestone"))
     kwargs: dict[str, Any] = {"actor": "bao", "approval": "approved"}
     del kwargs[missing]
 
     with pytest.raises(TypeError):
         gateway.execute("close_milestone", {}, **kwargs)
-
-
-# --------------------------------------------------------------------------
-# ToolOutcome: a failure is data the graph routes on, not a raised exception
-# --------------------------------------------------------------------------
-
-
-def test_a_successful_outcome_carries_output_and_no_error() -> None:
-    outcome = ToolOutcome(tool_name="get_project_status", ok=True, output="on track")
-
-    assert outcome.error is None
-
-
-def test_a_successful_outcome_cannot_also_report_an_error() -> None:
-    with pytest.raises(ValidationError, match="error"):
-        ToolOutcome(tool_name="get_project_status", ok=True, error="but also broken")
-
-
-def test_a_failed_outcome_must_say_why() -> None:
-    """Otherwise the trace records that something went wrong and nothing about
-    what."""
-    with pytest.raises(ValidationError, match="error"):
-        ToolOutcome(tool_name="close_milestone", ok=False)
-
-
-def test_a_blank_reason_does_not_count_as_a_reason() -> None:
-    with pytest.raises(ValidationError, match="error"):
-        ToolOutcome(tool_name="close_milestone", ok=False, error="   ")
-
-
-def test_a_denied_call_is_a_normal_return_value() -> None:
-    outcome = ToolOutcome(
-        tool_name="close_milestone", ok=False, error="approval was denied"
-    )
-
-    assert outcome.ok is False
-
-
-def test_an_outcome_cannot_be_edited_after_the_tool_ran() -> None:
-    outcome = ToolOutcome(tool_name="get_project_status", ok=True, output="on track")
-
-    with pytest.raises(ValidationError):
-        outcome.output = "something else"  # type: ignore[misc]
-
-
-def test_an_outcome_must_name_its_tool() -> None:
-    with pytest.raises(ValidationError, match="tool_name"):
-        ToolOutcome(tool_name="", ok=True)
 
 
 # --------------------------------------------------------------------------

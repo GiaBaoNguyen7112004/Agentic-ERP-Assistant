@@ -35,12 +35,18 @@ backend's shape into the core, which is the coupling the port exists to avoid.
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = ["DocumentRetrieverPort", "ToolGatewayPort", "ToolOutcome"]
+
+# ToolOutcome is re-exported, not defined here. It is what execute() returns,
+# so this module has to name it -- but the tool layer has to build it, and a
+# definition living in the port would drag runtime/ into every implementation.
+# Declaring the gateway as a Protocol exists precisely to stop that, so the
+# type sits in state/, which both sides may depend on. See
+# :mod:`agentic_erp_assistant.state.tool_outcome`.
 
 
 @runtime_checkable
@@ -75,50 +81,6 @@ class DocumentRetrieverPort(Protocol):
         ...
 
 
-class ToolOutcome(BaseModel):
-    """What running one tool produced -- success or failure, both as data.
-
-    A failed tool call is not an exception here. A tool that was denied,
-    rejected its arguments or timed out is something the turn has to record and
-    then route on, and an exception thrown through the graph would leave the
-    state that describes the attempt unwritten. So the gateway returns this
-    either way, and the node decides what it means.
-
-    Frozen and ``extra="forbid"``, like every other object that crosses a node
-    boundary: what the trace says the tool returned has to be what the model
-    was then shown.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tool_name: str = Field(min_length=1)
-    """Which tool ran. Repeated here rather than inferred from context so a
-    trace entry stands on its own."""
-
-    ok: bool
-    """Whether the call did what it was asked to do."""
-
-    output: str = ""
-    """What to feed back to the model. Empty is legitimate for a failure."""
-
-    error: str | None = None
-    """Why it failed, in one line, for a person reading the trace."""
-
-    @model_validator(mode="after")
-    def _an_outcome_reports_exactly_one_thing(self) -> "ToolOutcome":
-        if self.ok and self.error is not None:
-            raise ValueError(
-                "error: present on a successful call -- a reader cannot tell "
-                "whether the call worked"
-            )
-        if not self.ok and not (self.error or "").strip():
-            raise ValueError(
-                "error: a failed call must say why, or the trace records that "
-                "something went wrong and nothing about what"
-            )
-        return self
-
-
 @runtime_checkable
 class ToolGatewayPort(Protocol):
     """What the graph assumes about the boundary where a tool actually runs.
@@ -148,8 +110,8 @@ class ToolGatewayPort(Protocol):
         :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag, never
         guessed from the name here.
 
-        A refusal comes back as a :class:`ToolOutcome` with ``ok=False``, not
-        as an exception -- see that class for why.
+        A refusal comes back as a :class:`ToolOutcome` carrying the status
+        ``"denied"``, not as an exception -- see that class for why.
 
         Args:
             tool_name: The tool to run, as declared in the registry.
