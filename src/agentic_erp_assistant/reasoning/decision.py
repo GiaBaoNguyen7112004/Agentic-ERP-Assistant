@@ -155,6 +155,10 @@ _TOOL_ROUTES = frozenset({"call_tool", "request_approval"})
 """The routes for which naming a tool is meaningful -- in both directions."""
 
 
+_RETRIEVAL_ROUTE = "retrieve_project_documents"
+"""The one route that searches, and so the only one a query belongs on."""
+
+
 _MESSAGE_ROUTES = frozenset({"answer", "clarify", "refuse"})
 """The routes that end the turn by saying something to the user."""
 
@@ -223,6 +227,20 @@ class ReasoningDecision(BaseModel):
     write always needs approval.
     """
 
+    search_query: str | None = Field(default=None, min_length=1)
+    """What to search for, on the one route that searches.
+
+    The model picks retrieval by calling a function with a query argument, and
+    that query is usually a better one than the raw request -- it is the part
+    of the question that has to be looked up. Carried in its own field rather
+    than in ``required_tool``/arguments because retrieval is not executed by
+    the tool gateway: it has no registry entry, and a name plus a loose
+    argument bag here would imply it did.
+
+    Required on ``retrieve_project_documents`` and rejected everywhere else, so
+    a search can never be routed without saying what it searches for.
+    """
+
     message: str | None = Field(default=None, min_length=1)
     """The words the user gets, on the routes where the decision is the reply.
 
@@ -262,6 +280,17 @@ class ReasoningDecision(BaseModel):
                 "mutating: a call that changes ERP data always needs a recorded "
                 "approval; a decision that says otherwise would route a write "
                 "straight past the gate"
+            )
+
+        if self.route == _RETRIEVAL_ROUTE and self.search_query is None:
+            raise ValueError(
+                "search_query: a retrieval decision must say what it searches "
+                "for; the route alone leaves the query to be invented later"
+            )
+        if self.search_query is not None and self.route != _RETRIEVAL_ROUTE:
+            raise ValueError(
+                f"search_query: route {self.route!r} searches nothing, so a "
+                f"query here is an input no branch will ever read"
             )
 
         if self.route in _MESSAGE_REQUIRED_ROUTES and self.message is None:

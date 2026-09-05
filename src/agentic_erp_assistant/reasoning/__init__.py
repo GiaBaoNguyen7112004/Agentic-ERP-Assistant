@@ -3,6 +3,11 @@
 Provider-neutral and dependency-light on purpose -- importing this package pulls
 in no HTTP client, no adapter, and nothing from :mod:`agentic_erp_assistant.llm`.
 A routing decision is a fact about the run, not about who served it.
+
+``reasoning.planner`` is the exception, and is deliberately not re-exported
+here. It has to name what a tool is, so importing it reaches into
+``llm.tools``; keeping it out of this file means the light import stays
+light and the cost is paid only by whoever actually builds a planner.
 """
 
 from agentic_erp_assistant.reasoning.decision import (

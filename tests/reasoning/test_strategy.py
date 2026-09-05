@@ -72,6 +72,7 @@ def test_a_mutating_call_carries_both_the_tool_and_the_approval_flag() -> None:
 def test_retrieval_records_the_sources_it_expects_to_need() -> None:
     decision = ReasoningDecision(
         route="retrieve_project_documents",
+        search_query="M2 status",
         confidence=0.7,
         required_evidence=("sprint-12-report.md", "budget-q3.md"),
     )
@@ -206,6 +207,7 @@ def test_a_blank_source_id_is_rejected() -> None:
     with pytest.raises(ValidationError, match="required_evidence"):
         ReasoningDecision(
             route="retrieve_project_documents",
+            search_query="M2 status",
             confidence=0.7,
             required_evidence=("sprint-12-report.md", ""),
         )
@@ -234,6 +236,7 @@ def test_required_evidence_cannot_be_appended_to_in_place() -> None:
     """A frozen model holding a list would only look frozen."""
     decision = ReasoningDecision(
         route="retrieve_project_documents",
+        search_query="M2 status",
         confidence=0.7,
         required_evidence=("sprint-12-report.md",),
     )
