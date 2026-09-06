@@ -191,10 +191,13 @@ REPLACEABLE_PARTS = (
     "agentic_erp_assistant.erp",
     "agentic_erp_assistant.web",
     "agentic_erp_assistant.llm.adapters",
+    "agentic_erp_assistant.persistence",
 )
-"""The packages a port exists to stand in for, plus the layer the runtime must
+"""The packages a port exists to stand in for, plus the layers the runtime must
 never point at. Naming any of them from inside engine/ means a node reached
-past its boundary."""
+past its boundary -- a store adapter is on this list for the same reason a
+provider adapter is: the orchestrator depends on the trace ports, and the
+day it names a Postgres class is the day the fakes stop proving anything."""
 
 
 def imported_modules(source: Path) -> set[str]:
