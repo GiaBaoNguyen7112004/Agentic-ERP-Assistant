@@ -51,7 +51,14 @@ from agentic_erp_assistant.rag.access import RetrievalContext, is_authorized
 from agentic_erp_assistant.rag.chunking import Chunk
 from agentic_erp_assistant.rag.ports import ScoredChunk
 
-__all__ = ["B", "BM25Index", "K1", "tokenize"]
+__all__ = [
+    "B",
+    "BM25Index",
+    "COMMON_TERM_RATIO",
+    "K1",
+    "MIN_CORPUS_FOR_PRUNING",
+    "tokenize",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +78,36 @@ At 1.0 a chunk is penalized fully for being longer than average, at 0.0 not at
 all. Chunks here vary from a CSV row to a packed section, so some normalization
 is needed; the conventional 0.75 is kept rather than tuned, because tuning it
 against eight documents would be fitting a constant to a sample.
+"""
+
+COMMON_TERM_RATIO = 0.5
+"""A query term appearing in more than this share of the visible corpus is
+dropped from the query.
+
+Statistical rather than a stopword list, so it adapts: in a corpus about
+migrations, "migration" may well be the term carrying no information, and no
+English stopword list would have known. Measured on this corpus it removes
+exactly what it should -- "the" (0.95 of chunks), "and" (0.88), "is" (0.72),
+"to" and "a" (0.63), "of" (0.55) -- and keeps every content term.
+
+What this is **not** is a sufficiency test. It is tempting to think that pruning
+common terms makes "no lexical hits" mean "no evidence", and the measurement
+says otherwise: in this corpus "what" appears in 4 chunks of 64 and "who" in 1,
+while "cutover" appears in 16 and "risk" in 14. Interrogatives are *rarer* than
+content words in formal documents, so no document-frequency threshold can
+separate them. A BM25 hit therefore means a term appeared, not that an answer is
+present -- which is why sufficiency is decided on the dense side; see
+:data:`~agentic_erp_assistant.rag.retriever.MIN_COSINE_SIMILARITY`.
+"""
+
+MIN_CORPUS_FOR_PRUNING = 8
+"""Below this many visible chunks, no term is pruned.
+
+In a five-chunk corpus a perfectly ordinary term appears in three of them, so
+the ratio above is noise rather than a signal. The rule is switched off entirely
+rather than scaled, because a threshold that moves with corpus size is a second
+thing to explain and this one only has to be right at the size real indexes
+have.
 """
 
 _TOKEN = re.compile(r"[a-z0-9]+(?:[.,\-/][a-z0-9]+)*")
@@ -175,6 +212,31 @@ class BM25Index:
             )
         return statistics
 
+    def _discriminative(
+        self, terms: list[str], statistics: _Statistics
+    ) -> list[str]:
+        """Drop query terms that appear in most of what this reader can see.
+
+        See :data:`COMMON_TERM_RATIO`. The corpus statistics used are the
+        context's own, so what counts as common depends on what the reader may
+        read -- the same rule the scoring uses, applied to the same numbers.
+        """
+        total = len(statistics.chunks)
+        if total < MIN_CORPUS_FOR_PRUNING:
+            return terms
+
+        kept = [
+            term
+            for term in terms
+            if statistics.document_frequency.get(term, 0) / total <= COMMON_TERM_RATIO
+        ]
+        if len(kept) != len(terms):
+            logger.debug(
+                "dropped %d common term(s) from the query",
+                len(terms) - len(kept),
+            )
+        return kept
+
     def _idf(self, term: str, statistics: _Statistics) -> float:
         """Inverse document frequency, in the form that cannot go negative.
 
@@ -212,8 +274,8 @@ class BM25Index:
         if limit <= 0:
             raise ValueError(f"limit must be positive, got {limit}")
 
-        terms = tokenize(query)
         statistics = self._statistics(context)
+        terms = self._discriminative(tokenize(query), statistics)
         if not terms or not statistics.chunks:
             return ()
 
