@@ -1,0 +1,254 @@
+{
+  "generated_at": "2026-09-06T11:26:26+00:00",
+  "commit": "88d18ef19eccf19404f698eaa7751b36eaabd70b",
+  "indexed_chunks": 84,
+  "k": 5,
+  "embedding_model": "text-embedding-3-small",
+  "minimum_similarity": 0.3,
+  "case_count": 9,
+  "hits": 9,
+  "hit_rate": 1.0,
+  "average_latency_ms": 483.05,
+  "similarity_gap": {
+    "answerable_min": 0.51935434,
+    "unanswerable_max": 0.17492804
+  },
+  "failed_case_ids": [],
+  "cases": [
+    {
+      "case_id": "m2-slip-cause",
+      "query": "Why is milestone M2 late and by how much?",
+      "actor": "priya",
+      "expectation": "present",
+      "expected_documents": [
+        "status-report-2026-09",
+        "steering-minutes-2026-08"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "steering-minutes-2026-08#\u00a73.1",
+        "status-report-2026-09#\u00a72.2",
+        "status-report-2026-09#\u00a71",
+        "status-report-2026-09#\u00a73.1",
+        "steering-minutes-2026-08#\u00a73.2"
+      ],
+      "retrieved_documents": [
+        "steering-minutes-2026-08",
+        "status-report-2026-09"
+      ],
+      "latency_ms": 1479.92,
+      "best_similarity": 0.5803,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "sprint-13-progress",
+      "query": "How many story points has sprint 13 completed against its commitment?",
+      "actor": "priya",
+      "expectation": "present",
+      "expected_documents": [
+        "sprint-13-report"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "sprint-13-report#\u00a71",
+        "sprint-13-report#\u00a71.2",
+        "sprint-13-report#\u00a72",
+        "sprint-13-report#\u00a71.1",
+        "sprint-13-report#\u00a74"
+      ],
+      "retrieved_documents": [
+        "sprint-13-report"
+      ],
+      "latency_ms": 265.15,
+      "best_similarity": 0.7716,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "risk-r2-owner",
+      "query": "Who owns risk R-2 and what is the mitigation?",
+      "actor": "priya",
+      "expectation": "present",
+      "expected_documents": [
+        "risk-register"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "risk-register#row R-2",
+        "risk-register#row R-6",
+        "risk-register#row R-7",
+        "risk-register#row R-3",
+        "status-report-2026-09#\u00a73.2"
+      ],
+      "retrieved_documents": [
+        "risk-register",
+        "status-report-2026-09"
+      ],
+      "latency_ms": 244.84,
+      "best_similarity": 0.5507,
+      "gated": false,
+      "dense_candidates": 13,
+      "lexical_candidates": 18,
+      "error": null
+    },
+    {
+      "case_id": "vendor-escalation-rule",
+      "query": "How many unanswered written requests justify contractual escalation to a vendor?",
+      "actor": "priya",
+      "expectation": "present",
+      "expected_documents": [
+        "support-policy"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "support-policy#\u00a74.1",
+        "support-policy#\u00a74.2",
+        "steering-minutes-2026-08#\u00a75",
+        "risk-register#row R-2",
+        "support-policy#\u00a74.3"
+      ],
+      "retrieved_documents": [
+        "support-policy",
+        "steering-minutes-2026-08",
+        "risk-register"
+      ],
+      "latency_ms": 236.49,
+      "best_similarity": 0.6709,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "payments-interface-realtime",
+      "query": "Which inbound interface is a synchronous API rather than a batch file?",
+      "actor": "priya",
+      "expectation": "present",
+      "expected_documents": [
+        "architecture-notes"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "architecture-notes#\u00a73.1",
+        "architecture-notes#\u00a73.3",
+        "architecture-notes#\u00a73.2",
+        "architecture-notes#\u00a72.2",
+        "architecture-notes#\u00a75"
+      ],
+      "retrieved_documents": [
+        "architecture-notes"
+      ],
+      "latency_ms": 262.81,
+      "best_similarity": 0.5194,
+      "gated": false,
+      "dense_candidates": 7,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "forecast-overrun-driver",
+      "query": "What is the forecast at completion, and which cost category drives the overrun?",
+      "actor": "wei",
+      "expectation": "present",
+      "expected_documents": [
+        "budget-summary-q3"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "budget-summary-q3#p.1 part 3",
+        "steering-minutes-2026-08#\u00a74.1",
+        "budget-summary-q3#p.2 part 3",
+        "status-report-2026-09#\u00a74",
+        "risk-register#row R-3"
+      ],
+      "retrieved_documents": [
+        "budget-summary-q3",
+        "steering-minutes-2026-08",
+        "status-report-2026-09",
+        "risk-register"
+      ],
+      "latency_ms": 328.94,
+      "best_similarity": 0.5668,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "forecast-overrun-denied",
+      "query": "What is the forecast at completion, and which cost category drives the overrun?",
+      "actor": "priya",
+      "expectation": "absent",
+      "expected_documents": [
+        "budget-summary-q3"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "steering-minutes-2026-08#\u00a74.1",
+        "status-report-2026-09#\u00a74",
+        "risk-register#row R-3",
+        "steering-minutes-2026-08#\u00a74.2",
+        "status-report-2026-09#\u00a75.2"
+      ],
+      "retrieved_documents": [
+        "steering-minutes-2026-08",
+        "status-report-2026-09",
+        "risk-register"
+      ],
+      "latency_ms": 927.97,
+      "best_similarity": 0.5518,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "cross-project-orion",
+      "query": "What is the status of the Orion CRM migration and its budget?",
+      "actor": "priya",
+      "expectation": "absent",
+      "expected_documents": [
+        "orion-status-report-2026-09"
+      ],
+      "hit": true,
+      "retrieved_chunks": [
+        "status-report-2026-09#\u00a74",
+        "architecture-notes#\u00a71",
+        "status-report-2026-09#\u00a71",
+        "status-report-2026-09#\u00a71.2",
+        "status-report-2026-09#\u00a76"
+      ],
+      "retrieved_documents": [
+        "status-report-2026-09",
+        "architecture-notes"
+      ],
+      "latency_ms": 305.75,
+      "best_similarity": 0.5925,
+      "gated": false,
+      "dense_candidates": 20,
+      "lexical_candidates": 20,
+      "error": null
+    },
+    {
+      "case_id": "unanswerable",
+      "query": "What is the weather forecast in Hanoi next week?",
+      "actor": "priya",
+      "expectation": "empty",
+      "expected_documents": [],
+      "hit": true,
+      "retrieved_chunks": [],
+      "retrieved_documents": [],
+      "latency_ms": 295.55,
+      "best_similarity": 0.1749,
+      "gated": true,
+      "dense_candidates": 0,
+      "lexical_candidates": 0,
+      "error": null
+    }
+  ]
+}

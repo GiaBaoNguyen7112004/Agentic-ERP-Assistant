@@ -32,6 +32,7 @@ __all__ = [
     "count_message_tokens",
     "count_tokens",
     "FALLBACK_ENCODING",
+    "split_into_token_windows",
     "TiktokenCounter",
     "TokenCounter",
 ]
@@ -146,3 +147,68 @@ def count_tokens(text: str, *, model: str) -> int:
 def count_message_tokens(messages: Sequence[Message], *, model: str) -> int:
     """Count a whole request for ``model``, chat-format overhead included."""
     return _DEFAULT_COUNTER.count_message_tokens(messages, model=model)
+
+
+def split_into_token_windows(
+    text: str,
+    *,
+    model: str,
+    window_tokens: int,
+    overlap_tokens: int = 0,
+) -> list[str]:
+    """Cut ``text`` into overlapping windows of at most ``window_tokens`` tokens.
+
+    Here rather than in ``rag/chunking.py`` for the reason ADR 0001 gives about
+    counting: there is one authority on how text is measured for a model, and a
+    splitter that reached for its own encoding could produce windows that this
+    module then counts as over budget. Splitting and counting have to agree, so
+    they share ``_encoding_for``.
+
+    It is a module function rather than a method on
+    :class:`TokenCounter`, deliberately. The protocol exists so a provider-side
+    counter -- one that trades a round trip for an exact count -- can be swapped
+    in; such a counter can count, and cannot cut a string into token windows.
+    Widening the protocol would make it unimplementable by the very thing it was
+    widened for.
+
+    Args:
+        text: What to cut. Returned as a single window when it already fits.
+        model: Whose encoding decides where the cuts fall.
+        window_tokens: The hard ceiling on each window. No window exceeds it.
+        overlap_tokens: How many tokens each window repeats from the previous
+            one, so a sentence spanning a cut survives in at least one window.
+
+    Returns:
+        The windows in order. Empty input gives an empty list.
+
+    Raises:
+        ValueError: ``window_tokens`` is not positive, or ``overlap_tokens``
+            is negative or not smaller than the window -- an overlap at or above
+            the window size never advances and would loop forever.
+    """
+    if window_tokens <= 0:
+        raise ValueError(f"window_tokens must be positive, got {window_tokens}")
+    if overlap_tokens < 0:
+        raise ValueError(f"overlap_tokens must not be negative, got {overlap_tokens}")
+    if overlap_tokens >= window_tokens:
+        raise ValueError(
+            f"overlap_tokens ({overlap_tokens}) must be smaller than window_tokens "
+            f"({window_tokens}); an overlap that fills the window never advances"
+        )
+
+    encoding = _encoding_for(model)
+    tokens = encoding.encode(text)
+    if not tokens:
+        return []
+
+    stride = window_tokens - overlap_tokens
+    windows = [
+        encoding.decode(tokens[start : start + window_tokens])
+        for start in range(0, len(tokens), stride)
+    ]
+
+    # The final stride can land inside the previous window's overlap, producing
+    # a tail that repeats text already emitted and adds nothing.
+    while len(windows) > 1 and len(tokens) - (len(windows) - 1) * stride <= overlap_tokens:
+        windows.pop()
+    return windows

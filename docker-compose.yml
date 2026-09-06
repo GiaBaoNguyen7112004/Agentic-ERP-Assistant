@@ -1,0 +1,45 @@
+# The one piece of infrastructure this project does not run in-process.
+#
+# Everything else here is Python that starts with the interpreter: the graph,
+# the tool gateway, the lexical index. Vectors are the exception -- they need a
+# store that can filter on payload while it ranks, which is the property the
+# access rule depends on, and hand-rolling that would be writing a database
+# rather than an assistant.
+#
+#   docker compose up -d qdrant
+#   uv run python scripts/ingest_documents.py
+#
+# Only Qdrant is here. The application is run with uv against it, because during
+# development the thing being changed every minute should not be behind an image
+# rebuild. When the web layer lands, an app service is a decision to record then.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    container_name: agentic-erp-qdrant
+    restart: unless-stopped
+    ports:
+      # 6333 is the REST API the client uses; 6334 is gRPC, published so the
+      # same compose file serves a client configured either way.
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      # A named volume, so the corpus survives `docker compose down` and a
+      # re-ingest after a restart re-embeds nothing. Deleting it is the
+      # deliberate act that makes the next ingest a cold one.
+      - qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT: "true"
+      QDRANT__LOG_LEVEL: INFO
+    healthcheck:
+      # Qdrant images carry no curl or wget, so the check is the readiness probe
+      # the binary itself exposes. Without a healthcheck, `up -d` returns before
+      # the service can answer and the first ingest fails on connection refused.
+      test: ["CMD", "/qdrant/qdrant", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  qdrant_storage:

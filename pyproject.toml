@@ -10,7 +10,9 @@ requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.13.5",
+    "pypdf>=6.17.0",
     "python-dotenv>=1.2.3",
+    "qdrant-client>=1.19.0",
     "tiktoken>=0.14.0",
 ]
 
@@ -33,4 +35,5 @@ consider_namespace_packages = true
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "reportlab>=5.0.1",
 ]

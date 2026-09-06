@@ -18,6 +18,10 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0004](0004-rate-limits-are-checked-before-approval-and-counted-after.md) | Rate limits are registry policy, checked before approval and counted after | Accepted |
 | [0005](0005-the-graph-is-a-cycle-bounded-by-a-step-budget.md) | The graph is a cycle, bounded by a step budget rather than by missing edges | Accepted |
 | [0006](0006-function-calling-is-the-only-decision-channel.md) | Function calling is the only decision channel, and retrieval is offered through it | Accepted |
+| [0007](0007-retrieval-context-is-bound-to-the-retriever.md) | The retrieval context is bound to the retriever, not passed to `search` | Accepted |
+| [0008](0008-one-access-rule-for-both-search-paths.md) | One access rule, enforced before ranking on both search paths | Accepted |
+| [0009](0009-the-locator-is-structural-and-the-chunk-id-is-the-tag.md) | The locator is the format's own address, and the chunk id is the citation tag | Accepted |
+| [0010](0010-the-vector-store-is-the-chunk-store.md) | Qdrant holds the chunks, and the lexical index is built from it | Accepted |
 
 ## Format
 
