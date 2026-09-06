@@ -43,6 +43,12 @@ uv run agentic-erp-assistant # run the CLI entry point
 uv run pytest                # tests (once pytest is a dev dependency)
 uv add <pkg>                 # add a runtime dependency
 uv add --dev <pkg>           # add a dev dependency
+
+docker compose up -d qdrant                          # the vector store
+uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
+uv run python scripts/ingest_documents.py            # embed and store, for real
+uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
+uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 ```
 
 Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile stays in sync.
@@ -172,5 +178,13 @@ Not yet chosen; ask before assuming, and update this file once settled.
   repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
   also needs a reviewed row in `llm/pricing.py`. Routing policy behind the port is still
   open.
-- Retrieval backend (embedding store vs. lexical vs. hybrid) and citation format.
+- ~~Retrieval backend and citation format~~ — settled: hybrid. Dense search is
+  OpenAI embeddings in **Qdrant** (`docker-compose.yml`), the lexical half is a
+  from-scratch BM25 in `rag/lexical.py`, and the two are combined with Reciprocal
+  Rank Fusion. A citation is `[document_id#locator]` where the locator is the
+  format's own address — `§3.2`, `p.4`, `row R-1` — and is the chunk id itself
+  (ADR 0009). `OPENAI_EMBEDDING_MODEL` comes from `.env` with no default.
+  Still open behind that: `MIN_COSINE_SIMILARITY` in `rag/retriever.py` is
+  provisional until the evidence run measures the gap it should sit in, and the
+  index router and graph slice (reference steps 13 and 14) are deferred.
 - Trace persistence (files vs. SQLite) and eval report format.
