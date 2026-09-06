@@ -9,6 +9,7 @@ from agentic_erp_assistant.state.tool_request import ToolRequest
 
 def request(**overrides: object) -> ToolRequest:
     fields: dict[str, object] = {
+        "trace_id": "run-1",
         "tool_name": "close_milestone",
         "arguments": {"milestone_id": "M2"},
         "actor": "bao",
@@ -23,11 +24,14 @@ def request(**overrides: object) -> ToolRequest:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["tool_name", "arguments", "actor", "scopes"])
+@pytest.mark.parametrize(
+    "field", ["trace_id", "tool_name", "arguments", "actor", "scopes"]
+)
 def test_a_request_cannot_be_built_without_it(field: str) -> None:
-    """None of the four has a default. A call missing any of them is one no
+    """None of the five has a default. A call missing any of them is one no
     check downstream could make a decision about."""
     fields = {
+        "trace_id": "run-1",
         "tool_name": "t",
         "arguments": {},
         "actor": "bao",

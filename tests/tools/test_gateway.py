@@ -69,6 +69,7 @@ def gateway(erp: MockErp, events: list[TraceEvent]) -> ToolGateway:
 
 def call(tool_name: str, arguments: dict[str, object], **overrides: object) -> ToolRequest:
     fields: dict[str, object] = {
+        "trace_id": "run-test",
         "tool_name": tool_name,
         "arguments": arguments,
         "actor": "pm@example.com",
@@ -168,6 +169,7 @@ def test_an_approved_create_risk_writes_once_and_is_audited(
     assert (row.approval, row.status, row.actor) == ("approved", "ok", "pm@example.com")
     assert row.occurred_at == WHEN
     assert row.source_ids == outcome.source_ids
+    assert row.trace_id == "run-test", "the row names the run that produced it"
 
 
 def test_the_flaky_read_succeeds_on_its_second_attempt(gateway: ToolGateway) -> None:

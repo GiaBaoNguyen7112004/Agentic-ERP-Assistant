@@ -384,6 +384,7 @@ class ToolGateway:
 
         self.audit.record(
             AuditRow(
+                trace_id=request.trace_id,
                 occurred_at=self.now(),
                 actor=request.actor,
                 tool_name=definition.name,

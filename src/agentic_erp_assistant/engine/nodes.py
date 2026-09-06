@@ -384,6 +384,7 @@ class GraphNodes:
         """
         outcome = self.tools.execute(
             ToolRequest(
+                trace_id=state.trace_id,
                 tool_name=state.tool_name or "",
                 arguments=state.tool_arguments or {},
                 actor=state.actor,

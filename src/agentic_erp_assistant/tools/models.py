@@ -93,6 +93,16 @@ class AuditRow(_Envelope):
     rows *across* runs, where position says nothing.
     """
 
+    trace_id: str = Field(min_length=1)
+    """The run this call was part of.
+
+    The join back to the trace: without it, an audit reader can see that a
+    write happened but not which sequence of decisions produced it, and
+    "who changed what" without "as part of which run" is half an answer. The
+    request carried it, so the row gets it from the request rather than from
+    a second parameter a caller could forget to keep in step.
+    """
+
     occurred_at: datetime
     """When the call happened.
 

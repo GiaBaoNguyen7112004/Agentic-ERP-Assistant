@@ -145,6 +145,7 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     upstream checked."""
     gateway = FakeGateway(succeeded("create_risk"))
     request = ToolRequest(
+        trace_id="run-1",
         tool_name="create_risk",
         arguments={"project_id": "atlas", "title": "x", "severity": "low"},
         actor="bao",
@@ -157,12 +158,13 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     assert gateway.calls == [request]
 
 
-@pytest.mark.parametrize("missing", ["actor", "scopes"])
+@pytest.mark.parametrize("missing", ["trace_id", "actor", "scopes"])
 def test_no_audit_fact_can_be_left_out_of_a_call(missing: str) -> None:
     """Loose arguments were the alternative, and each audit fact would then be
     one more parameter a caller could omit -- the one that gets omitted being a
     scope."""
     fields: dict[str, Any] = {
+        "trace_id": "run-1",
         "tool_name": "create_risk",
         "arguments": {},
         "actor": "bao",

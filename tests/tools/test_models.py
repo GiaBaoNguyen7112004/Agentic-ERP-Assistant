@@ -18,6 +18,7 @@ WHEN = datetime(2026, 9, 5, 9, 30, tzinfo=timezone.utc)
 
 def row(**overrides: object) -> AuditRow:
     fields: dict[str, object] = {
+        "trace_id": "run-1",
         "occurred_at": WHEN,
         "actor": "bao",
         "tool_name": "close_milestone",
@@ -35,7 +36,7 @@ def row(**overrides: object) -> AuditRow:
 # --------------------------------------------------------------------------
 
 
-def test_an_audit_row_records_the_five_facts_an_auditor_asks_for() -> None:
+def test_an_audit_row_records_the_facts_an_auditor_asks_for() -> None:
     recorded = row()
 
     assert (recorded.actor, recorded.tool_name, recorded.approval) == (
@@ -45,6 +46,7 @@ def test_an_audit_row_records_the_five_facts_an_auditor_asks_for() -> None:
     )
     assert recorded.occurred_at == WHEN
     assert recorded.source_ids == ("milestone:M2",)
+    assert recorded.trace_id == "run-1", "the join back to the run's trace"
 
 
 def test_an_audit_row_does_not_stamp_itself() -> None:
@@ -53,6 +55,7 @@ def test_an_audit_row_does_not_stamp_itself() -> None:
     the end of the attempt."""
     with pytest.raises(ValidationError, match="occurred_at"):
         AuditRow(
+            trace_id="run-1",
             actor="bao",
             tool_name="close_milestone",
             arguments_summary="move M2 to done",
@@ -66,6 +69,7 @@ def test_an_audit_row_must_state_what_the_approver_said() -> None:
     unstated by omission."""
     with pytest.raises(ValidationError, match="approval"):
         AuditRow(
+            trace_id="run-1",
             occurred_at=WHEN,
             actor="bao",
             tool_name="close_milestone",
