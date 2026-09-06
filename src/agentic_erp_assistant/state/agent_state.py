@@ -209,7 +209,7 @@ class AgentState(BaseModel):
     Read from the tool's own
     :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by the
     layer that looked the tool up, and carried here so
-    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition` can be
+    :func:`~agentic_erp_assistant.engine.transitions.assert_transition` can be
     told the truth at every transition that turns on it -- including the one
     after a pause, where the decision that knew the answer is long gone. The
     runtime deliberately cannot look this up itself; see that module for why.

@@ -26,7 +26,7 @@ Protocols, so implementations never import this module
 Both are :class:`typing.Protocol`. Conformance is structural -- a retriever
 satisfies :class:`DocumentRetrieverPort` by having the method, not by
 inheriting from it -- which means ``rag/`` and ``tools/`` will implement these
-without importing anything from ``runtime/``. That is what keeps the dependency
+without importing anything from ``engine/``. That is what keeps the dependency
 direction pointing inward: the graph depends on a shape, the shape depends on
 nothing, and no outer layer is dragged in behind it.
 
@@ -75,7 +75,7 @@ __all__ = [
 # ToolRequest and ToolOutcome are re-exported, not defined here. They are the
 # two halves of execute()'s signature, so this module has to name them -- but
 # the tool layer has to build both, and definitions living in the port would
-# drag runtime/ into every implementation. Declaring the gateway as a Protocol
+# drag engine/ into every implementation. Declaring the gateway as a Protocol
 # exists precisely to stop that, so the types sit in state/, which both sides
 # may depend on.
 
@@ -194,7 +194,7 @@ class PlannerPort(Protocol):
 class AnswerComposerPort(Protocol):
     """What the graph assumes about writing a grounded reply.
 
-    Named here rather than typed as the concrete gateway, so ``runtime/`` keeps
+    Named here rather than typed as the concrete gateway, so ``engine/`` keeps
     depending on shapes. It adds no mechanism: the implementation this project
     ships is
     :meth:`~agentic_erp_assistant.llm.gateway.LLMGateway.answer`, unchanged and

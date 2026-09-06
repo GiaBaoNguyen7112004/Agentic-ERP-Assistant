@@ -56,11 +56,14 @@ Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile sta
 ## Intended architecture
 
 The package is a scaffold today. Build toward these boundaries; one concern per module,
-and keep the dependency direction pointing inward (runtime never imports the web layer).
+and keep the dependency direction pointing inward (the engine never imports the web layer).
 
 ```
 src/agentic_erp_assistant/
-  runtime/     graph engine, node contracts, typed state, transitions, retry
+  engine/      graph engine, node contracts, typed state transitions, retry
+               (named `engine/` because it *is* the graph engine; "runtime" named both
+               the package and the execution concept, and the ambiguity cost more
+               than the word was worth)
   state/       the reasoning state model (typed, serializable, versioned)
   reasoning/   the decision layer: what to do next (route, tool, approval) and
                why a turn failed -- typed fields, never prose
@@ -159,7 +162,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 Rules:
 
 - One logical change per commit; do not mix a refactor with a feature.
-- `<area>` matches a module directory (`runtime:`, `rag:`, `tools:`, `web:`, `eval:`).
+- `<area>` matches a module directory (`engine:`, `rag:`, `tools:`, `web:`, `eval:`).
 - Never commit with failing checks, and never use `--no-verify`.
 - Work on `dev` or a feature branch, never directly on `main`.
 - Standing authorization: committing at these checkpoints is expected and does not need

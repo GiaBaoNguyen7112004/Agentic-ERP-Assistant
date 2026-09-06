@@ -112,8 +112,8 @@ class DecisionModel(Protocol):
 class Planner:
     """Turns the model's chosen function into the route the graph will take.
 
-    Satisfies :class:`~agentic_erp_assistant.runtime.ports.PlannerPort`
-    structurally, without importing it -- which is what lets ``runtime/`` depend
+    Satisfies :class:`~agentic_erp_assistant.engine.ports.PlannerPort`
+    structurally, without importing it -- which is what lets ``engine/`` depend
     on the protocol while this module stays in the decision layer.
     """
 

@@ -10,7 +10,7 @@ import pytest
 
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
-from agentic_erp_assistant.runtime.nodes import (
+from agentic_erp_assistant.engine.nodes import (
     GraphNodes,
     NO_EVIDENCE_REPLY,
     RETRIEVAL_TOOL,

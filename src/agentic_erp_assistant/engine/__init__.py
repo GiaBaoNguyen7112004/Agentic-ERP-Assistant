@@ -8,30 +8,30 @@ The import rule for everything in this package: it may depend on
 :mod:`agentic_erp_assistant.state` and on the protocols declared here, and on
 nothing that names a concrete backend. A node that imports a retriever, a
 gateway, a provider or the web layer has coupled the runtime to a
-replaceable part, and ``tests/runtime/test_ports.py`` checks that it has not.
+replaceable part, and ``tests/engine/test_ports.py`` checks that it has not.
 """
 
-from agentic_erp_assistant.runtime.ports import (
+from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
     PlannerPort,
     ToolGatewayPort,
     ToolOutcome,
 )
-from agentic_erp_assistant.runtime.nodes import (
+from agentic_erp_assistant.engine.nodes import (
     EVIDENCE_LIMIT,
     GraphNodes,
     Node,
     NodeTable,
 )
-from agentic_erp_assistant.runtime.transitions import (
+from agentic_erp_assistant.engine.transitions import (
     ALLOWED,
     advance,
     assert_transition,
     IllegalTransition,
     TERMINAL_ROUTES,
 )
-from agentic_erp_assistant.runtime.workflow import (
+from agentic_erp_assistant.engine.workflow import (
     MAX_STEPS,
     NotPaused,
     UnroutableState,

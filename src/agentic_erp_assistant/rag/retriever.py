@@ -6,7 +6,7 @@ problem and becomes an evidence problem. Three decisions live here.
 The access context is bound, never passed
 -----------------------------------------
 
-:class:`~agentic_erp_assistant.runtime.ports.DocumentRetrieverPort` declares
+:class:`~agentic_erp_assistant.engine.ports.DocumentRetrieverPort` declares
 ``search(query, *, limit)`` and carries no context, and widening it would be the
 wrong fix. A retriever that *can* return restricted passages and trusts each
 call site to pass the right context is one forgotten argument away from a leak,
@@ -33,7 +33,7 @@ Sufficiency is decided before anything is spent, and decided on the dense side
 --------------------------------------------------------------------------------
 
 An unanswerable question must produce *no* evidence rather than weak evidence,
-because :meth:`~agentic_erp_assistant.runtime.nodes.GraphNodes.retrieve_and_answer`
+because :meth:`~agentic_erp_assistant.engine.nodes.GraphNodes.retrieve_and_answer`
 refuses on an empty result and calls the model on a non-empty one. Refusing here
 costs nothing; refusing after a synthesis call costs a synthesis call.
 
@@ -139,8 +139,8 @@ class RetrievalOutcome:
 class HybridRetriever:
     """Retrieval for one actor, on one project, for the length of one turn.
 
-    Satisfies :class:`~agentic_erp_assistant.runtime.ports.DocumentRetrieverPort`
-    structurally -- it never imports ``runtime`` -- so the graph depends on a
+    Satisfies :class:`~agentic_erp_assistant.engine.ports.DocumentRetrieverPort`
+    structurally -- it never imports ``engine`` -- so the graph depends on a
     shape and this class stays a retrieval concern.
 
     Frozen and cheap to build. It holds references to the shared indexes rather

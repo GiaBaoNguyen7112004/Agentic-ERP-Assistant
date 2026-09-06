@@ -42,18 +42,18 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from agentic_erp_assistant.runtime.nodes import (
+from agentic_erp_assistant.engine.nodes import (
     EVIDENCE_LIMIT,
     GraphNodes,
     NodeTable,
 )
-from agentic_erp_assistant.runtime.ports import (
+from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
     PlannerPort,
     ToolGatewayPort,
 )
-from agentic_erp_assistant.runtime.transitions import advance
+from agentic_erp_assistant.engine.transitions import advance
 from agentic_erp_assistant.state.agent_state import (
     AgentState,
     ERROR_DETAIL_MAX_CHARS,
@@ -105,7 +105,7 @@ class UnroutableState(RuntimeError):
 
     A bug in the node table, not a condition a turn can recover from. Raised
     loudly for the reason
-    :class:`~agentic_erp_assistant.runtime.transitions.IllegalTransition` is: a
+    :class:`~agentic_erp_assistant.engine.transitions.IllegalTransition` is: a
     silent no-op here looks exactly like a hang.
     """
 
@@ -189,7 +189,7 @@ class WorkflowRuntime:
             UnroutableState: A route in the state has no node in the table.
             IllegalTransition: A node attempted a move the table forbids. A bug
                 in that node; see
-                :mod:`agentic_erp_assistant.runtime.transitions`.
+                :mod:`agentic_erp_assistant.engine.transitions`.
         """
         while True:
             if state.terminal:
@@ -240,7 +240,7 @@ class WorkflowRuntime:
             events=state.events
             + (
                 TraceEvent(
-                    node="runtime", kind="run_failed", detail="max_steps_exceeded"
+                    node="engine", kind="run_failed", detail="max_steps_exceeded"
                 ),
             ),
         )
@@ -252,7 +252,7 @@ class WorkflowRuntime:
 
         The only way a paused state moves. Nothing else sets ``approval`` to
         anything but ``pending``, and
-        :func:`~agentic_erp_assistant.runtime.transitions.assert_transition`
+        :func:`~agentic_erp_assistant.engine.transitions.assert_transition`
         refuses to enter ``call_tool`` with a mutating tool unless it reads
         ``approved`` -- so a write cannot reach a handler without passing
         through this method, whatever a node tries.

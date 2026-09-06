@@ -4,7 +4,7 @@ One node per execution shape, and the shapes are the routes: thinking, searching
 documents, running a tool. A node takes an
 :class:`~agentic_erp_assistant.state.agent_state.AgentState` and returns the next
 one, having moved through
-:func:`~agentic_erp_assistant.runtime.transitions.advance` -- so a node cannot
+:func:`~agentic_erp_assistant.engine.transitions.advance` -- so a node cannot
 invent a move the table does not declare, and cannot end a turn without leaving
 a response or a failure behind.
 
@@ -37,13 +37,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from agentic_erp_assistant.reasoning.decision import DecisionRoute
-from agentic_erp_assistant.runtime.ports import (
+from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
     PlannerPort,
     ToolGatewayPort,
 )
-from agentic_erp_assistant.runtime.transitions import advance
+from agentic_erp_assistant.engine.transitions import advance
 from agentic_erp_assistant.state.agent_state import (
     AgentState,
     ERROR_DETAIL_MAX_CHARS,
@@ -85,7 +85,7 @@ EVIDENCE_LIMIT = 4
 """How many passages one retrieval pulls.
 
 A runtime decision rather than a retriever default, for the reason
-:class:`~agentic_erp_assistant.runtime.ports.DocumentRetrieverPort` gives: it
+:class:`~agentic_erp_assistant.engine.ports.DocumentRetrieverPort` gives: it
 sets the size of every prompt, and a number living inside a backend would change
 that from a place no reviewer looks.
 """

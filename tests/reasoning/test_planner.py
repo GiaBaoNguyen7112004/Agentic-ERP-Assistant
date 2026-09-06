@@ -227,7 +227,7 @@ def test_a_scripted_model_satisfies_the_decision_port() -> None:
 
 
 def test_the_planner_satisfies_the_runtime_port_without_importing_it() -> None:
-    from agentic_erp_assistant.runtime.ports import PlannerPort
+    from agentic_erp_assistant.engine.ports import PlannerPort
 
     assert isinstance(Planner(ScriptedModel()), PlannerPort)
 
