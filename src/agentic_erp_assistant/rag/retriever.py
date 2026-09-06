@@ -66,6 +66,7 @@ __all__ = [
     "HybridRetriever",
     "LEXICAL",
     "MIN_COSINE_SIMILARITY",
+    "RetrievalOutcome",
     "RetrievalService",
     "VECTOR",
 ]
@@ -106,6 +107,35 @@ if each half only reports its top four.
 
 
 @dataclass(frozen=True)
+class RetrievalOutcome:
+    """One search, with the numbers that explain why it came out that way.
+
+    ``best_similarity`` is the highest cosine the dense half saw **before** the
+    floor was applied, which is the one number the hits themselves cannot carry:
+    a search that returned nothing returns no scores either, and "nothing was
+    found" and "the closest thing was 0.29 and the floor is 0.30" call for
+    completely different responses from whoever is reading the trace. It is also
+    what the evaluator needs in order to set that floor from measurement instead
+    of from taste.
+    """
+
+    hits: tuple[FusedHit, ...]
+    best_similarity: float | None
+    """``None`` only when the dense half returned nothing at all."""
+
+    dense_candidates: int
+    """How many chunks cleared the floor."""
+
+    lexical_candidates: int
+    """How many the lexical half returned. Zero when the gate refused first."""
+
+    @property
+    def gated(self) -> bool:
+        """Whether the floor is what made this search empty."""
+        return not self.hits and self.dense_candidates == 0
+
+
+@dataclass(frozen=True)
 class HybridRetriever:
     """Retrieval for one actor, on one project, for the length of one turn.
 
@@ -141,21 +171,30 @@ class HybridRetriever:
         Returning nothing is a normal answer and means the question could not be
         answered from these documents. The graph routes that to a refusal.
         """
-        return tuple(hit.chunk.as_snippet() for hit in self.search_ranked(query, limit=limit))
+        return tuple(
+            hit.chunk.as_snippet() for hit in self.search_ranked(query, limit=limit)
+        )
 
     def search_ranked(self, query: str, *, limit: int) -> tuple[FusedHit, ...]:
         """The same search, with the ranks and scores that produced it.
 
-        For the evaluator and for the trace. Same computation as
-        :meth:`search`, one layer earlier.
+        For the trace, and for anything that wants to explain a result. Same
+        computation as :meth:`search`, one layer earlier; see
+        :meth:`search_detailed` when the diagnostics matter too.
+        """
+        return self.search_detailed(query, limit=limit).hits
+
+    def search_detailed(self, query: str, *, limit: int) -> RetrievalOutcome:
+        """The search, plus what the halves saw on the way.
 
         Args:
             query: What to look for.
             limit: How many passages to return.
 
         Returns:
-            Up to ``limit`` fused hits, best first. Empty when the question has
-            no dense support in the documents this context may read.
+            A :class:`RetrievalOutcome` carrying up to ``limit`` fused hits,
+            best first, and the numbers behind them. No hits means the question
+            had no dense support in the documents this context may read.
 
         Raises:
             ValueError: ``limit`` is not positive, or ``query`` is blank.
@@ -176,17 +215,25 @@ class HybridRetriever:
             batch.vectors[0], context=self.context, limit=self.candidate_limit
         )
 
+        best = max((hit.score for hit in vector_hits), default=None)
         near = tuple(
             hit for hit in vector_hits if hit.score >= self.minimum_similarity
         )
         if not near:
             logger.info(
-                "no chunk within %.2f of %r for %s; refusing before synthesis",
-                self.minimum_similarity,
+                "closest chunk to %r for %s scored %s, under the %.2f floor; "
+                "refusing before synthesis",
                 query,
                 self.context.actor,
+                f"{best:.3f}" if best is not None else "nothing",
+                self.minimum_similarity,
             )
-            return ()
+            return RetrievalOutcome(
+                hits=(),
+                best_similarity=best,
+                dense_candidates=0,
+                lexical_candidates=0,
+            )
 
         lexical_hits = self.lexical_index.search(
             query, context=self.context, limit=self.candidate_limit
@@ -202,7 +249,12 @@ class HybridRetriever:
             len(near),
             len(lexical_hits),
         )
-        return hits
+        return RetrievalOutcome(
+            hits=hits,
+            best_similarity=best,
+            dense_candidates=len(near),
+            lexical_candidates=len(lexical_hits),
+        )
 
 
 @dataclass
