@@ -26,7 +26,13 @@ import os
 import psycopg
 from dotenv import load_dotenv
 
-__all__ = ["DEFAULT_POSTGRES_URL", "StoreConnectionError", "connect", "url_from_environment"]
+__all__ = [
+    "CONNECT_TIMEOUT_SECONDS",
+    "DEFAULT_POSTGRES_URL",
+    "StoreConnectionError",
+    "connect",
+    "url_from_environment",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +41,14 @@ DEFAULT_POSTGRES_URL = "postgresql://agentic_erp:agentic_erp@localhost:5432/agen
 the same throwaway credential, so the two agree by construction and a fresh
 checkout needs no ``.env``. A real deployment replaces the whole URL through
 ``POSTGRES_URL`` and these values never leave the compose file."""
+
+CONNECT_TIMEOUT_SECONDS = 3
+"""How long one connect attempt may hang before the answer is "no database".
+
+libpq's own default is long, and the price is paid in the wrong place: the
+integration tests ask this question once per test to decide whether to skip,
+so with the container down a default-timeout suite spends minutes waiting for
+a refusal that takes three seconds to be sure of."""
 
 
 class StoreConnectionError(RuntimeError):
@@ -81,7 +95,11 @@ def connect(url: str | None = None) -> psycopg.Connection:
     """
     resolved = url if url is not None else url_from_environment()
     try:
-        connection = psycopg.connect(resolved, autocommit=True)
+        connection = psycopg.connect(
+            resolved,
+            autocommit=True,
+            connect_timeout=CONNECT_TIMEOUT_SECONDS,
+        )
     except psycopg.Error as error:
         raise StoreConnectionError(
             f"cannot connect to the evidence store at {resolved!r}: {error}. "
