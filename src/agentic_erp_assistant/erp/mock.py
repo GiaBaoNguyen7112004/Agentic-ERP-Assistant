@@ -23,15 +23,30 @@ a tool has to report and the turn has to route on. The handler turns it into a
 failed :class:`~agentic_erp_assistant.state.tool_outcome.ToolOutcome`; raising
 from the store would make a bad guess look like a broken backend.
 
-Writes are in memory
---------------------
+Writes reach the file the store was loaded from
+-----------------------------------------------
 
-:meth:`MockErp.create_risk` appends to this instance and never touches the file
-on disk. A test run must not edit the repo's fixture, and two tests must not be
-able to see each other's writes -- so each one builds its own store.
+:meth:`MockErp.create_risk` appends to this instance and then rewrites the file
+the store was loaded from, atomically: a temporary file beside it, then
+:func:`os.replace`. The dataset is tens of rows and readable in review, so a
+whole-file rewrite costs milliseconds and keeps the file something a person can
+still read -- which a ledger of appended edits would not.
+
+A store built without a path -- :meth:`from_mapping` in a test, say -- refuses
+to write rather than quietly keeping the change in memory. An append that
+vanished with the process is precisely the defect this module used to have,
+and a loud failure is how it stays fixed. The file's ``_``-prefixed
+documentation keys are carried across a rewrite: they are review material, and
+a write that erased its own readme would be worse than one that never touched
+the file.
+
+No lock, because there is nothing to lock against yet: the engine runs one
+node at a time and there is no web layer. Revisit this when a second request
+can arrive while the first is mid-write.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -40,6 +55,7 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "Budget",
     "DEFAULT_DATASET_PATH",
+    "ErpNotPersistedError",
     "Milestone",
     "MockErp",
     "Project",
@@ -117,13 +133,27 @@ class Risk(_Record):
     severity: RiskSeverity
 
 
+class ErpNotPersistedError(RuntimeError):
+    """A write was asked of a store that has no file to write to.
+
+    Raised rather than the write being quietly kept in memory: a store built by
+    :meth:`MockErp.from_mapping` without a path is a store whose writes have
+    nowhere to land, and the caller needs to hear that at the write, not
+    discover it after the process exits. Handlers translate it into a
+    :class:`~agentic_erp_assistant.tools.models.ToolError` so nothing escapes
+    the gateway; defined here rather than there so ``erp/`` stays importable
+    without the tool layer.
+    """
+
+
 class MockErp:
-    """One project's delivery data, in memory, for the tools to work against.
+    """One project's delivery data, for the tools to work against.
 
     Not frozen, because :meth:`create_risk` is the write the whole approval
     story exists for and it has to change something observable. Everything it
-    changes lives on the instance, so a test asserts on its own store and no
-    test can see another's write.
+    changes lives on the instance and, when the store was loaded from a file,
+    in that file -- so a test asserts on its own store and no test can see
+    another's write.
     """
 
     def __init__(
@@ -134,23 +164,27 @@ class MockErp:
         sprints: tuple[Sprint, ...],
         budgets: tuple[Budget, ...],
         risks: tuple[Risk, ...],
+        path: Path | None = None,
     ) -> None:
         self.projects = projects
         self.milestones = milestones
         self.sprints = sprints
         self.budgets = budgets
         self.risks = list(risks)
+        self._path = path
+        self._documentation: dict[str, Any] = {}
 
     @classmethod
-    def from_mapping(cls, raw: dict[str, Any]) -> Self:
+    def from_mapping(cls, raw: dict[str, Any], path: Path | None = None) -> Self:
         """Build a store from already-parsed JSON.
 
         Separate from :meth:`load` so a test can hand in three rows instead of
         depending on the repo's fixture staying the shape it expects. Keys
         beginning with an underscore are documentation for the human reading
-        the file and are ignored here.
+        the file: ignored by the record models, but remembered here so a
+        rewrite does not erase them.
         """
-        return cls(
+        store = cls(
             projects=tuple(Project.model_validate(row) for row in raw["projects"]),
             milestones=tuple(
                 Milestone.model_validate(row) for row in raw["milestones"]
@@ -158,12 +192,22 @@ class MockErp:
             sprints=tuple(Sprint.model_validate(row) for row in raw["sprints"]),
             budgets=tuple(Budget.model_validate(row) for row in raw["budgets"]),
             risks=tuple(Risk.model_validate(row) for row in raw["risks"]),
+            path=path,
         )
+        store._documentation = {
+            key: value for key, value in raw.items() if key.startswith("_")
+        }
+        return store
 
     @classmethod
     def load(cls, path: Path = DEFAULT_DATASET_PATH) -> Self:
-        """Read the fixture from disk and validate every row."""
-        return cls.from_mapping(json.loads(path.read_text(encoding="utf-8")))
+        """Read the fixture from disk and validate every row.
+
+        The path is remembered: it is where a later write goes.
+        """
+        return cls.from_mapping(
+            json.loads(path.read_text(encoding="utf-8")), path=path
+        )
 
     # -- reads -------------------------------------------------------------
 
@@ -194,13 +238,19 @@ class MockErp:
     # -- the one write -----------------------------------------------------
 
     def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
-        """Record a new risk and return it.
+        """Record a new risk, persist it, and return it.
 
         The id is derived from the count rather than randomly generated, so a
         test can assert on the result and an audit row and a trace entry all
         name the same thing. Nothing here checks permission or approval -- that
         is the gateway's job, and a store that also enforced policy would be a
         second place to look for the rule.
+
+        Persists through :meth:`_flush` before returning, so a caller that was
+        told "recorded" can reload the file and find it. A store without a path
+        raises :class:`ErpNotPersistedError` instead -- and any flush failure
+        rolls the append back, because a store that kept the row in memory
+        after refusing to write it would be claiming a write it did not make.
         """
         created = Risk(
             risk_id=f"R-{len(self.risks) + 1}",
@@ -210,4 +260,46 @@ class MockErp:
             source_id=f"risk-r-{len(self.risks) + 1}",
         )
         self.risks.append(created)
+        try:
+            self._flush()
+        except BaseException:
+            self.risks.pop()
+            raise
         return created
+
+    def _flush(self) -> None:
+        """Rewrite the file this store was loaded from, atomically.
+
+        The whole file rather than an append, because the dataset is review
+        material first: tens of rows, rewritten in milliseconds, still openable
+        beside the code that reads it. A ledger of edits would make the file
+        a database with none of the tooling.
+
+        The write lands on a temporary file that replaces the real one, so a
+        crash mid-write leaves either the old dataset or the new one -- never a
+        half-written file that fails the next :meth:`load` and takes the
+        assistant down with it.
+        """
+        if self._path is None:
+            raise ErpNotPersistedError(
+                "this store was not loaded from a file, so the write has "
+                "nowhere to go; a change that only lived in this process's "
+                "memory is the defect the flush exists to prevent"
+            )
+        document = {
+            **self._documentation,
+            "projects": [row.model_dump() for row in self.projects],
+            "milestones": [row.model_dump() for row in self.milestones],
+            "sprints": [row.model_dump() for row in self.sprints],
+            "budgets": [row.model_dump() for row in self.budgets],
+            "risks": [row.model_dump() for row in self.risks],
+        }
+        temporary = self._path.with_name(self._path.name + ".tmp")
+        try:
+            temporary.write_text(
+                json.dumps(document, indent=2) + "\n", encoding="utf-8"
+            )
+            os.replace(temporary, self._path)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise

@@ -43,8 +43,10 @@ WRITE_SCOPE = frozenset({"project.risk.write"})
 
 
 @pytest.fixture
-def erp() -> MockErp:
-    return MockErp.load()
+def erp(erp_file) -> MockErp:
+    """A writable copy: an approved ``create_risk`` really reaches the file
+    now, and the repo's fixture must not be where it lands."""
+    return MockErp.load(erp_file)
 
 
 @pytest.fixture

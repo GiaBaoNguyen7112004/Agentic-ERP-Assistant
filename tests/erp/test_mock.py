@@ -1,15 +1,27 @@
 """A fixture nobody validates is a fixture that rots quietly."""
 
+import json
+
 import pytest
 from pydantic import ValidationError
 
-from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, Milestone, MockErp
+from agentic_erp_assistant.erp.mock import (
+    DEFAULT_DATASET_PATH,
+    ErpNotPersistedError,
+    Milestone,
+    MockErp,
+)
 
 
 @pytest.fixture
-def erp() -> MockErp:
-    """A fresh store per test: writes must not leak between them."""
-    return MockErp.load()
+def erp(erp_file) -> MockErp:
+    """A fresh store per test, loaded from a disposable copy of the fixture.
+
+    Writes really reach the file now, so the copy is what keeps one test's
+    write from being the next test's row -- and the repo's fixture from
+    becoming test exhaust.
+    """
+    return MockErp.load(erp_file)
 
 
 # --------------------------------------------------------------------------
@@ -132,7 +144,55 @@ def test_the_store_enforces_no_policy_of_its_own(erp: MockErp) -> None:
     assert erp.risks[-1].title == "unapproved"
 
 
-def test_a_write_does_not_touch_the_file_on_disk(erp: MockErp) -> None:
-    erp.create_risk(project_id="atlas", title="in memory only", severity="low")
+def test_a_write_persists_to_the_file_on_disk(erp: MockErp, erp_file) -> None:
+    """The one property this module exists for: a caller that was told
+    'recorded' can reload the file and find it."""
+    erp.create_risk(project_id="atlas", title="persisted, not just appended", severity="low")
 
-    assert len(MockErp.load().risks_for("atlas")) == len(erp.risks_for("atlas")) - 1
+    reloaded = MockErp.load(erp_file)
+    titles = [risk.title for risk in reloaded.risks_for("atlas")]
+    assert "persisted, not just appended" in titles
+
+
+def test_a_write_keeps_the_documentation_keys(erp: MockErp, erp_file) -> None:
+    """The ``_readme`` is review material; a rewrite that erased it would be a
+    write that destroyed the thing it was writing to."""
+    erp.create_risk(project_id="atlas", title="x", severity="low")
+
+    raw = json.loads(erp_file.read_text(encoding="utf-8"))
+    assert "_readme" in raw
+
+
+def test_a_store_with_no_file_refuses_to_write() -> None:
+    """Loudly, not silently: the append-then-vanish behavior this replaces was
+    the defect, and a pathless store that quietly kept the row would be it
+    again."""
+    store = MockErp.from_mapping(
+        {
+            "projects": [
+                {
+                    "project_id": "atlas",
+                    "name": "Atlas ERP rollout",
+                    "source_id": "project-atlas",
+                }
+            ],
+            "milestones": [],
+            "sprints": [],
+            "budgets": [],
+            "risks": [],
+        }
+    )
+
+    with pytest.raises(ErpNotPersistedError):
+        store.create_risk(project_id="atlas", title="nowhere to go", severity="low")
+
+    assert store.risks == [], "a refused write must not leave a row behind"
+
+
+def test_the_repo_fixture_is_untouched_by_the_write_tests() -> None:
+    """The suite above writes to copies; this is the guard that says so. If it
+    fails, some fixture stopped using ``erp_file`` and the repo's fixture is
+    being edited by a test."""
+    raw = json.loads(DEFAULT_DATASET_PATH.read_text(encoding="utf-8"))
+    risk_ids = [risk["risk_id"] for risk in raw["risks"]]
+    assert risk_ids == ["R-1", "R-2"]

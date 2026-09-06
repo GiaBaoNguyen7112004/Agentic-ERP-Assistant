@@ -1,8 +1,10 @@
 """If the policy is not readable off the registry, it is not a control plane."""
 
+from pathlib import Path
+
 import pytest
 
-from agentic_erp_assistant.erp.mock import MockErp
+from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, MockErp
 from agentic_erp_assistant.llm.tools import (
     CREATE_RISK_TOOL,
     DEFAULT_TOOLS,
@@ -30,8 +32,10 @@ EXPECTED = (
 
 
 @pytest.fixture
-def registry() -> ToolRegistry:
-    return build_default_registry(MockErp.load())
+def registry(erp_file) -> ToolRegistry:
+    """Over a writable copy of the fixture, because the handler-call tests
+    below execute real writes now."""
+    return build_default_registry(MockErp.load(erp_file))
 
 
 def anything(_: object) -> HandlerResult:
@@ -252,10 +256,23 @@ def test_each_definition_carries_the_code_that_runs(registry: ToolRegistry) -> N
     assert callable(registry.get("list_risks").handler)
 
 
-def test_two_registries_do_not_share_a_store() -> None:
-    """So one test's write cannot be seen by another's read."""
-    mine = build_default_registry(MockErp.load())
-    yours = build_default_registry(MockErp.load())
+def a_writable_copy(target: Path) -> MockErp:
+    """A store over a fresh copy of the fixture, so a write lands nowhere
+    shared."""
+    target.write_text(
+        DEFAULT_DATASET_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return MockErp.load(target)
+
+
+def test_two_registries_do_not_share_a_store(tmp_path) -> None:
+    """So one test's write cannot be seen by another's read.
+
+    Two files, not one: with a write that really persists, two stores over one
+    file would pass this on stale in-memory lists -- the isolation being
+    asserted is between stores, and it has to survive a reload."""
+    mine = build_default_registry(a_writable_copy(tmp_path / "mine.json"))
+    yours = build_default_registry(a_writable_copy(tmp_path / "yours.json"))
 
     mine.get("create_risk").handler(
         CREATE_RISK_TOOL.validate_arguments(
