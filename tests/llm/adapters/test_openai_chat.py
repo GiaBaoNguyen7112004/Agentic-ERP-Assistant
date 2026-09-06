@@ -22,6 +22,7 @@ import pytest
 
 from agentic_erp_assistant.llm.adapters.openai_chat import (
     EVIDENCE_PREAMBLE,
+    OBSERVATION_PREAMBLE,
     RESPONSE_FORMAT_NAME,
     OpenAIChatClient,
 )
@@ -34,7 +35,11 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import build_messages
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
-from agentic_erp_assistant.llm.tools import GET_PROJECT_STATUS_TOOL, ToolSpec
+from agentic_erp_assistant.llm.tools import (
+    DEFAULT_TOOLS,
+    GET_PROJECT_STATUS_TOOL,
+    ToolSpec,
+)
 
 MODEL = "test-model-1"
 API_KEY = "sk-test-not-a-real-key"
@@ -195,6 +200,27 @@ def test_evidence_is_relabeled_developer_and_stays_its_own_message(messages) -> 
 
     # The user's turn is untouched: no evidence appended, nothing prefixed.
     assert wire[2]["content"] == "How did sprint 12 go?"
+
+
+def test_an_observation_is_relabeled_but_keeps_its_own_boundary(messages) -> None:
+    """A tool result is data typed by people, so it gets the same treatment as a
+    retrieved document -- and its own preamble, so neither is mistaken for the
+    other."""
+    recorder = Recorder()
+    with make_client(recorder) as client:
+        client.complete(
+            [
+                {"role": "user", "content": "Any new risks?"},
+                {"role": "observation", "content": "1. list_risks -> ok: 2 open"},
+            ],
+            temperature=0.0,
+        )
+
+    wire = recorder.body["messages"]
+    assert [message["role"] for message in wire] == ["user", "developer"]
+    assert wire[1]["content"].startswith(OBSERVATION_PREAMBLE)
+    assert not wire[1]["content"].startswith(EVIDENCE_PREAMBLE)
+    assert wire[0]["content"] == "Any new risks?"
 
 
 def test_the_other_roles_pass_through_unchanged() -> None:
@@ -577,10 +603,18 @@ def test_call_with_tools_sends_the_declared_schema_as_a_function(messages) -> No
         client.call_with_tools(messages)
 
     tools = recorder.body["tools"]
-    assert len(tools) == 1
-    assert tools[0]["type"] == "function"
-    function = tools[0]["function"]
-    assert function["name"] == "get_project_status"
+    # Against the offering itself, not a literal count: DEFAULT_TOOLS is data
+    # that grows, and a test pinning its length would fail every time a tool is
+    # added without saying anything about the rendering it was written to check.
+    assert [tool["function"]["name"] for tool in tools] == [
+        spec.name for spec in DEFAULT_TOOLS
+    ]
+    assert all(tool["type"] == "function" for tool in tools)
+    function = next(
+        tool["function"]
+        for tool in tools
+        if tool["function"]["name"] == "get_project_status"
+    )
     assert function["description"] == GET_PROJECT_STATUS_TOOL.description
     assert function["parameters"] == GET_PROJECT_STATUS_TOOL.schema
 
@@ -591,10 +625,14 @@ def test_call_with_tools_marks_the_function_strict(messages) -> None:
     with make_client(recorder) as client:
         client.call_with_tools(messages)
 
-    function = recorder.body["tools"][0]["function"]
-    assert function["strict"] is True
-    assert function["parameters"]["additionalProperties"] is False
-    assert function["parameters"]["required"] == ["milestone_id"]
+    functions = [tool["function"] for tool in recorder.body["tools"]]
+    assert all(function["strict"] is True for function in functions)
+    assert all(
+        function["parameters"]["additionalProperties"] is False
+        for function in functions
+    )
+    status = next(f for f in functions if f["name"] == "get_project_status")
+    assert status["parameters"]["required"] == ["milestone_id"]
 
 
 def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:

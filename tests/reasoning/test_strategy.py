@@ -24,7 +24,12 @@ def test_a_tool_call_without_a_tool_name_cannot_exist() -> None:
 def test_approval_cannot_be_required_on_a_route_that_executes_nothing() -> None:
     """'clarify, but get it approved first' is not a state the runtime has."""
     with pytest.raises(ValidationError, match="approval_required"):
-        ReasoningDecision(route="clarify", confidence=0.4, approval_required=True)
+        ReasoningDecision(
+            route="clarify",
+            confidence=0.4,
+            message="Which milestone?",
+            approval_required=True,
+        )
 
 
 def test_the_invariants_run_before_the_object_exists() -> None:
@@ -46,6 +51,7 @@ def test_a_tool_call_that_names_its_tool_is_valid() -> None:
         route="call_tool",
         confidence=0.9,
         required_tool="get_project_status",
+        tool_arguments={},
     )
 
     assert decision.required_tool == "get_project_status"
@@ -57,6 +63,7 @@ def test_a_mutating_call_carries_both_the_tool_and_the_approval_flag() -> None:
         route="request_approval",
         confidence=0.8,
         required_tool="close_milestone",
+        tool_arguments={},
         approval_required=True,
         rationale="Mutating call; a human must confirm before it runs.",
     )
@@ -67,6 +74,7 @@ def test_a_mutating_call_carries_both_the_tool_and_the_approval_flag() -> None:
 def test_retrieval_records_the_sources_it_expects_to_need() -> None:
     decision = ReasoningDecision(
         route="retrieve_project_documents",
+        search_query="M2 status",
         confidence=0.7,
         required_evidence=("sprint-12-report.md", "budget-q3.md"),
     )
@@ -74,12 +82,56 @@ def test_retrieval_records_the_sources_it_expects_to_need() -> None:
     assert decision.required_evidence == ("sprint-12-report.md", "budget-q3.md")
 
 
-@pytest.mark.parametrize("route", ["clarify", "refuse"])
+@pytest.mark.parametrize("route", ["clarify", "refuse", "fail"])
 def test_the_terminal_routes_need_neither_tool_nor_evidence(route: str) -> None:
-    decision = ReasoningDecision(route=route, confidence=0.2)
+    decision = ReasoningDecision(
+        route=route,
+        confidence=0.2,
+        **({} if route == "fail" else {"message": "nothing to run"}),
+    )
 
     assert decision.required_tool is None
     assert decision.required_evidence == ()
+
+
+def test_answering_directly_is_a_route_and_not_an_absent_one() -> None:
+    """The graph dispatches a reply node; 'no route yet' has to stay a
+    different value from 'the runtime decided to reply'."""
+    decision = ReasoningDecision(route="answer", confidence=0.9)
+
+    assert decision.route == "answer"
+    assert decision.required_tool is None
+
+
+def test_the_answer_route_cannot_carry_a_tool_name() -> None:
+    """It is the absence of a preparatory action, so there is nothing to name."""
+    with pytest.raises(ValidationError, match="required_tool"):
+        ReasoningDecision(
+            route="answer",
+            confidence=0.9,
+            required_tool="get_project_status",
+            tool_arguments={},
+        )
+
+
+def test_approval_cannot_be_required_on_the_answer_route() -> None:
+    """Nothing executes on the way to a reply, so there is nothing to approve."""
+    with pytest.raises(ValidationError, match="approval_required"):
+        ReasoningDecision(route="answer", confidence=0.9, approval_required=True)
+
+
+def test_a_broken_turn_ends_on_its_own_route_not_on_refuse() -> None:
+    """A refusal is policy working as designed; a failure is the system not
+    working. A reviewer counting refusals must not be counting outages."""
+    broke = ReasoningDecision(route="fail", confidence=0.0)
+    refused = ReasoningDecision(route="refuse", confidence=0.0, message="No.")
+
+    assert broke.route != refused.route
+
+
+def test_approval_cannot_be_required_on_the_fail_route() -> None:
+    with pytest.raises(ValidationError, match="approval_required"):
+        ReasoningDecision(route="fail", confidence=0.0, approval_required=True)
 
 
 def test_an_unroutable_label_is_rejected_at_the_decision() -> None:
@@ -102,7 +154,9 @@ def test_the_intent_route_names_are_not_accepted_here() -> None:
 
 @pytest.mark.parametrize("confidence", [0.0, 1.0])
 def test_confidence_admits_both_ends_of_the_range(confidence: float) -> None:
-    decision = ReasoningDecision(route="refuse", confidence=confidence)
+    decision = ReasoningDecision(
+        route="refuse", confidence=confidence, message="No."
+    )
 
     assert decision.confidence == confidence
 
@@ -110,13 +164,14 @@ def test_confidence_admits_both_ends_of_the_range(confidence: float) -> None:
 @pytest.mark.parametrize("confidence", [-0.01, 1.01])
 def test_confidence_outside_zero_to_one_is_rejected(confidence: float) -> None:
     with pytest.raises(ValidationError, match="confidence"):
-        ReasoningDecision(route="refuse", confidence=confidence)
+        ReasoningDecision(route="refuse", confidence=confidence, message="No.")
 
 
 def test_a_rationale_at_the_cap_is_accepted() -> None:
     decision = ReasoningDecision(
         route="refuse",
         confidence=0.1,
+        message="No.",
         rationale="x" * RATIONALE_MAX_CHARS,
     )
 
@@ -130,6 +185,7 @@ def test_a_rationale_over_the_cap_is_rejected() -> None:
         ReasoningDecision(
             route="refuse",
             confidence=0.1,
+            message="No.",
             rationale="x" * (RATIONALE_MAX_CHARS + 1),
         )
 
@@ -140,7 +196,9 @@ def test_a_tool_name_on_a_route_that_calls_nothing_is_rejected() -> None:
         ReasoningDecision(
             route="clarify",
             confidence=0.4,
+            message="Which milestone?",
             required_tool="get_project_status",
+            tool_arguments={},
         )
 
 
@@ -153,6 +211,7 @@ def test_a_blank_source_id_is_rejected() -> None:
     with pytest.raises(ValidationError, match="required_evidence"):
         ReasoningDecision(
             route="retrieve_project_documents",
+            search_query="M2 status",
             confidence=0.7,
             required_evidence=("sprint-12-report.md", ""),
         )
@@ -160,7 +219,9 @@ def test_a_blank_source_id_is_rejected() -> None:
 
 def test_an_unmodelled_field_is_rejected() -> None:
     with pytest.raises(ValidationError):
-        ReasoningDecision(route="refuse", confidence=0.1, escalate=True)
+        ReasoningDecision(
+            route="refuse", confidence=0.1, message="No.", escalate=True
+        )
 
 
 def test_a_decision_cannot_be_edited_after_it_is_audited() -> None:
@@ -169,6 +230,7 @@ def test_a_decision_cannot_be_edited_after_it_is_audited() -> None:
         route="call_tool",
         confidence=0.9,
         required_tool="get_project_status",
+        tool_arguments={},
     )
 
     with pytest.raises(ValidationError):
@@ -179,6 +241,7 @@ def test_required_evidence_cannot_be_appended_to_in_place() -> None:
     """A frozen model holding a list would only look frozen."""
     decision = ReasoningDecision(
         route="retrieve_project_documents",
+        search_query="M2 status",
         confidence=0.7,
         required_evidence=("sprint-12-report.md",),
     )
@@ -263,3 +326,102 @@ def test_a_negative_evidence_count_is_a_caller_bug() -> None:
         classify_failure(
             evidence_count=-1, budget_overflow=False, provider_error=False
         )
+
+
+# --------------------------------------------------------------------------
+# What a write, and what a reply, must carry
+# --------------------------------------------------------------------------
+
+
+def test_a_mutating_call_cannot_route_past_the_approval_gate() -> None:
+    """The one implication that runs in a single direction."""
+    with pytest.raises(ValidationError, match="mutating"):
+        ReasoningDecision(
+            route="request_approval",
+            confidence=0.9,
+            required_tool="create_risk",
+            tool_arguments={},
+            mutating=True,
+            approval_required=False,
+        )
+
+
+def test_an_escalated_read_is_approval_required_without_being_mutating() -> None:
+    """Policy can put a read in front of a human; that does not make it a write."""
+    decision = ReasoningDecision(
+        route="request_approval",
+        confidence=0.9,
+        required_tool="get_budget_summary",
+        tool_arguments={},
+        approval_required=True,
+    )
+
+    assert decision.approval_required and not decision.mutating
+
+
+def test_nothing_mutates_on_a_route_that_executes_nothing() -> None:
+    with pytest.raises(ValidationError, match="mutating"):
+        ReasoningDecision(route="answer", confidence=0.9, mutating=True)
+
+
+def test_a_clarification_must_carry_the_question_it_asks() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(route="clarify", confidence=0.3)
+
+
+def test_a_refusal_must_carry_its_reason() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(route="refuse", confidence=0.9)
+
+
+def test_an_answer_may_defer_its_words_to_a_later_step() -> None:
+    """Retrieval still has to run before the reply exists."""
+    assert ReasoningDecision(route="answer", confidence=0.8).message is None
+
+
+def test_words_on_a_route_that_says_nothing_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="message"):
+        ReasoningDecision(
+            route="call_tool",
+            confidence=0.9,
+            required_tool="list_risks",
+            tool_arguments={},
+            message="here you go",
+        )
+
+
+def test_thinking_is_a_route_and_carries_nothing_else() -> None:
+    """Where a turn goes to decide, once an action has produced an observation."""
+    decision = ReasoningDecision(route="think", confidence=0.5)
+
+    assert decision.required_tool is None
+    assert decision.message is None
+
+
+def test_a_call_must_say_what_it_is_calling_with() -> None:
+    """An approver cannot be shown a call whose arguments are missing."""
+    with pytest.raises(ValidationError, match="tool_arguments"):
+        ReasoningDecision(
+            route="call_tool", confidence=0.9, required_tool="list_risks"
+        )
+
+
+def test_arguments_on_a_route_that_calls_nothing_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="tool_arguments"):
+        ReasoningDecision(
+            route="answer", confidence=0.9, tool_arguments={"project_id": "atlas"}
+        )
+
+
+def test_the_carried_arguments_cannot_be_edited_after_the_decision() -> None:
+    arguments = {"project_id": "atlas"}
+    decision = ReasoningDecision(
+        route="call_tool",
+        confidence=0.9,
+        required_tool="list_risks",
+        tool_arguments=arguments,
+    )
+
+    arguments["project_id"] = "other"
+
+    assert decision.tool_arguments["project_id"] == "atlas"

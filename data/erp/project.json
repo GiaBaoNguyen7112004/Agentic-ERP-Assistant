@@ -1,0 +1,83 @@
+{
+  "_readme": "Synthetic delivery data for one fictional project. Small enough to read in review, and the only dataset the mock ERP serves. No real customer data belongs here.",
+  "projects": [
+    {
+      "project_id": "atlas",
+      "name": "Atlas ERP rollout",
+      "source_id": "project-atlas"
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "M1",
+      "project_id": "atlas",
+      "title": "Discovery and scope sign-off",
+      "due_on": "2026-05-29",
+      "schedule_status": "done",
+      "days_late": 0,
+      "source_id": "milestone-m1"
+    },
+    {
+      "milestone_id": "M2",
+      "project_id": "atlas",
+      "title": "Finance module cutover",
+      "due_on": "2026-09-11",
+      "schedule_status": "at_risk",
+      "days_late": 2,
+      "source_id": "milestone-m2"
+    },
+    {
+      "milestone_id": "M3",
+      "project_id": "atlas",
+      "title": "Warehouse module cutover",
+      "due_on": "2026-11-06",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-m3"
+    }
+  ],
+  "sprints": [
+    {
+      "sprint_id": "SPR-12",
+      "project_id": "atlas",
+      "points_committed": 34,
+      "points_completed": 34,
+      "days_remaining": 0,
+      "source_id": "sprint-12-report"
+    },
+    {
+      "sprint_id": "SPR-13",
+      "project_id": "atlas",
+      "points_committed": 40,
+      "points_completed": 22,
+      "days_remaining": 4,
+      "source_id": "sprint-13-report"
+    }
+  ],
+  "budgets": [
+    {
+      "project_id": "atlas",
+      "approved_usd": 480000.0,
+      "spent_usd": 292800.0,
+      "forecast_at_completion_usd": 515000.0,
+      "as_of": "2026-08-31",
+      "source_id": "budget-summary-q3"
+    }
+  ],
+  "risks": [
+    {
+      "risk_id": "R-1",
+      "project_id": "atlas",
+      "title": "Finance data migration may exceed the cutover window",
+      "severity": "high",
+      "source_id": "risk-r-1"
+    },
+    {
+      "risk_id": "R-2",
+      "project_id": "atlas",
+      "title": "Second integration vendor has not confirmed the test window",
+      "severity": "medium",
+      "source_id": "risk-r-2"
+    }
+  ]
+}

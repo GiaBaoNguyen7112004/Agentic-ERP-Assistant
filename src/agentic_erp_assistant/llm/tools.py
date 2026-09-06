@@ -26,14 +26,31 @@ model inventing an argument nobody declared.
 """
 
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "ASK_CLARIFICATION_TOOL",
+    "AskClarificationArguments",
+    "BudgetSummaryArguments",
+    "CONTROL_TOOLS",
+    "CREATE_RISK_TOOL",
+    "CreateRiskArguments",
     "DEFAULT_TOOLS",
+    "GET_BUDGET_SUMMARY_TOOL",
+    "GET_PROJECT_STATUS_FLAKY_TOOL",
     "GET_PROJECT_STATUS_TOOL",
+    "GET_SPRINT_PROGRESS_TOOL",
+    "LIST_RISKS_TOOL",
+    "ListRisksArguments",
+    "PLANNING_TOOLS",
     "ProjectStatusArguments",
+    "REFUSE_TOOL",
+    "RefuseArguments",
+    "SEARCH_PROJECT_DOCUMENTS_TOOL",
+    "SearchProjectDocumentsArguments",
+    "SprintProgressArguments",
     "StrictArguments",
     "ToolCallResult",
     "ToolSpec",
@@ -166,6 +183,103 @@ class ToolSpec:
         return self.arguments.model_validate(dict(raw))
 
 
+class SprintProgressArguments(StrictArguments):
+    """Arguments for ``get_sprint_progress``."""
+
+    sprint_id: str = Field(
+        min_length=1,
+        description="The sprint to report on, e.g. 'SPR-13'.",
+    )
+
+
+class BudgetSummaryArguments(StrictArguments):
+    """Arguments for ``get_budget_summary``.
+
+    ``include_forecast`` is required rather than defaulted, which looks odd for
+    a flag until you remember why: strict function calling demands every
+    property appear in ``required``. A flag with a default would have to be
+    modelled as required-and-nullable, which is a worse contract than simply
+    making the caller state what it wants.
+    """
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project to report on, e.g. 'atlas'.",
+    )
+    include_forecast: bool = Field(
+        description=(
+            "Whether to include the forecast at completion alongside approved "
+            "and spent amounts."
+        ),
+    )
+
+
+class ListRisksArguments(StrictArguments):
+    """Arguments for ``list_risks``."""
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project whose open risks to list, e.g. 'atlas'.",
+    )
+
+
+class SearchProjectDocumentsArguments(StrictArguments):
+    """Arguments for ``search_project_documents``."""
+
+    query: str = Field(
+        min_length=1,
+        description=(
+            "What to look for in the project documents, in the user's own "
+            "terms. Prefer the words the question used over a paraphrase."
+        ),
+    )
+
+
+class AskClarificationArguments(StrictArguments):
+    """Arguments for ``ask_clarification``."""
+
+    question: str = Field(
+        min_length=1,
+        description=(
+            "The single question to put back to the user, phrased so that one "
+            "short answer unblocks the request."
+        ),
+    )
+
+
+class RefuseArguments(StrictArguments):
+    """Arguments for ``refuse``."""
+
+    reason: str = Field(
+        min_length=1,
+        description=(
+            "Why this request will not be carried out, in one sentence the "
+            "user will read."
+        ),
+    )
+
+
+class CreateRiskArguments(StrictArguments):
+    """Arguments for ``create_risk`` -- the one tool that changes anything.
+
+    ``severity`` is a Literal, not a string. The model picks this value, and a
+    free string would let it invent a severity nobody can sort, filter or
+    escalate on, discovered only when a report tried to group by it.
+    """
+
+    project_id: str = Field(
+        min_length=1,
+        description="The project to record the risk against, e.g. 'atlas'.",
+    )
+    title: str = Field(
+        min_length=1,
+        description="One line describing the risk, as it will be stored.",
+    )
+    severity: Literal["low", "medium", "high"] = Field(
+        description="How serious the risk is.",
+    )
+
+
 GET_PROJECT_STATUS_TOOL = ToolSpec(
     name="get_project_status",
     description=(
@@ -180,11 +294,172 @@ GET_PROJECT_STATUS_TOOL = ToolSpec(
 recorded in the declaration rather than an assumption made at the call site."""
 
 
-DEFAULT_TOOLS: tuple[ToolSpec, ...] = (GET_PROJECT_STATUS_TOOL,)
+GET_PROJECT_STATUS_FLAKY_TOOL = ToolSpec(
+    name="get_project_status_flaky",
+    description=(
+        "Identical to get_project_status, but its backend fails intermittently. "
+        "Present so the retry budget can be exercised end to end."
+    ),
+    arguments=ProjectStatusArguments,
+    mutating=False,
+)
+"""A deliberately unreliable twin, and deliberately not in :data:`DEFAULT_TOOLS`.
+
+It exists to be executed, not to be offered: a model shown two tools that do
+the same thing would sometimes pick the broken one, and the trace would record
+a retry nobody asked for. Which is the distinction between the registry and
+this tuple -- the registry holds everything the runtime can run, the tuple
+holds what the model is invited to choose from.
+"""
+
+
+GET_SPRINT_PROGRESS_TOOL = ToolSpec(
+    name="get_sprint_progress",
+    description=(
+        "Report one sprint's committed and completed points and days "
+        "remaining. Read-only. Use it for questions about sprint burn-down or "
+        "whether a sprint will land."
+    ),
+    arguments=SprintProgressArguments,
+    mutating=False,
+)
+
+
+GET_BUDGET_SUMMARY_TOOL = ToolSpec(
+    name="get_budget_summary",
+    description=(
+        "Report a project's approved budget, amount spent, and optionally the "
+        "forecast at completion. Read-only. Use it for questions about money."
+    ),
+    arguments=BudgetSummaryArguments,
+    mutating=False,
+)
+
+
+LIST_RISKS_TOOL = ToolSpec(
+    name="list_risks",
+    description=(
+        "List the open risks recorded against a project, with their severity. "
+        "Read-only. Use it before answering questions about what could go "
+        "wrong, and before proposing a new risk that may already exist."
+    ),
+    arguments=ListRisksArguments,
+    mutating=False,
+)
+
+
+CREATE_RISK_TOOL = ToolSpec(
+    name="create_risk",
+    description=(
+        "Record a new risk against a project. This changes ERP data and "
+        "requires a human to approve it first. Use it only when the user has "
+        "asked for a risk to be recorded, and check list_risks first so an "
+        "existing risk is not duplicated."
+    ),
+    arguments=CreateRiskArguments,
+    mutating=True,
+)
+"""The only mutating tool. ``mutating=True`` is what the transition guard and
+the gateway both read; the sentence about approval in the description is for
+the model, and is not what enforces anything."""
+
+
+SEARCH_PROJECT_DOCUMENTS_TOOL = ToolSpec(
+    name="search_project_documents",
+    description=(
+        "Search the project documents -- status reports, meeting notes, "
+        "contracts -- and return the passages that answer a question, each "
+        "with the source it came from. Read-only. Use it for anything the ERP "
+        "tools do not hold as a field: decisions, commitments, explanations, "
+        "and any question whose answer has to be quoted rather than looked up."
+    ),
+    arguments=SearchProjectDocumentsArguments,
+    mutating=False,
+)
+"""Retrieval, offered exactly like any other tool.
+
+Which is the point: the model chooses to search through the same mechanism it
+chooses to call ``list_risks``, so there is one decision channel and no second
+rule about when retrieval happens. What differs is where the choice is carried
+out -- this one is executed by the retriever port and produces typed passages
+with locators, not a
+:class:`~agentic_erp_assistant.state.tool_outcome.ToolOutcome` summary bound
+for an audit row. Running it through the tool gateway would flatten those
+passages to a string and a list of ids before the prompt was built, and a
+citation without a locator is not resolvable. Uniform decision, different
+execution shape.
+"""
+
+
+ASK_CLARIFICATION_TOOL = ToolSpec(
+    name="ask_clarification",
+    description=(
+        "Ask the user one question instead of answering. Use it when the "
+        "request does not name what it is about -- no milestone, no project, "
+        "no sprint -- and guessing would produce a confident answer about the "
+        "wrong thing."
+    ),
+    arguments=AskClarificationArguments,
+    mutating=False,
+)
+
+
+REFUSE_TOOL = ToolSpec(
+    name="refuse",
+    description=(
+        "Decline the request. Use it when what is asked falls outside project "
+        "delivery operations, or when no available tool and no project "
+        "document could support an answer -- never as a way to avoid a hard "
+        "lookup."
+    ),
+    arguments=RefuseArguments,
+    mutating=False,
+)
+
+
+DEFAULT_TOOLS: tuple[ToolSpec, ...] = (
+    GET_PROJECT_STATUS_TOOL,
+    GET_SPRINT_PROGRESS_TOOL,
+    GET_BUDGET_SUMMARY_TOOL,
+    LIST_RISKS_TOOL,
+    CREATE_RISK_TOOL,
+)
 """What the model is offered when a caller does not say otherwise.
 
 A tuple, and the offering is data: adding a tool is an edit here, not a new
-branch in the adapter.
+branch in the adapter. Note what is absent --
+:data:`GET_PROJECT_STATUS_FLAKY_TOOL` is executable but not offered; see its
+docstring.
+"""
+
+
+CONTROL_TOOLS: tuple[ToolSpec, ...] = (
+    SEARCH_PROJECT_DOCUMENTS_TOOL,
+    ASK_CLARIFICATION_TOOL,
+    REFUSE_TOOL,
+)
+"""The three the runtime carries out itself rather than handing to the gateway.
+
+Not a different kind of thing to the model -- it sees six or nine functions and
+picks one. The split exists on this side of the boundary, because these three
+are executed by the graph (retrieval by the retriever port, the other two by
+ending the turn) and the registry has no entry for any of them.
+"""
+
+
+PLANNING_TOOLS: tuple[ToolSpec, ...] = DEFAULT_TOOLS + CONTROL_TOOLS
+"""Everything the planner offers when it asks the model what to do next.
+
+Deliberately the whole decision in one list. The alternative -- ask for a route
+first, then ask again for arguments -- costs a round trip and invents a second
+place where "what should happen next" is decided, which is the layer this
+project is graded on keeping singular.
+
+There is no ``final_answer`` here, and its absence is the contract:
+:class:`ToolCallResult` is already "a call, or direct content, never both", and
+the adapter sends ``tool_choice: "auto"``. Content with no call *is* the answer
+route. Adding a function to say the same thing would give the model two ways to
+answer and the runtime a tie to break.
 """
 
 

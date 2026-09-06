@@ -1,0 +1,359 @@
+"""The one object a graph node reads and the one it returns.
+
+Everything a turn knows lives here, in typed fields, and nothing a turn knows
+lives anywhere else. That is the whole contract: a node takes an
+:class:`AgentState` and returns a new one, so replaying a run means replaying a
+sequence of these, and reviewing a run means reading them. There is no shared
+dict a node can reach into, no attribute set on the side, and no state that
+exists only inside a node's local variables.
+
+Why a new object instead of a mutated one
+-----------------------------------------
+
+:meth:`AgentState.evolve` returns a new state and leaves the caller's untouched.
+The reason is not taste. A mutating graph makes the trace unreliable in exactly
+the case it matters most: when a node fails partway, an in-place update has
+already half-applied its changes, and the record of "the state the node was
+given" no longer exists to compare against. With immutable states, every
+transition leaves both sides intact, a retry re-runs a node against the same
+input it saw the first time, and a reviewer can diff two adjacent states and
+see precisely what one node did.
+
+``evolve`` re-validates rather than copying fields across
+---------------------------------------------------------
+
+The obvious implementation is pydantic's ``model_copy(update=...)``, and it is
+wrong here: it writes the new values in without running a single validator, so
+``model_copy(update={"step_count": -1})`` produces a state no constructor would
+ever have allowed. Since the graph reaches every state after the first one
+through this method, that would mean the invariants below hold only for initial
+states. So ``evolve`` builds a new object through the normal constructor, and
+an illegal transition fails at the transition.
+
+What this module does not decide
+--------------------------------
+
+Budgets. :attr:`AgentState.step_count` and :attr:`AgentState.retry_count` are
+counters, not limits -- the state records how many steps have been taken, and
+the runtime decides how many are allowed. Putting the ceiling here would fix
+one policy for every graph and hide it from the place a reviewer looks for it.
+"""
+
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
+
+from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.events import TraceEvent
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+__all__ = [
+    "AgentState",
+    "ApprovalDecision",
+    "ERROR_DETAIL_MAX_CHARS",
+    "STATE_VERSION",
+]
+
+
+STATE_VERSION = 1
+"""The shape this module writes and is willing to read.
+
+Carried in the state and checked at construction so a state serialized by an
+older build cannot be loaded into a newer one as if the fields still meant the
+same thing. Bumping it is a deliberate act that comes with a migration; a
+silent load of a mismatched shape is the failure this constant exists to make
+loud.
+"""
+
+
+ApprovalDecision = Literal[
+    "not_required",  # nothing mutating is pending
+    "pending",       # a human has been asked and has not answered
+    "approved",      # a human said yes, and it is recorded here
+    "denied",        # a human said no
+]
+"""Where a mutating call stands with its approver.
+
+Four members, and ``"not_required"`` is a string rather than ``None`` for the
+reason ``FailureMode`` uses ``"none"``: an optional field invites
+``if state.approval:`` at the gate, which collapses "nobody needs to approve
+this" and "we asked and were refused" into the same falsy value. The one place
+that must never be ambiguous is the gate in front of a write.
+"""
+
+
+ERROR_DETAIL_MAX_CHARS = 280
+"""How much free text a failure may carry alongside its typed mode."""
+
+
+class AgentState(BaseModel):
+    """One turn's complete state, as of one point in the graph.
+
+    Frozen and ``extra="forbid"``. Frozen because the audit trail is built on
+    the assumption that a state handed to a node is the state that node saw;
+    ``extra="forbid"`` because a field smuggled in at one call site is state
+    crossing a node boundary without a type, which is the thing this class
+    exists to prevent.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    # -- what the turn is, and who it is for ------------------------------
+
+    request: str = Field(min_length=1)
+    """The user's words, verbatim.
+
+    Never rewritten in place by a node: a node that reformulates the question
+    records the reformulation elsewhere, so the trace keeps what was asked.
+    """
+
+    actor: str = Field(min_length=1)
+    """Who is asking.
+
+    Carried from the first state because approval routing has to know who a
+    write would be performed on behalf of, and a decision recorded without an
+    actor cannot be audited afterwards.
+    """
+
+    scopes: frozenset[str] = frozenset()
+    """What the actor is entitled to do, snapshotted when the turn began.
+
+    Here rather than fetched at the call site because
+    :class:`~agentic_erp_assistant.state.tool_request.ToolRequest` requires it
+    and a node has nowhere else to get it. Snapshotted rather than re-read per
+    call for a reason worth defending: entitlements that could change midway
+    would let one turn make two calls under two different permissions, and the
+    trace would show neither.
+
+    Defaults to empty, and empty means entitled to nothing. A caller that omits
+    it gets every tool refused, which is the direction an omission should fail
+    in -- the alternative default, "whatever the tool needs", is the one that
+    turns a forgotten field into a granted write.
+    """
+
+    trace_id: str = Field(min_length=1)
+    """The run this state belongs to.
+
+    Required, with no default: a state that could exist without one would be a
+    turn that emits no trace, and the project's evidence requirement would be
+    optional in practice.
+    """
+
+    # -- what the runtime decided and gathered ----------------------------
+
+    route: DecisionRoute | None = None
+    """What the graph decided to do next, or ``None`` before it has decided.
+
+    Reuses the decision layer's closed set rather than declaring a second one.
+    ``None`` means "not routed yet" and nothing else -- replying from what is
+    already known is the ``"answer"`` member, precisely so those two stay
+    distinguishable.
+    """
+
+    evidence: tuple[EvidenceSnippet, ...] = ()
+    """The passages retrieval supplied, each carrying the address it is cited by.
+
+    The same type the prompt layer renders, not a second one that would have to
+    be converted -- a conversion is where a citation loses its locator.
+
+    A tuple, not a list: a frozen model holding a mutable sequence is not
+    frozen, and evidence that can be appended to after the fact is evidence a
+    reviewer cannot trust.
+    """
+
+    observations: tuple[ToolOutcome, ...] = ()
+    """What running things produced, in the order they were produced.
+
+    The observation half of the reason-act cycle: a node acts, the outcome
+    lands here, and the next planning step reads it. Kept as the outcomes
+    themselves rather than as rendered text because the planner branches on
+    ``status`` and the answer step reads ``source_ids``; a turn that stored the
+    prose would have to parse its own history back.
+
+    A tuple for the same reason :attr:`evidence` is one, and accumulated rather
+    than overwritten so a turn that called two tools can still say what the
+    first one said.
+    """
+
+    tool_name: str | None = Field(default=None, min_length=1)
+    """The tool this turn is calling, once one has been chosen."""
+
+    tool_arguments: Mapping[str, Any] | None = None
+    """The arguments the chosen tool will be called with.
+
+    Carried on the state, not held in a node's locals, because of the pause: a
+    write stops for a human, the run returns to its caller, and whatever
+    resumes it must rebuild the identical call. An approver who read "record a
+    high-severity risk on PRJ-1" has to be approving the call that actually
+    runs, and arguments that lived only in a stack frame could not survive the
+    wait -- or worse, could be rebuilt slightly differently.
+
+    Stored behind a read-only view, like
+    :attr:`~agentic_erp_assistant.state.tool_request.ToolRequest.arguments` and
+    for the same reason.
+    """
+
+    tool_mutating: bool = False
+    """Whether the chosen tool changes ERP data.
+
+    Read from the tool's own
+    :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by the
+    layer that looked the tool up, and carried here so
+    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition` can be
+    told the truth at every transition that turns on it -- including the one
+    after a pause, where the decision that knew the answer is long gone. The
+    runtime deliberately cannot look this up itself; see that module for why.
+    """
+
+    approval: ApprovalDecision = "not_required"
+    """Where a pending call stands with its approver. See
+    :data:`ApprovalDecision`."""
+
+    # -- how the turn ended -----------------------------------------------
+
+    response: str | None = None
+    """The reply, once there is one. ``None`` while the turn is still running."""
+
+    failure: FailureMode = "none"
+    """Why the turn could not produce a grounded answer, or ``"none"``.
+
+    The same Literal
+    :func:`~agentic_erp_assistant.reasoning.decision.classify_failure` returns,
+    so the classifier's output drops straight in and the runtime branches on
+    one vocabulary instead of translating between two.
+    """
+
+    error_detail: str | None = Field(default=None, max_length=ERROR_DETAIL_MAX_CHARS)
+    """A one-line human-readable note about the failure.
+
+    Capped, and never branched on. :attr:`failure` is the fact the runtime acts
+    on; this is the sentence a person reads next to it. Keeping them apart is
+    what stops a stack trace from becoming a routing input.
+    """
+
+    terminal: bool = False
+    """Whether the graph is finished with this turn.
+
+    Set by the node that ends it, never inferred by the engine from the shape
+    of the other fields.
+    """
+
+    # -- the record --------------------------------------------------------
+
+    step_count: int = Field(default=0, ge=0)
+    """How many node executions this turn has spent. A counter, not a ceiling."""
+
+    retry_count: int = Field(default=0, ge=0)
+    """How many retries this turn has spent. Also a counter, not a ceiling."""
+
+    events: tuple[TraceEvent, ...] = ()
+    """What happened, in order.
+
+    Appended to as the graph moves; see
+    :mod:`agentic_erp_assistant.state.events` for why the order carries the
+    timing and each entry does not.
+    """
+
+    state_version: int = STATE_VERSION
+    """The shape this state was written in. See :data:`STATE_VERSION`."""
+
+    # -- invariants --------------------------------------------------------
+
+    @model_validator(mode="after")
+    def _must_describe_a_turn_that_could_exist(self) -> "AgentState":
+        if self.state_version != STATE_VERSION:
+            raise ValueError(
+                f"state_version: this build reads version {STATE_VERSION}, got "
+                f"{self.state_version}; a mismatched state needs a migration, "
+                f"not a silent load"
+            )
+
+        if self.tool_name is not None and not self.tool_name.strip():
+            raise ValueError("tool_name: must not be blank")
+
+        if self.tool_arguments is not None and self.tool_name is None:
+            raise ValueError(
+                "tool_arguments: present without a tool_name -- arguments that "
+                "do not say what they are arguments to cannot be executed or "
+                "reviewed"
+            )
+
+        if self.tool_mutating and self.tool_name is None:
+            raise ValueError(
+                "tool_mutating: set without a tool_name -- the flag describes a "
+                "tool, so there has to be one"
+            )
+
+        if self.approval != "not_required" and self.tool_name is None:
+            raise ValueError(
+                f"approval: {self.approval!r} without a tool_name -- an approval "
+                f"that does not name what is being approved cannot be audited"
+            )
+
+        if self.terminal and self.response is None and self.failure == "none":
+            raise ValueError(
+                "terminal: a finished turn must carry either a response or a "
+                "failure; ending with neither leaves the caller nothing and the "
+                "trace no reason"
+            )
+
+        return self
+
+    @field_validator("tool_arguments")
+    @classmethod
+    def _freeze_arguments(
+        cls, value: Mapping[str, Any] | None
+    ) -> Mapping[str, Any] | None:
+        """Take a copy behind a read-only view.
+
+        A frozen model holding a plain dict is not frozen, it merely looks it.
+        Here that matters more than usual: the caller who passed the dict in
+        would otherwise keep a handle on the arguments an approver has already
+        read, and could edit them during the pause.
+        """
+        return None if value is None else MappingProxyType(dict(value))
+
+    @field_serializer("tool_arguments")
+    def _unwrap_arguments(
+        self, value: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Hand a plain dict to the serializer; the view is an in-process guard."""
+        return None if value is None else dict(value)
+
+    # -- the only way to move ---------------------------------------------
+
+    def evolve(self, **changes: Any) -> "AgentState":
+        """Return a new state with ``changes`` applied, leaving this one alone.
+
+        The single transition the graph uses. It re-runs construction, so every
+        field constraint and every invariant above applies to a transition
+        exactly as it applies to an initial state -- see the module docstring
+        for why ``model_copy(update=...)`` is not used.
+
+        An unknown keyword is rejected by ``extra="forbid"`` rather than by a
+        check written here, deliberately: one mechanism guards the constructor
+        and this method, so there is no second rule to keep in step.
+
+        Args:
+            **changes: Field names and their new values. Fields left out keep
+                the value they have.
+
+        Returns:
+            A new :class:`AgentState`. ``self`` is unchanged.
+
+        Raises:
+            ValidationError: A value, or the combination the change produces,
+                is not a state the runtime allows -- or a name is not a field.
+        """
+        current = {name: getattr(self, name) for name in type(self).model_fields}
+        return type(self)(**{**current, **changes})

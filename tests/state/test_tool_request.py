@@ -1,0 +1,137 @@
+"""Nothing may run on facts the request never carried."""
+
+import pytest
+from pydantic import ValidationError
+
+from agentic_erp_assistant.llm.tools import GET_PROJECT_STATUS_TOOL
+from agentic_erp_assistant.state.tool_request import ToolRequest
+
+
+def request(**overrides: object) -> ToolRequest:
+    fields: dict[str, object] = {
+        "tool_name": "close_milestone",
+        "arguments": {"milestone_id": "M2"},
+        "actor": "bao",
+        "scopes": frozenset({"erp:write"}),
+    }
+    fields.update(overrides)
+    return ToolRequest(**fields)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------
+# Every request says who is asking and what they are entitled to
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("field", ["tool_name", "arguments", "actor", "scopes"])
+def test_a_request_cannot_be_built_without_it(field: str) -> None:
+    """None of the four has a default. A call missing any of them is one no
+    check downstream could make a decision about."""
+    fields = {
+        "tool_name": "t",
+        "arguments": {},
+        "actor": "bao",
+        "scopes": frozenset(),
+    }
+    del fields[field]
+
+    with pytest.raises(ValidationError, match=field):
+        ToolRequest(**fields)  # type: ignore[arg-type]
+
+
+def test_an_anonymous_request_is_rejected() -> None:
+    """An unattributed call cannot be audited, and the audit row is what the
+    approval rule exists to produce."""
+    with pytest.raises(ValidationError, match="actor"):
+        request(actor="")
+
+
+def test_a_request_carries_its_scopes_even_when_it_has_none() -> None:
+    """Empty is a real answer: 'entitled to nothing'. It is not the same as
+    'nobody said', which is why the field has no default."""
+    assert request(scopes=frozenset()).scopes == frozenset()
+
+
+def test_a_blank_scope_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="scopes"):
+        request(scopes=frozenset({"erp:write", "  "}))
+
+
+def test_a_request_needs_no_approval_until_something_asks_for_one() -> None:
+    """'not_required' is a member, so a gate matches a branch instead of
+    testing a value for truth."""
+    assert request().approval == "not_required"
+
+
+def test_an_approval_decision_travels_with_the_request() -> None:
+    assert request(approval="approved").approval == "approved"
+
+
+def test_an_unknown_approval_word_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="approval"):
+        request(approval="probably")
+
+
+# --------------------------------------------------------------------------
+# Arguments: unreachable to a handler unless the tool declared them
+# --------------------------------------------------------------------------
+
+
+def test_an_argument_the_tool_never_declared_cannot_reach_a_handler() -> None:
+    """The acceptance criterion, proved against the real registry entry rather
+    than restated. ToolSpec's model forbids extras, so an invented key raises
+    on the way in instead of being ignored on the way through."""
+    with pytest.raises(ValidationError):
+        GET_PROJECT_STATUS_TOOL.validate_arguments(
+            {"milestone_id": "M2", "force": True}
+        )
+
+
+def test_the_declared_arguments_do_pass() -> None:
+    validated = GET_PROJECT_STATUS_TOOL.validate_arguments({"milestone_id": "M2"})
+
+    assert validated.milestone_id == "M2"  # type: ignore[attr-defined]
+
+
+def test_arguments_cannot_be_changed_after_a_request_is_built() -> None:
+    """A frozen model holding a plain dict is not frozen, it merely looks it --
+    and an approver would have read the arguments before the swap."""
+    built = request()
+
+    with pytest.raises(TypeError):
+        built.arguments["milestone_id"] = "M9"  # type: ignore[index]
+
+
+def test_the_caller_keeps_no_handle_on_the_arguments() -> None:
+    supplied = {"milestone_id": "M2"}
+
+    built = request(arguments=supplied)
+    supplied["milestone_id"] = "M9"
+
+    assert built.arguments["milestone_id"] == "M2"
+
+
+def test_a_request_still_serializes_as_plain_data() -> None:
+    """The read-only view is an in-process guard, not part of the wire shape:
+    a trace record wants the mapping."""
+    dumped = request().model_dump()
+
+    assert dumped["arguments"] == {"milestone_id": "M2"}
+    assert ToolRequest.model_validate(dumped) == request()
+
+
+def test_a_request_cannot_be_edited_after_it_is_authorized() -> None:
+    with pytest.raises(ValidationError):
+        request().tool_name = "something_else"  # type: ignore[misc]
+
+
+def test_an_unmodelled_field_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        request(bypass_approval=True)
+
+
+def test_the_tool_layer_re_exports_the_same_class() -> None:
+    """One definition, readable from the file that describes the envelope."""
+    from agentic_erp_assistant.tools import models
+
+    assert models.ToolRequest is ToolRequest

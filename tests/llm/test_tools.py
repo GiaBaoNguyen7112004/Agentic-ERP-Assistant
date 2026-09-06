@@ -16,8 +16,10 @@ import pytest
 from pydantic import Field, ValidationError
 
 from agentic_erp_assistant.llm.tools import (
+    CONTROL_TOOLS,
     DEFAULT_TOOLS,
     GET_PROJECT_STATUS_TOOL,
+    PLANNING_TOOLS,
     ProjectStatusArguments,
     StrictArguments,
     ToolCallResult,
@@ -57,9 +59,10 @@ def test_the_schema_is_emitted_not_hand_written() -> None:
     assert GET_PROJECT_STATUS_TOOL.schema == ProjectStatusArguments.model_json_schema()
 
 
-@pytest.mark.parametrize("spec", DEFAULT_TOOLS, ids=lambda spec: spec.name)
+@pytest.mark.parametrize("spec", PLANNING_TOOLS, ids=lambda spec: spec.name)
 def test_every_offered_tool_is_strict_compatible(spec: ToolSpec) -> None:
-    """Strict function calling requires exactly this, for every offered tool."""
+    """Strict function calling requires exactly this, for every offered tool --
+    the control tools included, since the model picks them the same way."""
     schema = spec.schema
 
     assert schema.get("additionalProperties") is False
@@ -246,3 +249,33 @@ def test_strict_arguments_reject_an_invented_field() -> None:
 
     with pytest.raises(ValidationError):
         Example(needed="ok", invented="nope")
+
+
+# --------------------------------------------------------------------------
+# What the planner offers
+# --------------------------------------------------------------------------
+
+
+def test_the_planner_offers_the_erp_tools_and_the_control_tools_together() -> None:
+    """One list, one decision: the model picks a route by picking a function."""
+    assert PLANNING_TOOLS == DEFAULT_TOOLS + CONTROL_TOOLS
+
+
+def test_retrieval_is_offered_as_a_tool_like_any_other() -> None:
+    assert "search_project_documents" in {spec.name for spec in PLANNING_TOOLS}
+
+
+def test_no_offered_tool_promises_to_deliver_the_final_answer() -> None:
+    """Content with no tool call is already the answer route; a function that
+    said the same thing would give the model two ways to answer."""
+    assert "final_answer" not in {spec.name for spec in PLANNING_TOOLS}
+
+
+def test_the_offered_names_are_unique() -> None:
+    names = [spec.name for spec in PLANNING_TOOLS]
+
+    assert len(names) == len(set(names))
+
+
+def test_only_one_offered_tool_changes_anything() -> None:
+    assert [spec.name for spec in PLANNING_TOOLS if spec.mutating] == ["create_risk"]

@@ -8,13 +8,25 @@ decision is in one readable place, with a budget, instead of being a
 
 Two rules do the work here.
 
-**Only :class:`TransientProviderError` is retried.** The ``except`` clause names
-exactly that one type, so nothing else is even considered -- not a rejected key,
-not a schema-validation failure, not a bug in the operation. This is the whole
+**Exactly one failure type is retried, and the caller names it.** The
+``except`` clause is bound to a single type -- :class:`TransientProviderError`
+by default -- so nothing else is even considered: not a rejected key, not a
+schema-validation failure, not a bug in the operation. That is the whole
 enforcement: a broad catch with an ``isinstance`` filter afterwards is one edit
 away from swallowing something it should not, and a prompt that produces
 invalid output produces it just as invalidly the fourth time, having burned
 three times the money and four times the latency to prove it.
+
+``retry_on`` exists because the tool boundary has the same problem and deserves
+the same answer. A tool handler raises
+:class:`~agentic_erp_assistant.tools.models.TransientToolError`, which is not a
+provider failure and must not be made a subclass of one just to reuse this
+loop. A second retry loop written next door would be the alternative, and it
+would be the one that drifts -- different jitter, different logging, a budget
+nobody audits. One parameter is cheaper than two implementations. It stays a
+single type, never a tuple: "which failures are worth repeating" is a decision
+that should be readable at the call site, and a tuple is where that decision
+starts collecting members nobody re-examined.
 
 **The wait is exponential and jittered.** Doubling gives an overloaded provider
 room to recover. The jitter is what stops every concurrent caller from waking at
@@ -67,9 +79,10 @@ def retry_with_backoff[T](
     max_delay_seconds: float = 8.0,
     sleep: Callable[[float], object] = time.sleep,
     jitter: Callable[[], float] = random.random,
-    on_retry: Callable[[int, float, TransientProviderError], object] | None = None,
+    on_retry: Callable[[int, float, Exception], object] | None = None,
+    retry_on: type[Exception] = TransientProviderError,
 ) -> T:
-    """Call ``operation``, retrying only transient provider failures.
+    """Call ``operation``, retrying only the one failure type named by ``retry_on``.
 
     The delay before attempt *n* is::
 
@@ -99,6 +112,10 @@ def retry_with_backoff[T](
         jitter: The factor generator, in ``[0.0, 1.0)``. Injectable for the same
             reason: a schedule that depends on the global random state is not a
             schedule anyone can assert on.
+        retry_on: The single exception type worth another attempt. Defaults to
+            :class:`TransientProviderError`, so provider calls need not say it.
+            A tool gateway passes
+            :class:`~agentic_erp_assistant.tools.models.TransientToolError`.
         on_retry: Called as ``(attempt, delay, error)`` just before each sleep,
             where ``attempt`` is the attempt that just failed. Present so the
             runtime can record every retry in the trace without this module
@@ -110,13 +127,13 @@ def retry_with_backoff[T](
         Whatever ``operation`` returns, from the first attempt that succeeds.
 
     Raises:
-        TransientProviderError: Every attempt failed transiently. The **last**
+        retry_on: Every attempt failed transiently. The **last**
             failure is re-raised unchanged, carrying the provider's own status,
             request id and message, with a note recording how many attempts were
             spent. It is deliberately not wrapped in a new exception type:
-            callers above already know this type from the port, and wrapping
-            would bury the provider's message one ``__cause__`` deeper in the
-            trace.
+            callers above already know this type from the port or the tool
+            boundary, and wrapping would bury the original message one
+            ``__cause__`` deeper in the trace.
         ValueError: The retry budget itself is invalid.
         Exception: Anything else ``operation`` raises, on the first attempt,
             untouched.
@@ -126,7 +143,7 @@ def retry_with_backoff[T](
     for attempt in range(1, max_attempts + 1):
         try:
             return operation()
-        except TransientProviderError as error:
+        except retry_on as error:
             if attempt == max_attempts:
                 error.add_note(
                     f"gave up after {max_attempts} "

@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 Outcome = Literal[
     "answered",  # a reply came back and satisfied the schema
+    "routed",  # a decision came back: one tool call, or content to answer with
     "invalid_schema",  # a reply came back and did not
     "budget_exceeded",  # refused locally; nothing was sent
     "provider_failure",  # the call never produced a usable reply

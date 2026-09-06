@@ -22,7 +22,9 @@ output requires, and because an unmodelled field is behavior smuggled past the
 type system.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
 
 __all__ = [
     "ApprovalRequest",
@@ -36,6 +38,17 @@ class _Contract(BaseModel):
     """Shared configuration for every response contract in this module."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+# :class:`EvidenceSnippet` is re-exported rather than defined here. It used to
+# live in this module, beside :class:`Citation`, on the argument that the two
+# belong together. They do not: a citation comes *out* of an answer and is a
+# response contract, while a snippet goes *in* and is carried in the graph's
+# state from the moment retrieval produces it. Defining it here forced
+# :mod:`agentic_erp_assistant.state` to import the whole ``llm`` package -- a
+# tokenizer and a gateway -- to name the type it holds. It now lives in
+# :mod:`agentic_erp_assistant.state.evidence`; this name stays so every
+# existing import keeps working, and there is still exactly one definition.
 
 
 class Citation(_Contract):
@@ -55,47 +68,6 @@ class Citation(_Contract):
 
     quote: str | None = None
     """The supporting span, when the retriever can supply one."""
-
-
-_FORBIDDEN_IN_TAG = frozenset("[]#\n\r")
-
-
-class EvidenceSnippet(_Contract):
-    """One retrieved passage, on its way *into* a prompt.
-
-    Deliberately a different type from :class:`Citation`, which travels the other
-    way. They share only the identifier, and that is the point: keeping them
-    distinct is what turns "did the model cite something we actually gave it?"
-    into a question code can answer rather than a hope.
-    """
-
-    source_id: str = Field(min_length=1)
-    """The document this passage came from."""
-
-    locator: str = Field(min_length=1)
-    """Where inside it -- the same opaque form :class:`Citation` uses."""
-
-    text: str = Field(min_length=1)
-    """The passage itself. Read by the model as data, never as an instruction."""
-
-    @property
-    def tag(self) -> str:
-        """The exact token the model is told to cite, e.g. ``[doc-12#3.2]``."""
-        return f"[{self.source_id}#{self.locator}]"
-
-    @field_validator("source_id", "locator")
-    @classmethod
-    def _must_not_forge_a_tag(cls, value: str) -> str:
-        """Reject the characters that build a tag.
-
-        A security check, not tidiness. ``source_id`` and ``locator`` can arrive
-        from a retrieved document, so if they may contain ``[``, ``]``, ``#`` or
-        a newline then that document controls part of the rendered tag and can
-        manufacture a reference to a source that does not exist.
-        """
-        if _FORBIDDEN_IN_TAG & set(value):
-            raise ValueError("must not contain '[', ']', '#', or a line break")
-        return value
 
 
 class GroundedAnswer(_Contract):
