@@ -9,6 +9,7 @@ frozen models.
 
 import pytest
 
+from agentic_erp_assistant.rag import embeddings as embeddings_module
 from agentic_erp_assistant.rag.chunking import Chunk, chunk_documents
 from agentic_erp_assistant.rag.manifest import SourceDocument, load_documents
 
@@ -30,3 +31,24 @@ def corpus() -> tuple[SourceDocument, ...]:
 def corpus_chunks(corpus: tuple[SourceDocument, ...]) -> tuple[Chunk, ...]:
     """The corpus as the indexes will see it."""
     return chunk_documents(corpus, model=EMBEDDING_MODEL)
+
+
+_OPENAI_VARIABLES = ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_EMBEDDING_MODEL")
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the developer's real configuration out of these tests.
+
+    The same fixture ``tests/llm/conftest.py`` has, for the same two hazards: a
+    real key exported in the shell, and a real ``.env`` the client would load at
+    construction. Either one turns the "configuration is missing" tests green
+    for the wrong reason locally and red in CI. That the suite then runs with no
+    key anywhere is the point -- nothing in it should be able to reach a
+    provider even by accident.
+    """
+    monkeypatch.setattr(
+        embeddings_module, "load_dotenv", lambda *args, **kwargs: False
+    )
+    for name in _OPENAI_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
