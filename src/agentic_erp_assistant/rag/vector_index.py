@@ -41,11 +41,13 @@ import logging
 import os
 import uuid
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from functools import wraps
 from typing import Any, Self
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from agentic_erp_assistant.rag.access import (
     PROJECT_FIELD,
@@ -64,6 +66,7 @@ __all__ = [
     "HASH_FIELD",
     "QdrantVectorIndex",
     "VectorIndexError",
+    "VectorStoreUnavailable",
     "VectorWidthMismatch",
 ]
 
@@ -108,6 +111,18 @@ class VectorIndexError(RuntimeError):
     """The vector store cannot serve the request as configured."""
 
 
+class VectorStoreUnavailable(VectorIndexError):
+    """The store could not be reached, or refused the request outright.
+
+    The vendor exception underneath says "connection refused", which is true and
+    unhelpful at three in the morning. This one says what to do about it, and it
+    exists here rather than in the script for the reason
+    ``llm/adapters/openai_chat.py`` translates httpx errors: the adapter is where
+    a vendor vocabulary stops, so no caller above it has to import a Qdrant
+    exception to know that the database is down.
+    """
+
+
 class VectorWidthMismatch(VectorIndexError):
     """The collection holds vectors of a different width than the ones offered.
 
@@ -116,6 +131,27 @@ class VectorWidthMismatch(VectorIndexError):
     collection name is being shared by two models that should each have their
     own.
     """
+
+
+def _translates_transport[**P, R](
+    method: Callable[P, R],
+) -> Callable[P, R]:
+    """Turn a Qdrant transport failure into :class:`VectorStoreUnavailable`."""
+
+    @wraps(method)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return method(*args, **kwargs)
+        except (ResponseHandlingException, UnexpectedResponse) as error:
+            index = args[0]
+            raise VectorStoreUnavailable(
+                f"cannot reach the vector store for collection "
+                f"{getattr(index, 'collection', '?')!r}: {error}. Is Qdrant "
+                f"running? Start it with `docker compose up -d qdrant`, or set "
+                f"QDRANT_URL to point at the one you mean."
+            ) from error
+
+    return wrapper
 
 
 def point_id(chunk_id: str) -> str:
@@ -162,6 +198,7 @@ class QdrantVectorIndex:
 
     # -- writing -----------------------------------------------------------
 
+    @_translates_transport
     def ensure_ready(self, dimensions: int) -> None:
         """Create the collection at this width, or check the existing one.
 
@@ -234,6 +271,7 @@ class QdrantVectorIndex:
         for warning in raised:
             logger.debug("payload index on %s: %s", self.collection, warning.message)
 
+    @_translates_transport
     def upsert(
         self, chunks: Sequence[Chunk], vectors: Sequence[Sequence[float]]
     ) -> None:
@@ -266,6 +304,7 @@ class QdrantVectorIndex:
         )
         logger.info("upserted %d chunk(s) into %s", len(chunks), self.collection)
 
+    @_translates_transport
     def delete_documents(self, document_ids: Iterable[str]) -> None:
         """Remove every stored chunk belonging to these documents.
 
@@ -295,6 +334,7 @@ class QdrantVectorIndex:
 
     # -- reading -----------------------------------------------------------
 
+    @_translates_transport
     def _scroll(self, fields: list[str] | bool) -> list[dict[str, Any]]:
         """Page through every payload in the collection."""
         if not self._client.collection_exists(self.collection):
@@ -342,6 +382,7 @@ class QdrantVectorIndex:
         chunks.sort(key=lambda chunk: (chunk.document_id, chunk.position))
         return tuple(chunks)
 
+    @_translates_transport
     def search(
         self,
         query_vector: Sequence[float],
