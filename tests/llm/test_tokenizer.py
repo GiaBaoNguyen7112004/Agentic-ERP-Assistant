@@ -6,6 +6,7 @@ a number, because tiktoken's per-model table lags releases and a tokenizer that
 raises on a current model takes the whole runtime down with it.
 """
 
+import pytest
 import tiktoken
 
 from agentic_erp_assistant.llm.prompts import DEVELOPER_CONTRACT, build_messages
@@ -16,6 +17,7 @@ from agentic_erp_assistant.llm.tokenizer import (
     TokenCounter,
     count_message_tokens,
     count_tokens,
+    split_into_token_windows,
 )
 
 MODEL = "gpt-4o"
@@ -119,3 +121,69 @@ def test_a_class_missing_a_method_does_not_satisfy_the_port() -> None:
             return 0
 
     assert not isinstance(NotACounter(), TokenCounter)
+
+
+# -- splitting ---------------------------------------------------------------
+#
+# The splitter lives beside the counter so both read the same encoding. These
+# tests assert the property that matters downstream: a window never exceeds the
+# budget it was cut to, whatever the text is.
+
+
+def test_text_that_already_fits_comes_back_as_one_window() -> None:
+    assert split_into_token_windows(
+        "a short passage", model=MODEL, window_tokens=100
+    ) == ["a short passage"]
+
+
+def test_no_window_exceeds_the_budget() -> None:
+    text = "migration exceptions against a tolerance of ten. " * 60
+    windows = split_into_token_windows(text, model=MODEL, window_tokens=40)
+
+    assert len(windows) > 1
+    assert all(count_tokens(window, model=MODEL) <= 40 for window in windows)
+
+
+def test_windows_overlap_by_the_requested_amount() -> None:
+    """A sentence spanning a cut has to survive whole in at least one window."""
+    text = " ".join(f"word{index}" for index in range(200))
+    windows = split_into_token_windows(
+        text, model=MODEL, window_tokens=50, overlap_tokens=10
+    )
+
+    assert len(windows) > 1
+    assert windows[0][-20:] in windows[1]
+
+
+def test_the_split_loses_nothing_when_there_is_no_overlap() -> None:
+    text = " ".join(f"word{index}" for index in range(200))
+    windows = split_into_token_windows(text, model=MODEL, window_tokens=50)
+
+    assert "".join(windows) == text
+
+
+def test_empty_text_produces_no_windows() -> None:
+    assert split_into_token_windows("", model=MODEL, window_tokens=10) == []
+
+
+def test_an_overlap_that_fills_the_window_is_refused() -> None:
+    """It would never advance, so the split would not terminate."""
+    with pytest.raises(ValueError, match="never advances"):
+        split_into_token_windows(
+            "text", model=MODEL, window_tokens=10, overlap_tokens=10
+        )
+
+
+def test_a_non_positive_window_is_refused() -> None:
+    with pytest.raises(ValueError, match="must be positive"):
+        split_into_token_windows("text", model=MODEL, window_tokens=0)
+
+
+def test_an_unknown_model_still_splits() -> None:
+    windows = split_into_token_windows(
+        "a passage " * 40, model=UNKNOWN_MODEL, window_tokens=20
+    )
+    assert windows
+    assert all(
+        count_tokens(window, model=UNKNOWN_MODEL) <= 20 for window in windows
+    )
