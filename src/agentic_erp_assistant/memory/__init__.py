@@ -21,7 +21,16 @@ The layers, innermost first:
 * :mod:`.store`, :mod:`.vector_store` and :mod:`.audit` are the three ports --
   where records live, how they are found again, and where every decision about
   them is written down;
-* everything else is an adapter behind one of those.
+* everything else is an adapter or a composition point behind one of those.
+
+Two modules are deliberately **not** re-exported here:
+:mod:`.qdrant_index`, because importing this package must not pull a
+vector-database client in behind it -- the rule
+:mod:`agentic_erp_assistant.rag.access` already keeps -- and :mod:`.service`,
+which is the composition point and imports
+:mod:`agentic_erp_assistant.context.memory_injection`, which imports this
+package's models. Import either by its own path; the cycle that would
+otherwise form is the honest signal that they sit one layer out.
 
 Nothing above the policy may write a record it did not return a verdict for.
 """
@@ -53,7 +62,6 @@ from agentic_erp_assistant.memory.models import (
     memory_id,
 )
 from agentic_erp_assistant.memory.policy import decide, unsafe_to_store
-from agentic_erp_assistant.memory.qdrant_index import QdrantMemoryIndex
 from agentic_erp_assistant.memory.store import (
     InMemoryMemoryStore,
     IntentStorePort,
@@ -87,7 +95,6 @@ __all__ = [
     "MemoryStorePort",
     "MemoryVectorStorePort",
     "PROPOSE_MEMORIES_TOOL",
-    "QdrantMemoryIndex",
     "REASON_MAX_CHARS",
     "RejectionReason",
     "SESSION_BOUNDED_KINDS",

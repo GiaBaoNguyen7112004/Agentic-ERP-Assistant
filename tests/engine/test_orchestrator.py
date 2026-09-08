@@ -13,6 +13,7 @@ owed a decision, and a decision that settles once no matter who asks again.
 """
 
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,12 @@ from agentic_erp_assistant.engine.orchestrator import (
 from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, MockErp
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.llm.tools import ToolCallResult
+from agentic_erp_assistant.memory.models import MemoryDecision
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.tools.gateway import ToolGateway
 from agentic_erp_assistant.tools.registry import build_default_registry
 from agentic_erp_assistant.trace import InMemoryPauseStore, InMemoryTraceStore
@@ -253,3 +256,202 @@ def test_a_resumed_turn_can_pause_again_and_waits_anew() -> None:
     assert traces.runs["run-1"].outcome == "paused"
     assert [risk.title for risk in store.risks].count("first") == 1
     assert [risk.title for risk in store.risks].count("second") == 0
+
+# --------------------------------------------------------------------------
+# Memory: recall before the run, consolidation after it, and never a failure
+# --------------------------------------------------------------------------
+
+
+class RecordingMemory:
+    """A TurnMemoryPort that hands back what it was built with, and counts."""
+
+    def __init__(self, *, recalled=(), decisions=()) -> None:
+        self.recalled = recalled
+        self.decisions = decisions
+        self.recalls: list[AgentState] = []
+        self.consolidations: list[AgentState] = []
+
+    def recall(self, state):
+        self.recalls.append(state)
+        return self.recalled
+
+    def consolidate(self, state):
+        self.consolidations.append(state)
+        return self.decisions
+
+
+class BrokenMemory:
+    def recall(self, state):
+        raise RuntimeError("the store is unreachable")
+
+    def consolidate(self, state):
+        raise RuntimeError("the store is unreachable")
+
+
+def remembered() -> MemoryRecord:
+    return MemoryRecord(
+        memory_id="mem-1",
+        kind="preference",
+        key="reply_language",
+        statement="Prefers replies written in Vietnamese.",
+        project_code="atlas",
+        required_scope="project.docs.read",
+        actor="bao",
+        session_id="sess-1",
+        recorded_in_run="run-0",
+        recorded_at=datetime(2026, 9, 8, tzinfo=UTC),
+        confidence=0.9,
+    )
+
+
+def with_memory(memory, *decisions, erp: MockErp | None = None):
+    orchestrator, traces, pauses, model, store = an_orchestrator(*decisions, erp=erp)
+    orchestrator.memory = memory
+    return orchestrator, traces, pauses, model, store
+
+
+def test_no_memory_is_a_complete_configuration() -> None:
+    """A replay, an evaluation case and a one-shot script have no conversation
+    to remember anything for."""
+    orchestrator, _, _, _, _ = an_orchestrator(answered("Nothing to do."))
+
+    assert orchestrator.memory is None
+    assert orchestrator.handle(start()).terminal is True
+
+
+def test_recall_fills_the_state_before_the_engine_sees_it() -> None:
+    """Not the caller's job: a caller that supplied memories would be a second
+    place recall could happen."""
+    memory = RecordingMemory(recalled=(remembered(),))
+    orchestrator, _, _, _, _ = with_memory(memory, answered("Xin chào."))
+
+    final = orchestrator.handle(start())
+
+    assert final.memories == (remembered(),)
+    assert memory.recalls[0].memories == ()
+
+
+def test_a_recalled_turn_says_so_in_its_trace() -> None:
+    orchestrator, traces, _, _, _ = with_memory(
+        RecordingMemory(recalled=(remembered(),)), answered("Xin chào.")
+    )
+
+    orchestrator.handle(start())
+
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "memory_recalled" in kinds
+
+
+def test_recalling_nothing_adds_no_event() -> None:
+    """Most turns recall nothing; an event per turn saying so would bury the
+    ones that did."""
+    orchestrator, traces, _, _, _ = with_memory(
+        RecordingMemory(), answered("Nothing to do.")
+    )
+
+    orchestrator.handle(start())
+
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "memory_recalled" not in kinds
+
+
+def test_consolidation_sees_the_finished_turn() -> None:
+    memory = RecordingMemory()
+    orchestrator, _, _, _, _ = with_memory(memory, answered("Nothing to do."))
+
+    orchestrator.handle(start())
+
+    assert len(memory.consolidations) == 1
+    assert memory.consolidations[0].terminal is True
+
+
+def test_a_paused_turn_is_never_consolidated() -> None:
+    """Its central question -- will a human approve this? -- has no answer yet,
+    and storing facts from it would remember a decision nobody has made."""
+    memory = RecordingMemory()
+    orchestrator, _, _, _, _ = with_memory(memory, a_write())
+
+    orchestrator.handle(start())
+
+    assert memory.consolidations == []
+
+
+def test_a_resumed_turn_is_consolidated_once_it_ends() -> None:
+    memory = RecordingMemory()
+    orchestrator, _, _, _, _ = with_memory(
+        memory, a_write(), answered("Risk recorded.")
+    )
+    orchestrator.handle(start())
+
+    orchestrator.resume("run-1", approved=True)
+
+    assert len(memory.consolidations) == 1
+    assert memory.consolidations[0].terminal is True
+
+
+def test_resuming_does_not_recall_again() -> None:
+    """An approver's decision was made against one set of background; executing
+    it against another would make the two disagree."""
+    memory = RecordingMemory()
+    orchestrator, _, _, _, _ = with_memory(
+        memory, a_write(), answered("Risk recorded.")
+    )
+    orchestrator.handle(start())
+
+    orchestrator.resume("run-1", approved=True)
+
+    assert len(memory.recalls) == 1
+
+
+def test_what_was_written_and_what_was_refused_are_separate_events() -> None:
+    """A run that refused four proposals and kept one is a run where the policy
+    worked, and it must not read the same as one that stored five."""
+    memory = RecordingMemory(
+        decisions=(
+            MemoryDecision(decision="write", reason="new preference"),
+            MemoryDecision(
+                decision="reject",
+                rejection="instruction_like",
+                reason="reads as standing instruction",
+            ),
+        )
+    )
+    orchestrator, traces, _, _, _ = with_memory(memory, answered("Nothing to do."))
+
+    orchestrator.handle(start())
+
+    events = traces.load_run("run-1").events
+    assert [e.kind for e in events if e.kind.startswith("memory_")] == [
+        "memory_written",
+        "memory_rejected",
+    ]
+    assert "instruction_like" in next(
+        e.detail for e in events if e.kind == "memory_rejected"
+    )
+
+
+def test_the_memory_events_are_in_the_run_record_that_gets_filed() -> None:
+    """Consolidation happens before the record is written, so its events are in
+    this trace rather than in the next one."""
+    orchestrator, traces, _, _, _ = with_memory(
+        RecordingMemory(decisions=(MemoryDecision(decision="write"),)),
+        answered("Nothing to do."),
+    )
+
+    orchestrator.handle(start())
+
+    assert "memory_written" in [
+        event.kind for event in traces.runs["run-1"].state.events
+    ]
+
+
+def test_a_memory_layer_that_is_down_cannot_fail_a_turn() -> None:
+    """A question answered correctly and reported as an error is the one
+    outcome worse than answering it with no background."""
+    orchestrator, traces, _, _, _ = with_memory(BrokenMemory(), answered("Answered."))
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal is True
+    assert final.response == "Answered."
+    assert traces.runs["run-1"].outcome == "terminal"

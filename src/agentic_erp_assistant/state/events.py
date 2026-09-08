@@ -45,6 +45,9 @@ EventKind = Literal[
     "approval_recorded",  # the human answered
     "retry_scheduled",    # an attempt was spent and another will follow
     "rate_limited",       # a call was refused because a budget was spent
+    "memory_recalled",    # background from earlier turns entered the prompt
+    "memory_written",     # something from this turn was stored, or replaced
+    "memory_rejected",    # something proposed was refused, and by which rule
     "failed",             # a FailureMode was assigned
     "run_failed",         # the loop guard ended a run that would not end
 ]
@@ -67,6 +70,18 @@ able to count the second without the first burying it.
 counting the safety layer working. A run that was throttled and a run whose
 backend fell over look identical under one label, and only one of them is a
 bug.
+
+``memory_written`` and ``memory_rejected`` are kept apart on the same principle,
+and the second is the one worth having. A memory system that only logged what it
+stored would answer "what does the assistant believe?" and leave the more
+telling question unanswered -- what it declined to believe, and which rule
+refused it. A run where four proposals were refused and one was kept is a run
+where the policy did its job, and it must not read the same as a run where five
+were stored.
+
+None of the three is emitted by a node. Recall happens before the graph runs and
+consolidation after it ends, both in the orchestrator, so these events describe
+work the step budget deliberately does not pay for -- see ADR 0011.
 """
 
 
