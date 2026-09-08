@@ -31,6 +31,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
+    Message,
     ToolCallingClient,
     Usage,
     UsageReporting,
@@ -280,6 +281,56 @@ class LLMGateway:
             ProviderAuthError: A definitive rejection from the provider.
             ValueError: ``question`` is blank, or ``tools`` is empty.
         """
+        return self.call_tools(
+            build_planner_messages(question, _as_snippets(evidence), observations),
+            tools=tools,
+            temperature=temperature,
+        )
+
+    def call_tools(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[ToolSpec] = PLANNING_TOOLS,
+        temperature: float = 0.0,
+    ) -> ToolCallResult:
+        """Offer ``tools`` against an already-built prompt and return the choice.
+
+        The body :meth:`decide` used to be, with the message building lifted
+        out. It exists because routing is not the only thing this project asks a
+        model to answer with a function call: the memory layer asks what a
+        finished turn is worth remembering, in a different prompt, and the
+        alternative was for it to reach the client directly.
+
+        That alternative is the one worth arguing against. It would skip the
+        budget check, the retry engine and the cost record -- so a proposal made
+        after every turn would spend money nothing counted, retry nothing, and
+        blow the context window on the largest conversation rather than being
+        refused locally. The four steps are the point of this class, and a
+        second caller is a reason to share them, not to route around them.
+
+        What stays with the caller is the prompt. Building one is where the
+        roles are decided -- which block is instruction and which is data -- and
+        that is a decision each caller has to make in the open rather than
+        inherit from a shared default.
+
+        Args:
+            messages: The role blocks, already built. See
+                :mod:`agentic_erp_assistant.llm.prompts`.
+            tools: What to offer.
+            temperature: 0.0. Neither a routing decision nor a memory proposal
+                is a place for variety.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
+
+        Raises:
+            TypeError: The client cannot make tool calls.
+            ContextWindowExceeded: The estimate leaves no room for a reply.
+            TransientProviderError: Retries were exhausted.
+            ProviderAuthError: A definitive rejection from the provider.
+            ValueError: ``tools`` is empty.
+        """
         client = self.client
         if not isinstance(client, ToolCallingClient):
             raise TypeError(
@@ -287,10 +338,6 @@ class LLMGateway:
                 f"gateway cannot route; wire a client satisfying "
                 f"ToolCallingClient to use decide()"
             )
-
-        messages = build_planner_messages(
-            question, _as_snippets(evidence), observations
-        )
 
         estimated = self.counter.count_message_tokens(
             messages, model=client.model_name

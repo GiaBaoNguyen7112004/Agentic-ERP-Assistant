@@ -16,6 +16,8 @@ The layers, innermost first:
 * :mod:`.intent` and :mod:`.summary` are the two kinds that are *projected*
   rather than proposed -- a task with a lifecycle, and a conversation's own
   residue;
+* :mod:`.extractor` is the only place a model touches memory, and its
+  authority stops at the word *propose*;
 * :mod:`.store`, :mod:`.vector_store` and :mod:`.audit` are the three ports --
   where records live, how they are found again, and where every decision about
   them is written down;
@@ -28,6 +30,11 @@ from agentic_erp_assistant.memory.audit import (
     InMemoryMemoryAudit,
     MemoryAuditRow,
     MemoryAuditSink,
+)
+from agentic_erp_assistant.memory.extractor import (
+    LLMMemoryProposer,
+    MemoryProposerPort,
+    PROPOSE_MEMORIES_TOOL,
 )
 from agentic_erp_assistant.memory.intent import IntentState, IntentStatus
 from agentic_erp_assistant.memory.models import (
@@ -66,20 +73,23 @@ __all__ = [
     "IntentState",
     "IntentStatus",
     "IntentStorePort",
+    "LLMMemoryProposer",
     "MemoryAuditRow",
     "MemoryAuditSink",
     "MemoryCandidate",
     "MemoryDecision",
     "MemoryDecisionKind",
     "MemoryKind",
+    "MemoryProposerPort",
     "MemoryRecord",
     "MemoryScope",
     "MemoryStorePort",
     "MemoryVectorStorePort",
+    "PROPOSE_MEMORIES_TOOL",
     "REASON_MAX_CHARS",
     "RejectionReason",
-    "ScoredMemory",
     "SESSION_BOUNDED_KINDS",
+    "ScoredMemory",
     "bounds",
     "decide",
     "in_bounds",
