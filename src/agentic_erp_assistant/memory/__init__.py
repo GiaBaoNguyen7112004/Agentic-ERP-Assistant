@@ -18,6 +18,7 @@ The layers, innermost first:
 Nothing above the policy may write a record it did not return a verdict for.
 """
 
+from agentic_erp_assistant.memory.intent import IntentState, IntentStatus
 from agentic_erp_assistant.memory.models import (
     ACTOR_BOUNDED_KINDS,
     MemoryCandidate,
@@ -37,6 +38,8 @@ from agentic_erp_assistant.memory.policy import decide
 
 __all__ = [
     "ACTOR_BOUNDED_KINDS",
+    "IntentState",
+    "IntentStatus",
     "MemoryCandidate",
     "MemoryDecision",
     "MemoryDecisionKind",
