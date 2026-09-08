@@ -16,11 +16,19 @@ The layers, innermost first:
 * :mod:`.intent` and :mod:`.summary` are the two kinds that are *projected*
   rather than proposed -- a task with a lifecycle, and a conversation's own
   residue;
-* everything else -- stores, indexes, proposers -- is machinery behind a port.
+* :mod:`.store`, :mod:`.vector_store` and :mod:`.audit` are the three ports --
+  where records live, how they are found again, and where every decision about
+  them is written down;
+* everything else is an adapter behind one of those.
 
 Nothing above the policy may write a record it did not return a verdict for.
 """
 
+from agentic_erp_assistant.memory.audit import (
+    InMemoryMemoryAudit,
+    MemoryAuditRow,
+    MemoryAuditSink,
+)
 from agentic_erp_assistant.memory.intent import IntentState, IntentStatus
 from agentic_erp_assistant.memory.models import (
     ACTOR_BOUNDED_KINDS,
@@ -38,20 +46,39 @@ from agentic_erp_assistant.memory.models import (
     memory_id,
 )
 from agentic_erp_assistant.memory.policy import decide, unsafe_to_store
+from agentic_erp_assistant.memory.store import (
+    InMemoryMemoryStore,
+    IntentStorePort,
+    MemoryStorePort,
+)
 from agentic_erp_assistant.memory.summary import summarize_session
+from agentic_erp_assistant.memory.vector_store import (
+    InMemoryMemoryVectorStore,
+    MemoryVectorStorePort,
+    ScoredMemory,
+)
 
 __all__ = [
     "ACTOR_BOUNDED_KINDS",
+    "InMemoryMemoryAudit",
+    "InMemoryMemoryStore",
+    "InMemoryMemoryVectorStore",
     "IntentState",
     "IntentStatus",
+    "IntentStorePort",
+    "MemoryAuditRow",
+    "MemoryAuditSink",
     "MemoryCandidate",
     "MemoryDecision",
     "MemoryDecisionKind",
     "MemoryKind",
     "MemoryRecord",
     "MemoryScope",
+    "MemoryStorePort",
+    "MemoryVectorStorePort",
     "REASON_MAX_CHARS",
     "RejectionReason",
+    "ScoredMemory",
     "SESSION_BOUNDED_KINDS",
     "bounds",
     "decide",
