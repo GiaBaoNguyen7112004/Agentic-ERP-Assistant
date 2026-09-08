@@ -63,7 +63,7 @@ class FakeComposer:
         self.raises = raises
         self.calls: list[tuple] = []
 
-    def answer(self, question: str, evidence):
+    def answer(self, question: str, evidence, memories=()):
         self.calls.append((question, tuple(evidence)))
         if self.raises is not None:
             raise self.raises

@@ -24,6 +24,14 @@ from agentic_erp_assistant.context.compact import (
     SUMMARY_UNAVAILABLE,
     Summarizer,
 )
+from agentic_erp_assistant.context.memory_injection import (
+    KIND_PRIORITY,
+    MemorySelection,
+    PINNED_KINDS,
+    SkipReason,
+    SkippedMemory,
+    select_memories,
+)
 
 __all__ = [
     "CandidateKind",
@@ -34,7 +42,13 @@ __all__ = [
     "ContextPlan",
     "ExcludedCandidate",
     "ExclusionReason",
+    "KIND_PRIORITY",
+    "MemorySelection",
+    "PINNED_KINDS",
     "PRESERVED_FIELDS",
+    "select_memories",
+    "SkippedMemory",
+    "SkipReason",
     "structural_summary",
     "SUMMARY_MAX_CHARS",
     "SUMMARY_UNAVAILABLE",

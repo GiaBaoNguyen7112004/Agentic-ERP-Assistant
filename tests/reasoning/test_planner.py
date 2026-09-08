@@ -31,7 +31,7 @@ class ScriptedModel:
         self.results = list(results)
         self.calls: list[tuple] = []
 
-    def decide(self, question, evidence=(), observations=(), *, tools=()):
+    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
         self.calls.append((question, tuple(evidence), tuple(observations), tuple(tools)))
         return self.results[min(len(self.calls) - 1, len(self.results) - 1)]
 

@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -205,6 +206,7 @@ class AnswerComposerPort(Protocol):
         self,
         question: str,
         evidence: Sequence[EvidenceSnippet],
+        memories: Sequence[MemoryRecord] = (),
     ) -> "GroundedAnswer":
         """Answer ``question`` from ``evidence``, or refuse in a typed way.
 
@@ -213,6 +215,12 @@ class AnswerComposerPort(Protocol):
         every citation against the evidence actually retrieved before the reply
         reaches anyone -- a composer is trusted to write, not to have cited
         something real.
+
+        ``memories`` shapes *how* the reply reads and never what it asserts. It
+        is safe to hand over for a structural reason rather than a hopeful one:
+        a memory carries no locator, so there is nothing in it a citation could
+        be built from, and the caller's check against the retrieved evidence
+        catches one that was invented anyway.
 
         Raises:
             Exception: Provider failures and contract violations propagate. The

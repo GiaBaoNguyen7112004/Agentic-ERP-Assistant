@@ -224,6 +224,7 @@ def test_the_proposer_is_asked_in_its_own_prompt() -> None:
         "user",
         "evidence",
         "observation",
+        "memory",
         "assistant",
     ]
     assert model.messages[0][1]["content"] == MEMORY_CONTRACT
@@ -233,7 +234,7 @@ def test_the_reply_reaches_the_proposer_because_how_a_turn_ended_matters() -> No
     """A turn that refused for want of evidence established nothing."""
     _, model = propose(called())
 
-    assert model.messages[0][5]["content"] == "M2 is tracking to plan."
+    assert model.messages[0][6]["content"] == "M2 is tracking to plan."
 
 
 def test_a_turn_with_no_reply_says_so_rather_than_omitting_the_block() -> None:
@@ -243,7 +244,7 @@ def test_a_turn_with_no_reply_says_so_rather_than_omitting_the_block() -> None:
         state(response=None, terminal=False), required_scope="project.docs.read"
     )
 
-    assert model.messages[0][5]["content"] == NO_REPLY
+    assert model.messages[0][6]["content"] == NO_REPLY
 
 
 def test_only_the_proposal_function_is_offered() -> None:
