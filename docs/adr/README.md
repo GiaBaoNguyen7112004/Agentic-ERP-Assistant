@@ -22,6 +22,9 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0008](0008-one-access-rule-for-both-search-paths.md) | One access rule, enforced before ranking on both search paths | Accepted |
 | [0009](0009-the-locator-is-structural-and-the-chunk-id-is-the-tag.md) | The locator is the format's own address, and the chunk id is the citation tag | Accepted |
 | [0010](0010-the-vector-store-is-the-chunk-store.md) | Qdrant holds the chunks, and the lexical index is built from it | Accepted |
+| [0011](0011-memory-is-written-after-the-turn-by-a-pure-policy.md) | Memory is written after the turn, and only a pure policy may write it | Accepted |
+| [0012](0012-memory-is-context-and-never-a-citation.md) | Memory is context in a role of its own, and can never be a citation | Accepted |
+| [0013](0013-postgres-is-the-memory-record-and-graph-memory-is-rejected.md) | Postgres is the memory record, Qdrant indexes it, and graph memory is rejected | Accepted |
 
 ## Format
 

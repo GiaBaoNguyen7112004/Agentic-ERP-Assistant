@@ -49,6 +49,11 @@ uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
 uv run python scripts/ingest_documents.py            # embed and store, for real
 uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
+
+docker compose up -d postgres                        # the evidence store
+uv run python scripts/init_postgres.py               # create the eight tables
+uv run pytest -m postgres                            # the SQL adapters, for real
+uv run python scripts/demo_memory_session.py         # two turns, and what was kept
 ```
 
 Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile stays in sync.
@@ -67,7 +72,9 @@ src/agentic_erp_assistant/
   state/       the reasoning state model (typed, serializable, versioned)
   reasoning/   the decision layer: what to do next (route, tool, approval) and
                why a turn failed -- typed fields, never prose
-  memory/      short-term + adaptive long-term memory, promotion/eviction policy
+  memory/      the write gate, the task in flight, the session's residue, and
+               the stores behind them. Store only what is useful later: the
+               policy is a pure function and the model may only propose
   context/     context construction: what gets into the prompt and why
   llm/         provider port (protocol), contracts, prompts, tokens, retry,
                tool specs, cost telemetry, and the gateway that orders them
@@ -190,4 +197,16 @@ Not yet chosen; ask before assuming, and update this file once settled.
   Still open behind that: `MIN_COSINE_SIMILARITY` in `rag/retriever.py` is
   provisional until the evidence run measures the gap it should sit in, and the
   index router and graph slice (reference steps 13 and 14) are deferred.
+- ~~Memory topology~~ — settled: Postgres holds the records (`memories`,
+  `intents`, `memory_audit`), a second Qdrant collection indexes them for
+  semantic recall, and graph memory is rejected because the required queries are
+  lookups rather than traversals (ADR 0013). What is stored is decided by
+  `memory/policy.py`, a pure function whose default is to refuse (ADR 0011), and
+  memory reaches a prompt in its own role where it can never become a citation
+  (ADR 0012). `QDRANT_MEMORY_COLLECTION` and `MemoryService.required_scope` are
+  the two configuration points.
+  Still open behind that: nothing infers when the task in flight has changed —
+  `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
+  are driven by the caller — and nothing produces the conversation state a
+  session summary is built from until the web layer does.
 - Trace persistence (files vs. SQLite) and eval report format.
