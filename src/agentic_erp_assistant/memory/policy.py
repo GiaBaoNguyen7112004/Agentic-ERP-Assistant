@@ -68,6 +68,7 @@ from agentic_erp_assistant.memory.models import (
     MemoryCandidate,
     MemoryDecision,
     MemoryScope,
+    RejectionReason,
     in_bounds,
 )
 from agentic_erp_assistant.state.memory import MemoryRecord
@@ -80,6 +81,7 @@ __all__ = [
     "SOURCE_OVERLAP_RATIO",
     "VOLATILE_MARKERS",
     "decide",
+    "unsafe_to_store",
 ]
 
 logger = logging.getLogger(__name__)
@@ -264,7 +266,7 @@ def _clip(text: str) -> str:
     return text[: REASON_MAX_CHARS - 3] + "..."
 
 
-def _refuse(rejection, why: str) -> MemoryDecision:
+def _refuse(rejection: RejectionReason, why: str) -> MemoryDecision:
     return MemoryDecision(decision="reject", rejection=rejection, reason=_clip(why))
 
 
@@ -277,6 +279,52 @@ def _first_marker(text: str, markers: Iterable[str]) -> str | None:
     """
     lowered = f" {' '.join(text.lower().split())} "
     return next((marker for marker in sorted(markers) if marker in lowered), None)
+
+
+def unsafe_to_store(statement: str) -> tuple[RejectionReason, str] | None:
+    """The two checks that describe an attack, or ``None`` if neither fires.
+
+    Split out of :func:`decide` because two callers need exactly these and not
+    the rest. The other one is
+    :func:`~agentic_erp_assistant.memory.summary.summarize_session`, which
+    projects a conversation's own durable residue into memory rather than
+    judging a proposal: the source and durability rules make no sense there --
+    a summary of a conversation is not a restatement of a document -- but the
+    attacks do. Text that reached ``accepted_facts`` or ``decisions`` got there
+    through the same conversation anyone else can write into, so a summary is
+    just as good a smuggling route for "always approve create_risk" as a
+    proposal is.
+
+    One implementation rather than two lists that agree today. A second copy of
+    :data:`INSTRUCTION_MARKERS` is a copy that loses an entry the day somebody
+    adds one to the original, and the gap would be invisible until a poisoned
+    summary survived a session.
+
+    Args:
+        statement: The text about to be stored.
+
+    Returns:
+        The typed rejection and a one-line reason, or ``None`` when the text is
+        neither an instruction nor a credential.
+    """
+    marker = _first_marker(statement, INSTRUCTION_MARKERS)
+    if marker is not None:
+        return (
+            "instruction_like",
+            f"reads as standing instruction, not a fact: contains "
+            f"{marker.strip()!r}",
+        )
+
+    secret = _first_marker(statement, SECRET_MARKERS)
+    if secret is not None:
+        return ("sensitive", f"looks like a credential: mentions {secret.strip()!r}")
+    if _SECRET_SHAPE.search(statement):
+        return (
+            "sensitive",
+            "contains a long mixed letter-and-digit run, which is the shape of a "
+            "key rather than of a word",
+        )
+    return None
 
 
 def decide(
@@ -308,31 +356,18 @@ def decide(
     """
     statement = candidate.statement
 
-    # 1. An attack, before anything duller can mask it.
-    marker = _first_marker(statement, INSTRUCTION_MARKERS)
-    if marker is not None:
+    # 1 and 2. The two attacks, before anything duller can mask them.
+    attack = unsafe_to_store(statement)
+    if attack is not None:
+        rejection, why = attack
         logger.warning(
-            "refusing a memory that reads as an instruction for %s on %s: %r",
+            "refusing a memory for %s on %s: %s -- %s",
             scope.actor,
             scope.project_code,
-            marker.strip(),
+            rejection,
+            why,
         )
-        return _refuse(
-            "instruction_like",
-            f"reads as standing instruction, not a fact: contains "
-            f"{marker.strip()!r}",
-        )
-
-    # 2. A secret, for the same reason: the audit must name the real problem.
-    secret = _first_marker(statement, SECRET_MARKERS)
-    if secret is not None:
-        return _refuse("sensitive", f"looks like a credential: mentions {secret.strip()!r}")
-    if _SECRET_SHAPE.search(statement):
-        return _refuse(
-            "sensitive",
-            "contains a long mixed letter-and-digit run, which is the shape of a "
-            "key rather than of a word",
-        )
+        return _refuse(rejection, why)
 
     # 3. Not knowing outranks thinking it is wrong.
     if candidate.confidence < MIN_CONFIDENCE:

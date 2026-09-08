@@ -13,6 +13,9 @@ The layers, innermost first:
   proposed, for whom, and what was decided;
 * :mod:`.policy` is the gate: a pure function, six checks, and a default of
   refusing;
+* :mod:`.intent` and :mod:`.summary` are the two kinds that are *projected*
+  rather than proposed -- a task with a lifecycle, and a conversation's own
+  residue;
 * everything else -- stores, indexes, proposers -- is machinery behind a port.
 
 Nothing above the policy may write a record it did not return a verdict for.
@@ -34,7 +37,8 @@ from agentic_erp_assistant.memory.models import (
     in_bounds,
     memory_id,
 )
-from agentic_erp_assistant.memory.policy import decide
+from agentic_erp_assistant.memory.policy import decide, unsafe_to_store
+from agentic_erp_assistant.memory.summary import summarize_session
 
 __all__ = [
     "ACTOR_BOUNDED_KINDS",
@@ -53,4 +57,6 @@ __all__ = [
     "decide",
     "in_bounds",
     "memory_id",
+    "summarize_session",
+    "unsafe_to_store",
 ]
