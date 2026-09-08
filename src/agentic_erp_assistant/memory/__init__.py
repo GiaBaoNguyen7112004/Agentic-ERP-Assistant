@@ -53,6 +53,7 @@ from agentic_erp_assistant.memory.models import (
     memory_id,
 )
 from agentic_erp_assistant.memory.policy import decide, unsafe_to_store
+from agentic_erp_assistant.memory.qdrant_index import QdrantMemoryIndex
 from agentic_erp_assistant.memory.store import (
     InMemoryMemoryStore,
     IntentStorePort,
@@ -86,6 +87,7 @@ __all__ = [
     "MemoryStorePort",
     "MemoryVectorStorePort",
     "PROPOSE_MEMORIES_TOOL",
+    "QdrantMemoryIndex",
     "REASON_MAX_CHARS",
     "RejectionReason",
     "SESSION_BOUNDED_KINDS",

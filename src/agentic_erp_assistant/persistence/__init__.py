@@ -12,10 +12,10 @@ What lives here and why nothing else does:
 
 * :mod:`~agentic_erp_assistant.persistence.connection` opens connections and
   turns every way opening one can fail into one typed error.
-* :mod:`~agentic_erp_assistant.persistence.schema` is the five tables as
+* :mod:`~agentic_erp_assistant.persistence.schema` is the eight tables as
   hand-written DDL, applied by an explicit script -- nothing migrates on
   connect.
-* The three adapters satisfy the ports structurally, with no import of the
+* The adapters satisfy the ports structurally, with no import of the
   ports they satisfy -- the same move the in-memory fakes make, so a fake
   and an adapter can never disagree about whose contract they implement.
 
@@ -32,6 +32,10 @@ from agentic_erp_assistant.persistence.connection import (
     url_from_environment,
 )
 from agentic_erp_assistant.persistence.postgres_audit import PostgresAuditLog
+from agentic_erp_assistant.persistence.postgres_memory import (
+    PostgresMemoryAudit,
+    PostgresMemoryStore,
+)
 from agentic_erp_assistant.persistence.postgres_pause import PostgresPauseStore
 from agentic_erp_assistant.persistence.postgres_trace import PostgresTraceStore
 from agentic_erp_assistant.persistence.schema import (
@@ -43,6 +47,8 @@ from agentic_erp_assistant.persistence.schema import (
 __all__ = [
     "DEFAULT_POSTGRES_URL",
     "PostgresAuditLog",
+    "PostgresMemoryAudit",
+    "PostgresMemoryStore",
     "PostgresPauseStore",
     "PostgresTraceStore",
     "SCHEMA_STATEMENTS",

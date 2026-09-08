@@ -1,13 +1,22 @@
-"""The evidence schema: five tables, as hand-written DDL.
+"""The evidence schema: eight tables, as hand-written DDL.
 
 Design rules, so a reviewer can argue with each of them:
 
 * **Plain SQL, no ORM, no migration framework.** The repo's rule is that a
-  plain SDK is enough wherever one is enough, and five tables with no join
+  plain SDK is enough wherever one is enough, and eight tables with no join
   inheritance are well under that line. The cost -- schema changes are made
   here and re-applied by ``scripts/init_postgres.py`` -- buys a schema a
   reviewer reads in one screen, the same trade
   :mod:`agentic_erp_assistant.engine.transitions` makes with its table.
+
+* **Invariants that must hold across processes are database constraints.**
+  Two of them: ``intents_one_open_per_session``, so a session cannot end up
+  with two tasks in flight and recall never has to choose between them; and
+  ``memory_audit_rejection_matches_decision``, so a row cannot claim it stored
+  something while naming the rule that refused it. Both are already enforced
+  in Python, and both are here as well because the Python check protects one
+  process and the index protects the database. The pause table's partial
+  unique index is the same move for the same reason.
 
 * **``CREATE TABLE IF NOT EXISTS``, applied by an explicit script.** Nothing
   migrates on connect: a schema that creates itself on first request is a
@@ -38,14 +47,24 @@ from collections.abc import Sequence
 from typing import get_args
 
 from agentic_erp_assistant.llm.telemetry import Outcome as ModelCallOutcome
+from agentic_erp_assistant.memory.intent import IntentStatus
+from agentic_erp_assistant.memory.models import (
+    MemoryDecisionKind,
+    RejectionReason,
+)
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.events import EventKind
+from agentic_erp_assistant.state.memory import MemoryKind
 from agentic_erp_assistant.state.tool_outcome import ToolStatus
 
 __all__ = [
     "APPROVALS",
     "EVENT_KINDS",
+    "INTENT_STATUSES",
+    "MEMORY_DECISIONS",
+    "MEMORY_KINDS",
     "MODEL_CALL_OUTCOMES",
+    "REJECTION_REASONS",
     "RUN_OUTCOMES",
     "SCHEMA_STATEMENTS",
     "TOOL_STATUSES",
@@ -67,6 +86,10 @@ RUN_OUTCOMES: tuple[str, ...] = ("terminal", "paused")
 here rather than imported because the records module is the one place that
 names it; this is the database's own copy of the same two words."""
 TOOL_STATUSES: tuple[str, ...] = get_args(ToolStatus)
+MEMORY_KINDS: tuple[str, ...] = get_args(MemoryKind)
+MEMORY_DECISIONS: tuple[str, ...] = get_args(MemoryDecisionKind)
+REJECTION_REASONS: tuple[str, ...] = get_args(RejectionReason)
+INTENT_STATUSES: tuple[str, ...] = get_args(IntentStatus)
 
 _SCHEMA_TEMPLATE = f"""
 CREATE TABLE IF NOT EXISTS runs (
@@ -141,6 +164,72 @@ CREATE TABLE IF NOT EXISTS pauses (
 
 CREATE UNIQUE INDEX IF NOT EXISTS pauses_one_pending_per_run
     ON pauses (trace_id) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS memories (
+    memory_id text PRIMARY KEY,
+    kind text NOT NULL
+        CHECK (kind IN ({_sql_list(MEMORY_KINDS)})),
+    key text NOT NULL,
+    statement text NOT NULL,
+    project_code text NOT NULL,
+    required_scope text NOT NULL,
+    actor text NOT NULL,
+    session_id text NOT NULL,
+    recorded_in_run text NOT NULL,
+    recorded_at timestamptz NOT NULL,
+    confidence double precision NOT NULL
+        CHECK (confidence >= 0 AND confidence <= 1),
+    supersedes text[] NOT NULL DEFAULT '{{}}',
+    superseded_at timestamptz,
+    links text[] NOT NULL DEFAULT '{{}}'
+);
+
+CREATE INDEX IF NOT EXISTS memories_live_by_scope
+    ON memories (project_code, actor, session_id, kind)
+    WHERE superseded_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS intents (
+    intent_id text PRIMARY KEY,
+    goal text NOT NULL,
+    project_code text NOT NULL,
+    required_scope text NOT NULL,
+    actor text NOT NULL,
+    session_id text NOT NULL,
+    confirmed_slots jsonb NOT NULL DEFAULT '{{}}'::jsonb,
+    unresolved_slots text[] NOT NULL DEFAULT '{{}}',
+    status text NOT NULL
+        CHECK (status IN ({_sql_list(INTENT_STATUSES)})),
+    opened_at timestamptz NOT NULL,
+    updated_at timestamptz NOT NULL,
+    closed_at timestamptz
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS intents_one_open_per_session
+    ON intents (project_code, session_id) WHERE status = 'open';
+
+CREATE TABLE IF NOT EXISTS memory_audit (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurred_at timestamptz NOT NULL,
+    trace_id text NOT NULL,
+    session_id text NOT NULL,
+    project_code text NOT NULL,
+    actor text NOT NULL,
+    memory_id text NOT NULL,
+    kind text NOT NULL
+        CHECK (kind IN ({_sql_list(MEMORY_KINDS)})),
+    decision text NOT NULL
+        CHECK (decision IN ({_sql_list(MEMORY_DECISIONS)})),
+    rejection text
+        CHECK (rejection IS NULL OR rejection IN ({_sql_list(REJECTION_REASONS)})),
+    reason text NOT NULL DEFAULT '',
+    statement_summary text NOT NULL,
+    CONSTRAINT memory_audit_rejection_matches_decision
+        CHECK ((decision = 'reject') = (rejection IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS memory_audit_by_run ON memory_audit (trace_id);
+CREATE INDEX IF NOT EXISTS memory_audit_by_session ON memory_audit (session_id);
+CREATE INDEX IF NOT EXISTS memory_audit_by_decision ON memory_audit (decision);
 """
 
 SCHEMA_STATEMENTS: tuple[str, ...] = tuple(
