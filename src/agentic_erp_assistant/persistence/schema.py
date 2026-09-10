@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS trace_events (
 );
 
 -- EventKind is a closed set that has grown before (history_recalled,
--- history_promoted) and will again. CREATE TABLE IF NOT EXISTS never touches
+-- history_promoted) and will again. A guarded table creation never touches
 -- an existing constraint, so on a database initialised before a growth the
 -- old CHECK would silently keep rejecting the new members forever -- and
 -- trace_events.save_run is the one store call an unsaved run cannot survive.

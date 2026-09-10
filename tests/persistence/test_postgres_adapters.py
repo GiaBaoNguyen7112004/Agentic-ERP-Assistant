@@ -104,12 +104,13 @@ def database():
 def store_connection(database):
     """A database with nothing in it, so a test's rows are its own.
 
-    Five tables, CASCADE from runs -- the same shape an operator's fresh
+    Six tables, CASCADE from runs -- the same shape an operator's fresh
     ``init_postgres`` run produces, so these tests observe the adapters, not
     whatever the previous test left behind.
     """
     database.execute(
-        "TRUNCATE runs, trace_events, audit_rows, model_calls, pauses CASCADE"
+        "TRUNCATE runs, trace_events, audit_rows, model_calls, pauses, "
+        "session_turns CASCADE"
     )
     return database
 
