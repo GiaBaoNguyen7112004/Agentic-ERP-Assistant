@@ -55,6 +55,7 @@ from pydantic import (
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
@@ -73,6 +74,12 @@ older build cannot be loaded into a newer one as if the fields still meant the
 same thing. Bumping it is a deliberate act that comes with a migration; a
 silent load of a mismatched shape is the failure this constant exists to make
 loud.
+
+What does *not* require a bump: adding a field that has a default. A stored
+state written before the field existed still validates, and the default is the
+truthful reading of it -- ``memories=()`` on a run that had no memory layer, and
+``session_id=None`` on a run that belonged to no session. The version guards
+against fields whose *meaning* changed, which is the case no default can rescue.
 """
 
 
@@ -149,6 +156,25 @@ class AgentState(BaseModel):
     optional in practice.
     """
 
+    session_id: str | None = None
+    """The conversation this turn belongs to, or ``None`` when it belongs to none.
+
+    A turn is one run; a session is the sequence of runs a person works through,
+    and memory is scoped to it. ``None`` is a real answer and not an oversight:
+    a one-shot run -- a script, an evaluation case, a replay -- has no
+    conversation to remember anything for, and the orchestrator reads this to
+    decide whether recall and consolidation happen at all. Defaulting to ``None``
+    means a caller that forgets it gets a turn with no memory, which is the
+    direction an omission should fail in; the alternative default, "invent an
+    id", would silently start a fresh session per request and fill the store
+    with one-turn conversations.
+
+    Optional here and *required* on
+    :class:`~agentic_erp_assistant.state.memory.MemoryRecord`, deliberately: a
+    turn may have no session, but a memory that exists without one could never
+    be scoped, recalled or expired.
+    """
+
     # -- what the runtime decided and gathered ----------------------------
 
     route: DecisionRoute | None = None
@@ -169,6 +195,24 @@ class AgentState(BaseModel):
     A tuple, not a list: a frozen model holding a mutable sequence is not
     frozen, and evidence that can be appended to after the fact is evidence a
     reviewer cannot trust.
+    """
+
+    memories: tuple[MemoryRecord, ...] = ()
+    """What recall selected for this turn, in the order it will be rendered.
+
+    Carried on the state, like :attr:`evidence`, rather than fetched inside the
+    prompt layer -- and for the stronger version of the same reason. Memory is
+    the one input to a turn that came from a *previous* turn's judgement, so
+    "what was this turn shown, and why did it answer that way?" is unanswerable
+    unless the selection is part of the record. A recall performed inside a
+    prompt builder would leave the trace showing a decision with no visible
+    cause.
+
+    Filled by the orchestrator before the graph runs, never by a node: recall
+    happens once per turn, outside the step budget, so a re-plan in the middle
+    of a reason-act cycle cannot quietly change what the model is remembering.
+
+    A tuple for the same reason :attr:`evidence` is one.
     """
 
     observations: tuple[ToolOutcome, ...] = ()
@@ -209,7 +253,7 @@ class AgentState(BaseModel):
     Read from the tool's own
     :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by the
     layer that looked the tool up, and carried here so
-    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition` can be
+    :func:`~agentic_erp_assistant.engine.transitions.assert_transition` can be
     told the truth at every transition that turns on it -- including the one
     after a pause, where the decision that knew the answer is long gone. The
     runtime deliberately cannot look this up itself; see that module for why.

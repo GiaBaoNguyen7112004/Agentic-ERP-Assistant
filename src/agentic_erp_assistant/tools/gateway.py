@@ -138,7 +138,7 @@ def _summarize(request: ToolRequest) -> str:
 class ToolGateway:
     """The one place a tool call becomes a tool execution.
 
-    Satisfies :class:`~agentic_erp_assistant.runtime.ports.ToolGatewayPort`
+    Satisfies :class:`~agentic_erp_assistant.engine.ports.ToolGatewayPort`
     structurally, without importing it -- see that module for why.
 
     Every collaborator is injected and defaulted, which is not politeness: the
@@ -384,6 +384,7 @@ class ToolGateway:
 
         self.audit.record(
             AuditRow(
+                trace_id=request.trace_id,
                 occurred_at=self.now(),
                 actor=request.actor,
                 tool_name=definition.name,

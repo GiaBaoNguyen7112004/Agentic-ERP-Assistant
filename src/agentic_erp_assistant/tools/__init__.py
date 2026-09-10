@@ -6,8 +6,8 @@ runs, and ``gateway.py`` is the single ordered path from a request to an
 outcome -- validate, permit, rate-limit, approve, audit, execute, trace, in
 that order. ``limits.py`` holds the counter that order consults.
 
-Nothing in ``runtime/`` imports this package -- the graph depends on
-:class:`~agentic_erp_assistant.runtime.ports.ToolGatewayPort`, and an
+Nothing in ``engine/`` imports this package -- the graph depends on
+:class:`~agentic_erp_assistant.engine.ports.ToolGatewayPort`, and an
 implementation here satisfies that protocol structurally.
 """
 

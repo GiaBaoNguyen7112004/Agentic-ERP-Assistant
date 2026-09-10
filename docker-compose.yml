@@ -1,17 +1,23 @@
-# The one piece of infrastructure this project does not run in-process.
+# The two pieces of infrastructure this project does not run in-process.
 #
 # Everything else here is Python that starts with the interpreter: the graph,
 # the tool gateway, the lexical index. Vectors are the exception -- they need a
 # store that can filter on payload while it ranks, which is the property the
 # access rule depends on, and hand-rolling that would be writing a database
-# rather than an assistant.
+# rather than an assistant. And evidence is the second exception: a trace, an
+# audit row and a pending approval must survive the process that produced them,
+# which an in-process store cannot promise.
 #
 #   docker compose up -d qdrant
 #   uv run python scripts/ingest_documents.py
 #
-# Only Qdrant is here. The application is run with uv against it, because during
-# development the thing being changed every minute should not be behind an image
-# rebuild. When the web layer lands, an app service is a decision to record then.
+#   docker compose up -d postgres
+#   uv run python scripts/init_postgres.py
+#   uv run pytest -m postgres
+#
+# The application is run with uv against both, because during development the
+# thing being changed every minute should not be behind an image rebuild. When
+# the web layer lands, an app service is a decision to record then.
 
 services:
   qdrant:
@@ -41,5 +47,42 @@ services:
       retries: 5
       start_period: 10s
 
+  postgres:
+    # The evidence store: runs, trace events, audit rows, model-call telemetry
+    # and pending approvals. Plain Postgres, not a vector-capable variant --
+    # the queries it answers are joins and filters over typed columns, and the
+    # schema is hand-written DDL applied by scripts/init_postgres.py rather
+    # than anything that migrates on connect.
+    image: postgres:17.5
+    container_name: agentic-erp-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      # Local development throwaways, and deliberately not secret-shaped: they
+      # exist so the connection default in persistence/connection.py can be
+      # `postgresql://agentic_erp:agentic_erp@localhost:5432/agentic_erp` and a
+      # fresh checkout works with no .env at all. A real deployment overrides
+      # POSTGRES_URL with real credentials and these values never leave the
+      # compose file.
+      POSTGRES_USER: agentic_erp
+      POSTGRES_PASSWORD: agentic_erp
+      POSTGRES_DB: agentic_erp
+    volumes:
+      # A named volume, so evidence and pending approvals survive
+      # `docker compose down` and a restart. Deleting it is the deliberate act
+      # that makes the next run a cold start with an empty queue.
+      - postgres_storage:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready is in the image, and checking the specific database -- not
+      # just the port -- is what makes `up -d` return only when init_postgres
+      # can actually connect.
+      test: ["CMD-SHELL", "pg_isready -U agentic_erp -d agentic_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 volumes:
   qdrant_storage:
+  postgres_storage:

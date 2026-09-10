@@ -15,7 +15,7 @@ hands the result to the graph as
 :class:`~agentic_erp_assistant.state.evidence.EvidenceSnippet` objects whose
 ``source_id`` and ``locator`` are exactly what the answer will cite.
 
-Nothing here imports ``runtime``. The retriever satisfies
-:class:`~agentic_erp_assistant.runtime.ports.DocumentRetrieverPort` structurally,
+Nothing here imports ``engine``. The retriever satisfies
+:class:`~agentic_erp_assistant.engine.ports.DocumentRetrieverPort` structurally,
 which is the whole reason that port is a Protocol.
 """

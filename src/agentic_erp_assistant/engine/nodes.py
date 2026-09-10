@@ -4,7 +4,7 @@ One node per execution shape, and the shapes are the routes: thinking, searching
 documents, running a tool. A node takes an
 :class:`~agentic_erp_assistant.state.agent_state.AgentState` and returns the next
 one, having moved through
-:func:`~agentic_erp_assistant.runtime.transitions.advance` -- so a node cannot
+:func:`~agentic_erp_assistant.engine.transitions.advance` -- so a node cannot
 invent a move the table does not declare, and cannot end a turn without leaving
 a response or a failure behind.
 
@@ -37,13 +37,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from agentic_erp_assistant.reasoning.decision import DecisionRoute
-from agentic_erp_assistant.runtime.ports import (
+from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
     PlannerPort,
     ToolGatewayPort,
 )
-from agentic_erp_assistant.runtime.transitions import advance
+from agentic_erp_assistant.engine.transitions import advance
 from agentic_erp_assistant.state.agent_state import (
     AgentState,
     ERROR_DETAIL_MAX_CHARS,
@@ -85,7 +85,7 @@ EVIDENCE_LIMIT = 4
 """How many passages one retrieval pulls.
 
 A runtime decision rather than a retriever default, for the reason
-:class:`~agentic_erp_assistant.runtime.ports.DocumentRetrieverPort` gives: it
+:class:`~agentic_erp_assistant.engine.ports.DocumentRetrieverPort` gives: it
 sets the size of every prompt, and a number living inside a backend would change
 that from a place no reviewer looks.
 """
@@ -316,7 +316,7 @@ class GraphNodes:
             )
 
         try:
-            answer = self.composer.answer(state.request, snippets)
+            answer = self.composer.answer(state.request, snippets, state.memories)
         except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
             logger.warning("composer failed on %s: %s", state.trace_id, error)
             return advance(
@@ -384,6 +384,7 @@ class GraphNodes:
         """
         outcome = self.tools.execute(
             ToolRequest(
+                trace_id=state.trace_id,
                 tool_name=state.tool_name or "",
                 arguments=state.tool_arguments or {},
                 actor=state.actor,

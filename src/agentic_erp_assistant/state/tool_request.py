@@ -2,7 +2,7 @@
 
 This is the input side of the gateway port, and it lives in ``state`` for the
 same reason :class:`~agentic_erp_assistant.state.tool_outcome.ToolOutcome` does:
-:meth:`~agentic_erp_assistant.runtime.ports.ToolGatewayPort.execute` takes one
+:meth:`~agentic_erp_assistant.engine.ports.ToolGatewayPort.execute` takes one
 and returns the other, so both types have to be nameable by the runtime and by
 the tool layer without either importing the other. A port that took loose
 arguments in and returned a typed object would be asymmetric for no reason, and
@@ -42,6 +42,16 @@ class ToolRequest(BaseModel):
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+    trace_id: str = Field(min_length=1)
+    """The run this call belongs to.
+
+    Required, with no default, for the same reason
+    :attr:`~agentic_erp_assistant.state.agent_state.AgentState.trace_id` is: a
+    tool call that could happen without one would be a call whose audit row
+    cannot be joined back to the trace that explains it -- "who changed what"
+    without "as part of which run" is half the evidence an auditor needs.
+    """
 
     tool_name: str = Field(min_length=1)
     """The tool being called, as the registry knows it."""

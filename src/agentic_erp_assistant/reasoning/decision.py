@@ -238,9 +238,9 @@ class ReasoningDecision(BaseModel):
     :attr:`~agentic_erp_assistant.llm.tools.ToolSpec.mutating` flag by whoever
     looked the tool up, and carried here because the runtime is not allowed to
     look it up itself:
-    :func:`~agentic_erp_assistant.runtime.transitions.assert_transition`
+    :func:`~agentic_erp_assistant.engine.transitions.assert_transition`
     requires the answer at every transition that touches execution, and
-    :mod:`agentic_erp_assistant.runtime.transitions` deliberately does not
+    :mod:`agentic_erp_assistant.engine.transitions` deliberately does not
     import the tool registry.
 
     Separate from ``approval_required``, and not merely a synonym for it. This

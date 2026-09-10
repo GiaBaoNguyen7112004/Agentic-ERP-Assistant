@@ -64,6 +64,6 @@ def test_an_event_carries_no_clock_of_its_own() -> None:
 
 def test_the_loop_guard_has_a_kind_of_its_own() -> None:
     """A run nobody ended must be countable apart from a node that ended one."""
-    event = TraceEvent(node="runtime", kind="run_failed", detail="max_steps_exceeded")
+    event = TraceEvent(node="engine", kind="run_failed", detail="max_steps_exceeded")
 
     assert event.kind == "run_failed"

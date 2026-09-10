@@ -27,7 +27,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentic_erp_assistant.erp.mock import MockErp
+from agentic_erp_assistant.erp.mock import ErpNotPersistedError, MockErp
 from agentic_erp_assistant.llm.tools import (
     BudgetSummaryArguments,
     CreateRiskArguments,
@@ -172,11 +172,20 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
         if erp.project(arguments.project_id) is None:
             raise ToolError(f"no project {arguments.project_id!r} exists")
 
-        created = erp.create_risk(
-            project_id=arguments.project_id,
-            title=arguments.title,
-            severity=arguments.severity,
-        )
+        try:
+            created = erp.create_risk(
+                project_id=arguments.project_id,
+                title=arguments.title,
+                severity=arguments.severity,
+            )
+        except ErpNotPersistedError as error:
+            # Re-raised as a ToolError because the gateway catches exactly the
+            # two tool-layer exceptions and nothing else; a store failure that
+            # unwound past it would violate "nothing escapes the gateway" --
+            # and this one is permanent by nature, so no retry budget is spent
+            # proving it. The store has already rolled its own append back, so
+            # what was refused is the claim that anything was recorded.
+            raise ToolError(str(error)) from error
         return HandlerResult(
             summary=(
                 f"Recorded {created.risk_id} ({created.severity}) against "

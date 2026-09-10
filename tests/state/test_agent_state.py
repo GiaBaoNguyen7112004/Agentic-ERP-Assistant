@@ -1,5 +1,7 @@
 """A graph is only replayable if a transition cannot touch the state it came from."""
 
+from datetime import UTC, datetime
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,6 +12,7 @@ from agentic_erp_assistant.state.agent_state import (
 )
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 
@@ -405,3 +408,63 @@ def test_a_paused_write_survives_a_round_trip_through_plain_data() -> None:
     )
 
     assert AgentState.model_validate(state.model_dump()) == state
+
+
+# --------------------------------------------------------------------------
+# Memory: carried like evidence, and absent by default
+# --------------------------------------------------------------------------
+
+
+def memory() -> MemoryRecord:
+    return MemoryRecord(
+        memory_id="mem-1",
+        kind="preference",
+        key="reply_language",
+        statement="Prefers replies in Vietnamese.",
+        project_code="atlas",
+        required_scope="project.docs.read",
+        actor="bao",
+        session_id="sess-1",
+        recorded_in_run="run-1",
+        recorded_at=datetime(2026, 9, 8, tzinfo=UTC),
+        confidence=0.9,
+    )
+
+
+def test_a_turn_starts_with_no_memory_and_no_session() -> None:
+    """A caller that says nothing gets a turn that remembers nothing, which is
+    the direction an omission should fail in."""
+    state = initial()
+
+    assert state.memories == ()
+    assert state.session_id is None
+
+
+def test_memory_survives_evolve_like_any_other_field() -> None:
+    state = initial().evolve(session_id="sess-1", memories=(memory(),))
+
+    carried = state.evolve(step_count=1)
+
+    assert carried.memories == (memory(),)
+    assert carried.session_id == "sess-1"
+
+
+def test_a_state_carrying_memory_round_trips_through_plain_data() -> None:
+    """It is stored as one jsonb document, so the nested record has to survive."""
+    state = initial().evolve(session_id="sess-1", memories=(memory(),))
+
+    assert AgentState.model_validate(state.model_dump()) == state
+
+
+def test_a_state_written_before_memory_existed_still_loads() -> None:
+    """Why adding these two fields needed no STATE_VERSION bump: the stored
+    document predates them and the defaults are the truthful reading of it."""
+    stored = initial().model_dump()
+    del stored["memories"]
+    del stored["session_id"]
+
+    loaded = AgentState.model_validate(stored)
+
+    assert loaded.memories == ()
+    assert loaded.session_id is None
+    assert loaded.state_version == STATE_VERSION

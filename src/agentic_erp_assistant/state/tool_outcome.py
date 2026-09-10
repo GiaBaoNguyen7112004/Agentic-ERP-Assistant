@@ -8,7 +8,7 @@ for a write, into an audit record. This module is that object.
 It lives in ``state`` for the reason
 :class:`~agentic_erp_assistant.state.evidence.EvidenceSnippet` does: it crosses
 a node boundary, so both the port that declares it
-(:class:`~agentic_erp_assistant.runtime.ports.ToolGatewayPort`) and the tool
+(:class:`~agentic_erp_assistant.engine.ports.ToolGatewayPort`) and the tool
 layer that produces it need to name the type. Defining it in either one would
 make the other import a layer it has no business depending on -- and would undo
 most of what declaring the gateway as a Protocol bought.

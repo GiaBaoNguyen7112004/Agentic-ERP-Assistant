@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.14"
 dependencies = [
     "httpx>=0.28.1",
+    "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.5",
     "pypdf>=6.17.0",
     "python-dotenv>=1.2.3",
@@ -31,6 +32,13 @@ build-backend = "uv_build"
 # identity, so the mirror can stay exact.
 addopts = "--import-mode=importlib"
 consider_namespace_packages = true
+# Integration tests that talk to the real Postgres from docker-compose.yml are
+# marked `postgres`. They skip themselves when the database is not up, so the
+# default `uv run pytest` stays green on any machine -- and stays honest about
+# what it proved: only `uv run pytest -m postgres` claims the SQL adapters work.
+markers = [
+    "postgres: needs the Postgres service from docker-compose.yml; skipped when it is not reachable",
+]
 
 [dependency-groups]
 dev = [

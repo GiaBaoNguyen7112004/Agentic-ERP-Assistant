@@ -76,7 +76,7 @@ Chosen against what a chunk has to do rather than against a round number. It has
 to hold a whole section of one of these documents most of the time -- the
 sections here run 60 to 250 tokens -- and four of them have to fit in a prompt
 alongside the policy blocks without crowding out the reply
-(:data:`~agentic_erp_assistant.runtime.nodes.EVIDENCE_LIMIT` is 4, so this is
+(:data:`~agentic_erp_assistant.engine.nodes.EVIDENCE_LIMIT` is 4, so this is
 roughly 1,300 tokens of evidence). Much larger and a single hit starts carrying
 two topics, which is how a retriever scores well and cites imprecisely.
 """

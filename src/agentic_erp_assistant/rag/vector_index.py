@@ -65,6 +65,7 @@ __all__ = [
     "DOCUMENT_FIELD",
     "HASH_FIELD",
     "QdrantVectorIndex",
+    "translates_transport",
     "VectorIndexError",
     "VectorStoreUnavailable",
     "VectorWidthMismatch",
@@ -133,10 +134,17 @@ class VectorWidthMismatch(VectorIndexError):
     """
 
 
-def _translates_transport[**P, R](
+def translates_transport[**P, R](
     method: Callable[P, R],
 ) -> Callable[P, R]:
-    """Turn a Qdrant transport failure into :class:`VectorStoreUnavailable`."""
+    """Turn a Qdrant transport failure into :class:`VectorStoreUnavailable`.
+
+    Public, and used by :mod:`agentic_erp_assistant.memory.qdrant_index` as
+    well as here. One translator rather than two: the message it produces --
+    naming the collection and telling the reader to start the container -- is
+    the thing an operator sees at three in the morning, and two copies of it
+    is one that stops matching the other.
+    """
 
     @wraps(method)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
@@ -198,7 +206,7 @@ class QdrantVectorIndex:
 
     # -- writing -----------------------------------------------------------
 
-    @_translates_transport
+    @translates_transport
     def ensure_ready(self, dimensions: int) -> None:
         """Create the collection at this width, or check the existing one.
 
@@ -271,7 +279,7 @@ class QdrantVectorIndex:
         for warning in raised:
             logger.debug("payload index on %s: %s", self.collection, warning.message)
 
-    @_translates_transport
+    @translates_transport
     def upsert(
         self, chunks: Sequence[Chunk], vectors: Sequence[Sequence[float]]
     ) -> None:
@@ -304,7 +312,7 @@ class QdrantVectorIndex:
         )
         logger.info("upserted %d chunk(s) into %s", len(chunks), self.collection)
 
-    @_translates_transport
+    @translates_transport
     def delete_documents(self, document_ids: Iterable[str]) -> None:
         """Remove every stored chunk belonging to these documents.
 
@@ -334,7 +342,7 @@ class QdrantVectorIndex:
 
     # -- reading -----------------------------------------------------------
 
-    @_translates_transport
+    @translates_transport
     def _scroll(self, fields: list[str] | bool) -> list[dict[str, Any]]:
         """Page through every payload in the collection."""
         if not self._client.collection_exists(self.collection):
@@ -382,7 +390,7 @@ class QdrantVectorIndex:
         chunks.sort(key=lambda chunk: (chunk.document_id, chunk.position))
         return tuple(chunks)
 
-    @_translates_transport
+    @translates_transport
     def search(
         self,
         query_vector: Sequence[float],

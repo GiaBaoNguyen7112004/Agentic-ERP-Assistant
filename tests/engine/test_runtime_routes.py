@@ -21,14 +21,17 @@ and a provider call, and neither is what this file is about.
 Nothing here touches the network, and nothing sleeps.
 """
 
+import tempfile
+from pathlib import Path
+
 import pytest
 
-from agentic_erp_assistant.erp.mock import MockErp
+from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, MockErp
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.llm.tools import ToolCallResult
 from agentic_erp_assistant.reasoning.planner import Planner
-from agentic_erp_assistant.runtime.nodes import NO_EVIDENCE_REPLY, SOURCES_PREFIX
-from agentic_erp_assistant.runtime.workflow import (
+from agentic_erp_assistant.engine.nodes import NO_EVIDENCE_REPLY, SOURCES_PREFIX
+from agentic_erp_assistant.engine.workflow import (
     DENIED_REPLY,
     NotPaused,
     UnroutableState,
@@ -71,7 +74,7 @@ class ScriptedModel:
         self.results = list(results)
         self.calls = 0
 
-    def decide(self, question, evidence=(), observations=(), *, tools=()):
+    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
@@ -88,7 +91,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence):
+    def answer(self, question: str, evidence, memories=()):
         return self.answer_value
 
 
@@ -122,6 +125,21 @@ def grounded_answer() -> GroundedAnswer:
     )
 
 
+def a_writable_store() -> MockErp:
+    """A store over a throwaway copy of the fixture.
+
+    Writes really reach the file now, so no gateway in this file may sit on
+    the repo's fixture: an approved ``create_risk`` in a route test would edit
+    review material. Each store gets its own copy, so one route test's write is
+    invisible to the next one's read.
+    """
+    target = Path(tempfile.mkdtemp()) / "project.json"
+    target.write_text(
+        DEFAULT_DATASET_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    return MockErp.load(target)
+
+
 def runtime(
     *decisions: ToolCallResult,
     erp: MockErp | None = None,
@@ -134,7 +152,7 @@ def runtime(
     settings = {
         "retriever": retriever or FakeRetriever(SNIPPET),
         "tools": tools
-        or ToolGateway(registry=build_default_registry(erp or MockErp.load())),
+        or ToolGateway(registry=build_default_registry(erp or a_writable_store())),
         "planner": Planner(ScriptedModel(*decisions)),
         "composer": composer or FakeComposer(grounded_answer()),
         "sleep": lambda seconds: None,
@@ -232,7 +250,7 @@ def create_risk_call() -> ToolCallResult:
 
 
 def test_a_write_pauses_before_anything_changes() -> None:
-    erp = MockErp.load()
+    erp = a_writable_store()
     before = len(erp.risks)
     engine = runtime(create_risk_call(), erp=erp)
 
@@ -247,7 +265,7 @@ def test_a_write_pauses_before_anything_changes() -> None:
 
 
 def test_an_approved_write_runs_and_the_turn_finishes() -> None:
-    erp = MockErp.load()
+    erp = a_writable_store()
     before = len(erp.risks)
     engine = runtime(
         create_risk_call(),
@@ -266,7 +284,7 @@ def test_an_approved_write_runs_and_the_turn_finishes() -> None:
 
 
 def test_a_denied_write_ends_the_turn_and_changes_nothing() -> None:
-    erp = MockErp.load()
+    erp = a_writable_store()
     before = len(erp.risks)
     engine = runtime(create_risk_call(), erp=erp)
     paused = engine.run(start("Record a risk about the vendor."))

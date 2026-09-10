@@ -73,6 +73,7 @@ logger = logging.getLogger(__name__)
 PRESERVED_FIELDS = (
     "user_goal",  # what the user is actually trying to do
     "accepted_facts",  # what has been established and may be relied on
+    "decisions",  # what the conversation settled, and may not re-litigate
     "citations",  # the sources those facts rest on
     "pending_approvals",  # writes waiting on a human decision
     "safety_flags",  # guardrail findings that must outlive the turn
@@ -84,9 +85,17 @@ A closed tuple, and the only thing that decides what survives compaction. Adding
 a field here is a deliberate act with a diff someone reviews; that is the entire
 point of writing the rule this way round.
 
-The last four are safety state. ``pending_approvals`` and ``safety_flags`` in
+Four of the seven are safety state. ``pending_approvals`` and ``safety_flags`` in
 particular are why this module cannot be a summarizer: they are small, they read
 as incidental, and losing either one silently removes a control.
+
+``decisions`` was the one deliberate addition, made when the memory layer
+landed. It is here rather than folded into ``accepted_facts`` because the two
+decay differently: a fact can be re-established by retrieving the document it
+came from, while a decision exists only because a conversation reached it, and
+losing one means re-litigating an argument that was already settled. It is also
+what :mod:`agentic_erp_assistant.memory.summary` reads first when it projects a
+session into durable memory.
 """
 
 
@@ -146,6 +155,11 @@ class CompactedConversation:
 
     accepted_facts: object | None = None
     """What has been established well enough to build on."""
+
+    decisions: object | None = None
+    """What the conversation settled. Kept apart from ``accepted_facts`` because
+    a fact can be re-established from the document it came from and a decision
+    cannot -- see :data:`PRESERVED_FIELDS`."""
 
     citations: object | None = None
     """The sources behind those facts. Grounding has to outlive compaction."""

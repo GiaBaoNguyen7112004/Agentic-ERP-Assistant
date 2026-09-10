@@ -30,6 +30,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.llm.telemetry import InMemoryTelemetry
+from agentic_erp_assistant.llm.tools import LIST_RISKS_TOOL
 
 MODEL = "gpt-4o"  # priced in pricing.py, so cost assertions are real
 API_KEY = "sk-test-not-a-real-key"
@@ -640,3 +641,79 @@ def test_a_text_only_client_cannot_route_and_says_so_before_sending() -> None:
 
     with pytest.raises(TypeError, match="ToolCallingClient"):
         gateway.decide("What could go wrong on atlas?")
+
+
+# --------------------------------------------------------------------------
+# call_tools(): the same four steps, against a prompt somebody else built
+# --------------------------------------------------------------------------
+
+
+def test_a_second_caller_gets_the_same_four_steps_decide_gets() -> None:
+    """The memory layer asks a different question in a different prompt. The
+    reason it goes through here rather than reaching the client is that skipping
+    this method would skip the budget check, the retry and the cost record."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    result = gateway.call_tools(
+        [
+            {"role": "system", "content": "You are a memory policy."},
+            {"role": "user", "content": "What was worth keeping?"},
+        ],
+        tools=(LIST_RISKS_TOOL,),
+    )
+
+    assert result.tool_name == "list_risks"
+    assert [record.outcome for record in telemetry.records] == ["routed"]
+
+
+def test_call_tools_sends_the_prompt_it_was_given_and_builds_none_of_it() -> None:
+    """Building one is where the roles are decided -- which block is instruction
+    and which is data -- so each caller makes that decision in the open."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.call_tools(
+        [{"role": "user", "content": "the only block"}], tools=(LIST_RISKS_TOOL,)
+    )
+
+    body = json.loads(recorder.requests[0].content)
+    assert [message["content"] for message in body["messages"]] == ["the only block"]
+
+
+def test_call_tools_refuses_a_prompt_that_cannot_fit_before_sending() -> None:
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+    gateway.context_window = 32
+
+    with pytest.raises(ContextWindowExceeded):
+        gateway.call_tools(
+            [{"role": "user", "content": "words " * 200}], tools=(LIST_RISKS_TOOL,)
+        )
+
+    assert recorder.requests == []
+    assert [record.outcome for record in telemetry.records] == ["budget_exceeded"]
+
+
+def test_decide_is_call_tools_with_the_planner_prompt() -> None:
+    """The refactor's whole claim: one path, two callers, no second place where
+    a request escapes the four steps."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    body = json.loads(recorder.requests[0].content)
+    from agentic_erp_assistant.llm.prompts import PLANNER_CONTRACT
+
+    blocks = [message["content"] for message in body["messages"]]
+    assert PLANNER_CONTRACT in blocks
+    assert "What could go wrong on atlas?" in blocks

@@ -10,7 +10,7 @@ import pytest
 
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
-from agentic_erp_assistant.runtime.nodes import (
+from agentic_erp_assistant.engine.nodes import (
     GraphNodes,
     NO_EVIDENCE_REPLY,
     RETRIEVAL_TOOL,
@@ -63,7 +63,7 @@ class FakeComposer:
         self.raises = raises
         self.calls: list[tuple] = []
 
-    def answer(self, question: str, evidence):
+    def answer(self, question: str, evidence, memories=()):
         self.calls.append((question, tuple(evidence)))
         if self.raises is not None:
             raise self.raises

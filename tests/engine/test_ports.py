@@ -9,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
-from agentic_erp_assistant.runtime.ports import (
+from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
     PlannerPort,
@@ -71,7 +71,7 @@ def succeeded(tool_name: str) -> ToolOutcome:
 
 
 def test_a_retriever_conforms_without_inheriting() -> None:
-    """rag/ implements this without importing runtime/, which is what keeps the
+    """rag/ implements this without importing engine/, which is what keeps the
     dependency direction pointing inward."""
     retriever = FakeRetriever()
 
@@ -111,7 +111,7 @@ def test_the_runtime_check_sees_methods_only_and_not_signatures() -> None:
 
 def test_the_result_type_is_the_one_the_state_layer_defines() -> None:
     """Re-exported, not redefined: the tool layer builds these and must not
-    have to import runtime/ to name what it returns."""
+    have to import engine/ to name what it returns."""
     from agentic_erp_assistant.state.tool_outcome import ToolOutcome as Defined
 
     assert ToolOutcome is Defined
@@ -145,6 +145,7 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     upstream checked."""
     gateway = FakeGateway(succeeded("create_risk"))
     request = ToolRequest(
+        trace_id="run-1",
         tool_name="create_risk",
         arguments={"project_id": "atlas", "title": "x", "severity": "low"},
         actor="bao",
@@ -157,12 +158,13 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
     assert gateway.calls == [request]
 
 
-@pytest.mark.parametrize("missing", ["actor", "scopes"])
+@pytest.mark.parametrize("missing", ["trace_id", "actor", "scopes"])
 def test_no_audit_fact_can_be_left_out_of_a_call(missing: str) -> None:
     """Loose arguments were the alternative, and each audit fact would then be
     one more parameter a caller could omit -- the one that gets omitted being a
     scope."""
     fields: dict[str, Any] = {
+        "trace_id": "run-1",
         "tool_name": "create_risk",
         "arguments": {},
         "actor": "bao",
@@ -179,8 +181,8 @@ def test_no_audit_fact_can_be_left_out_of_a_call(missing: str) -> None:
 # --------------------------------------------------------------------------
 
 
-RUNTIME_PACKAGE = (
-    Path(__file__).resolve().parents[2] / "src" / "agentic_erp_assistant" / "runtime"
+ENGINE_PACKAGE = (
+    Path(__file__).resolve().parents[2] / "src" / "agentic_erp_assistant" / "engine"
 )
 
 REPLACEABLE_PARTS = (
@@ -189,10 +191,13 @@ REPLACEABLE_PARTS = (
     "agentic_erp_assistant.erp",
     "agentic_erp_assistant.web",
     "agentic_erp_assistant.llm.adapters",
+    "agentic_erp_assistant.persistence",
 )
-"""The packages a port exists to stand in for, plus the layer the runtime must
-never point at. Naming any of them from inside runtime/ means a node reached
-past its boundary."""
+"""The packages a port exists to stand in for, plus the layers the runtime must
+never point at. Naming any of them from inside engine/ means a node reached
+past its boundary -- a store adapter is on this list for the same reason a
+provider adapter is: the orchestrator depends on the trace ports, and the
+day it names a Postgres class is the day the fakes stop proving anything."""
 
 
 def imported_modules(source: Path) -> set[str]:
@@ -213,7 +218,7 @@ def test_nothing_in_the_runtime_imports_a_replaceable_part() -> None:
     against the whole package so it keeps holding as nodes are added."""
     offenders: dict[str, set[str]] = {}
 
-    for source in sorted(RUNTIME_PACKAGE.rglob("*.py")):
+    for source in sorted(ENGINE_PACKAGE.rglob("*.py")):
         reached_past = {
             module
             for module in imported_modules(source)
@@ -260,7 +265,7 @@ class FakeComposer:
     def __init__(self, answer_text: str = "M2 is on track.") -> None:
         self.answer_text = answer_text
 
-    def answer(self, question: str, evidence):
+    def answer(self, question: str, evidence, memories=()):
         return {"answer": self.answer_text, "evidence": tuple(evidence)}
 
 
@@ -289,7 +294,7 @@ def test_the_runtime_package_pulls_in_no_part_of_llm_at_import_time() -> None:
     """The composer port names the answer contract under TYPE_CHECKING for
     exactly this reason: a node should not drag a tokenizer and an HTTP client
     behind it."""
-    source = Path("src/agentic_erp_assistant/runtime/ports.py")
+    source = Path("src/agentic_erp_assistant/engine/ports.py")
     tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
     executed = {
         node.module

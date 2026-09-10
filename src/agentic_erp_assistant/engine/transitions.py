@@ -13,8 +13,8 @@ nothing except that its own test passes. So the table is not offered to nodes
 as advice. :func:`advance` is the only supported way to change
 :attr:`~agentic_erp_assistant.state.agent_state.AgentState.route`, it calls
 :func:`assert_transition` before it builds anything, and
-``tests/runtime/test_transitions.py`` parses every other file under
-``runtime/`` and fails if one sets ``route`` itself. A node cannot take an
+``tests/engine/test_transitions.py`` parses every other file under
+``engine/`` and fails if one sets ``route`` itself. A node cannot take an
 illegal step by accident, and it cannot take one on purpose without the diff
 showing that it went around the front door.
 

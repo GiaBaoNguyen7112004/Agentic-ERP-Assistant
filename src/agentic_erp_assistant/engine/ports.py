@@ -26,7 +26,7 @@ Protocols, so implementations never import this module
 Both are :class:`typing.Protocol`. Conformance is structural -- a retriever
 satisfies :class:`DocumentRetrieverPort` by having the method, not by
 inheriting from it -- which means ``rag/`` and ``tools/`` will implement these
-without importing anything from ``runtime/``. That is what keeps the dependency
+without importing anything from ``engine/``. That is what keeps the dependency
 direction pointing inward: the graph depends on a shape, the shape depends on
 nothing, and no outer layer is dragged in behind it.
 
@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -75,7 +76,7 @@ __all__ = [
 # ToolRequest and ToolOutcome are re-exported, not defined here. They are the
 # two halves of execute()'s signature, so this module has to name them -- but
 # the tool layer has to build both, and definitions living in the port would
-# drag runtime/ into every implementation. Declaring the gateway as a Protocol
+# drag engine/ into every implementation. Declaring the gateway as a Protocol
 # exists precisely to stop that, so the types sit in state/, which both sides
 # may depend on.
 
@@ -194,7 +195,7 @@ class PlannerPort(Protocol):
 class AnswerComposerPort(Protocol):
     """What the graph assumes about writing a grounded reply.
 
-    Named here rather than typed as the concrete gateway, so ``runtime/`` keeps
+    Named here rather than typed as the concrete gateway, so ``engine/`` keeps
     depending on shapes. It adds no mechanism: the implementation this project
     ships is
     :meth:`~agentic_erp_assistant.llm.gateway.LLMGateway.answer`, unchanged and
@@ -205,6 +206,7 @@ class AnswerComposerPort(Protocol):
         self,
         question: str,
         evidence: Sequence[EvidenceSnippet],
+        memories: Sequence[MemoryRecord] = (),
     ) -> "GroundedAnswer":
         """Answer ``question`` from ``evidence``, or refuse in a typed way.
 
@@ -213,6 +215,12 @@ class AnswerComposerPort(Protocol):
         every citation against the evidence actually retrieved before the reply
         reaches anyone -- a composer is trusted to write, not to have cited
         something real.
+
+        ``memories`` shapes *how* the reply reads and never what it asserts. It
+        is safe to hand over for a structural reason rather than a hopeful one:
+        a memory carries no locator, so there is nothing in it a citation could
+        be built from, and the caller's check against the retrieved evidence
+        catches one that was invented anyway.
 
         Raises:
             Exception: Provider failures and contract violations propagate. The

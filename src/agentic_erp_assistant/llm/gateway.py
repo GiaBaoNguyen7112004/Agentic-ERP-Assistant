@@ -31,6 +31,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
+    Message,
     ToolCallingClient,
     Usage,
     UsageReporting,
@@ -48,6 +49,7 @@ from agentic_erp_assistant.llm.telemetry import (
 )
 from agentic_erp_assistant.llm.tokenizer import TiktokenCounter, TokenCounter
 from agentic_erp_assistant.llm.tools import PLANNING_TOOLS, ToolCallResult, ToolSpec
+from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = ["ContextWindowExceeded", "Evidence", "LLMGateway", "WHOLE_DOCUMENT"]
@@ -146,6 +148,7 @@ class LLMGateway:
         self,
         question: str,
         evidence: Evidence,
+        memories: Sequence[MemoryRecord] = (),
         *,
         temperature: float = 0.0,
     ) -> GroundedAnswer:
@@ -155,6 +158,11 @@ class LLMGateway:
             question: The user's words, placed verbatim in the user block.
             evidence: ``{source_id: text}``, or ``EvidenceSnippet`` objects when
                 the caller knows real locators.
+            memories: What recall selected for this turn. Reaches the answering
+                call as well as the routing one because a stored preference is
+                about how to reply -- and it cannot become a citation, since a
+                memory has no locator and the caller checks every citation
+                against the evidence actually retrieved.
             temperature: Defaults to 0.0. A grounded answer is not a place for
                 variety, and a reproducible trace is worth more here than range.
 
@@ -173,7 +181,7 @@ class LLMGateway:
             ValueError: ``question`` is blank (from ``build_messages``).
         """
         # 1. Build.
-        messages = build_messages(question, _as_snippets(evidence))
+        messages = build_messages(question, _as_snippets(evidence), memories)
 
         # 2. Budget, before anything is sent.
         estimated = self.counter.count_message_tokens(
@@ -242,6 +250,7 @@ class LLMGateway:
         question: str,
         evidence: Evidence = (),
         observations: Sequence[ToolOutcome] = (),
+        memories: Sequence[MemoryRecord] = (),
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
@@ -263,6 +272,8 @@ class LLMGateway:
             question: The user's words, verbatim.
             evidence: Whatever retrieval has supplied so far this turn.
             observations: What this turn's calls have returned, in order.
+            memories: What recall selected for this turn, already filtered and
+                budgeted -- never everything that is stored.
             tools: What to offer. Defaults to
                 :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS`.
             temperature: 0.0. A routing decision is not a place for variety.
@@ -280,6 +291,58 @@ class LLMGateway:
             ProviderAuthError: A definitive rejection from the provider.
             ValueError: ``question`` is blank, or ``tools`` is empty.
         """
+        return self.call_tools(
+            build_planner_messages(
+                question, _as_snippets(evidence), observations, memories
+            ),
+            tools=tools,
+            temperature=temperature,
+        )
+
+    def call_tools(
+        self,
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[ToolSpec] = PLANNING_TOOLS,
+        temperature: float = 0.0,
+    ) -> ToolCallResult:
+        """Offer ``tools`` against an already-built prompt and return the choice.
+
+        The body :meth:`decide` used to be, with the message building lifted
+        out. It exists because routing is not the only thing this project asks a
+        model to answer with a function call: the memory layer asks what a
+        finished turn is worth remembering, in a different prompt, and the
+        alternative was for it to reach the client directly.
+
+        That alternative is the one worth arguing against. It would skip the
+        budget check, the retry engine and the cost record -- so a proposal made
+        after every turn would spend money nothing counted, retry nothing, and
+        blow the context window on the largest conversation rather than being
+        refused locally. The four steps are the point of this class, and a
+        second caller is a reason to share them, not to route around them.
+
+        What stays with the caller is the prompt. Building one is where the
+        roles are decided -- which block is instruction and which is data -- and
+        that is a decision each caller has to make in the open rather than
+        inherit from a shared default.
+
+        Args:
+            messages: The role blocks, already built. See
+                :mod:`agentic_erp_assistant.llm.prompts`.
+            tools: What to offer.
+            temperature: 0.0. Neither a routing decision nor a memory proposal
+                is a place for variety.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
+
+        Raises:
+            TypeError: The client cannot make tool calls.
+            ContextWindowExceeded: The estimate leaves no room for a reply.
+            TransientProviderError: Retries were exhausted.
+            ProviderAuthError: A definitive rejection from the provider.
+            ValueError: ``tools`` is empty.
+        """
         client = self.client
         if not isinstance(client, ToolCallingClient):
             raise TypeError(
@@ -287,10 +350,6 @@ class LLMGateway:
                 f"gateway cannot route; wire a client satisfying "
                 f"ToolCallingClient to use decide()"
             )
-
-        messages = build_planner_messages(
-            question, _as_snippets(evidence), observations
-        )
 
         estimated = self.counter.count_message_tokens(
             messages, model=client.model_name

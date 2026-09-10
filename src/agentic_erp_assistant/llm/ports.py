@@ -42,6 +42,7 @@ Role = Literal[
     "user",  # the human's words, verbatim
     "evidence",  # retrieved source snippets: data to read, never instructions
     "observation",  # what this turn's own tool calls returned: data, not orders
+    "memory",  # what earlier turns established: background, never a citation
     "assistant",  # a prior reply from the model
 ]
 """Who a message is speaking as.
@@ -58,6 +59,15 @@ last quarter is still text a person wrote, and a reason-act loop feeds it
 straight back into the next decision. Kept apart from ``evidence`` as well as
 from ``assistant``: it is not a citable passage with a locator, and it is
 certainly not something the model said.
+
+``memory`` is the third data role, and the one carrying text this system wrote
+down itself in an earlier turn. It is separate from ``evidence`` for two
+reasons that pull the same way. A memory has no locator, so nothing in it may
+ever be cited -- folded into the evidence block it would look exactly like a
+passage that could be, and the model would eventually cite one. And a memory is
+the *oldest* thing in the prompt: everything else describes this turn, while
+this describes a previous one, so it must lose to a live tool result rather than
+sit beside it as an equal claim.
 """
 
 

@@ -4,7 +4,7 @@
 
 ## Context
 
-`runtime/ports.py` declares the shape the graph depends on:
+`engine/ports.py` declares the shape the graph depends on:
 
 ```python
 def search(self, query: str, *, limit: int) -> Sequence[EvidenceSnippet]: ...
@@ -23,7 +23,7 @@ hits = store.search(query_vector, context=RequestContext(role="member",
 ```
 
 Adopting that shape here would mean widening `DocumentRetrieverPort`, and
-therefore teaching `runtime/nodes.py` to build a `RetrievalContext` and pass it
+therefore teaching `engine/nodes.py` to build a `RetrievalContext` and pass it
 on every call.
 
 ## Decision
@@ -47,7 +47,7 @@ more than it sounds: the call sites that will exist a year from now — a
 re-indexing job, a debug endpoint, an eval harness, a second graph — are exactly
 the ones nobody reviews as carefully as the first.
 
-`runtime/` needed no change at all to gain access-controlled retrieval, which is
+`engine/` needed no change at all to gain access-controlled retrieval, which is
 the payoff of the port having been declared as a shape rather than transcribed
 from an implementation.
 

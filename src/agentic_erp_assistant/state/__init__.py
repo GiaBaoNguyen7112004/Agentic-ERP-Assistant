@@ -18,6 +18,12 @@ from agentic_erp_assistant.state.events import (
     TraceEvent,
 )
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.memory import (
+    KEY_MAX_CHARS,
+    MemoryKind,
+    MemoryRecord,
+    STATEMENT_MAX_CHARS,
+)
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome, ToolStatus
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -28,6 +34,10 @@ __all__ = [
     "EVENT_DETAIL_MAX_CHARS",
     "EventKind",
     "EvidenceSnippet",
+    "KEY_MAX_CHARS",
+    "MemoryKind",
+    "MemoryRecord",
+    "STATEMENT_MAX_CHARS",
     "STATE_VERSION",
     "ToolOutcome",
     "ToolRequest",

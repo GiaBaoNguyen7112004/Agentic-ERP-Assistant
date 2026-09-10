@@ -20,7 +20,7 @@ from agentic_erp_assistant.rag.retriever import (
     RetrievalService,
 )
 from agentic_erp_assistant.rag.vector_index import QdrantVectorIndex
-from agentic_erp_assistant.runtime.ports import DocumentRetrieverPort
+from agentic_erp_assistant.engine.ports import DocumentRetrieverPort
 from qdrant_client import QdrantClient
 
 READER = RetrievalContext.for_actor(

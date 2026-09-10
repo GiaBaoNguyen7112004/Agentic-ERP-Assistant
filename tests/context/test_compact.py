@@ -8,7 +8,7 @@ is quietly matching the wrong thing.
 
 And the summarizer is always a fake. A summarizer may be an LLM call in
 production, but nothing here reaches a provider -- the point being tested is that
-the six preserved fields do not depend on one.
+the preserved fields do not depend on one.
 """
 
 import dataclasses
@@ -36,6 +36,7 @@ def full_state() -> dict[str, object]:
     return {
         "user_goal": "find out why sprint 12 slipped",
         "accepted_facts": ["sprint 12 closed two weeks late"],
+        "decisions": ["carry the remaining scope into sprint 13"],
         "citations": [{"source_id": "sprint-12-report.md", "locator": "3.2"}],
         "pending_approvals": [DELETE_APPROVAL],
         "safety_flags": ["prompt_injection_suspected"],
@@ -47,7 +48,7 @@ def full_state() -> dict[str, object]:
 def test_compaction_preserves_every_field_and_drops_the_transcript() -> None:
     """The named acceptance criterion, field by field rather than sampled.
 
-    All six are asserted individually and by value. Checking two of them and
+    Every one is asserted individually and by value. Checking two of them and
     trusting the rest would pass just as well against an implementation that
     preserved two of them, which is the failure this test exists to catch.
     """
@@ -57,6 +58,7 @@ def test_compaction_preserves_every_field_and_drops_the_transcript() -> None:
 
     assert compacted.user_goal == "find out why sprint 12 slipped"
     assert compacted.accepted_facts == ("sprint 12 closed two weeks late",)
+    assert compacted.decisions == ("carry the remaining scope into sprint 13",)
     assert compacted.citations == (
         {"source_id": "sprint-12-report.md", "locator": "3.2"},
     )

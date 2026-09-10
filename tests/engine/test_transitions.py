@@ -8,8 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from agentic_erp_assistant.reasoning.decision import DecisionRoute
-from agentic_erp_assistant.runtime import transitions
-from agentic_erp_assistant.runtime.transitions import (
+from agentic_erp_assistant.engine import transitions
+from agentic_erp_assistant.engine.transitions import (
     ALLOWED,
     advance,
     assert_transition,
@@ -247,8 +247,8 @@ def test_advance_will_not_take_a_second_opinion_on_what_it_decides(
 # --------------------------------------------------------------------------
 
 
-RUNTIME_PACKAGE = (
-    Path(__file__).resolve().parents[2] / "src" / "agentic_erp_assistant" / "runtime"
+ENGINE_PACKAGE = (
+    Path(__file__).resolve().parents[2] / "src" / "agentic_erp_assistant" / "engine"
 )
 
 
@@ -276,7 +276,7 @@ def test_no_other_runtime_module_sets_route_behind_the_guards_back() -> None:
     this is what makes 'has to' mean something."""
     offenders = {
         source.name: sets_route_directly(source)
-        for source in sorted(RUNTIME_PACKAGE.rglob("*.py"))
+        for source in sorted(ENGINE_PACKAGE.rglob("*.py"))
         if source.name != "transitions.py" and sets_route_directly(source)
     }
 
@@ -293,7 +293,7 @@ def test_the_guard_would_actually_catch_an_offender(tmp_path: Path) -> None:
 
 def test_transitions_is_the_one_module_that_does_set_route() -> None:
     """And it is excluded above by name, so the exemption is one file, visible."""
-    assert sets_route_directly(RUNTIME_PACKAGE / "transitions.py")
+    assert sets_route_directly(ENGINE_PACKAGE / "transitions.py")
 
 
 # --------------------------------------------------------------------------
