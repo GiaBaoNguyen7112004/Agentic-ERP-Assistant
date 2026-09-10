@@ -1,9 +1,12 @@
-"""Two turns of one session, and the four claims the memory design has to survive.
+"""Two turns of one session, the short-term window, and the claims the memory
+design has to survive.
 
 The story: someone states a preference and asks a question, and in the same
 breath a project document tries to install a rule. The turn ends, the system
 decides what was worth keeping, and a second turn -- a new orchestrator, nothing
-carried in a variable but the ids -- is shown what survived.
+carried in a variable but the ids -- is shown what survived. Then a scripted
+second session shows the window's other half: turns it no longer has room for
+are folded into the session summary, not forgotten.
 
 What it proves, in order, against the real database and the real vector index:
 
@@ -18,6 +21,14 @@ What it proves, in order, against the real database and the real vector index:
    memory role, still carrying nothing citable.
 4. **Nothing is ever deleted.** What a newer record replaces is superseded, so
    the audit keeps both halves of "why did it stop believing that?".
+5. **The window carried turn 1 into turn 2**: turn 2's state shows turn 1
+   verbatim in the `history` role, its reply stripped of anything citation-shaped.
+6. **A turn pushed out of the window is promoted, not lost**: folded into the
+   session's `session_summary` through the compaction allow-list, the watermark
+   in `session_turns` names the run that folded it, and a `history_promoted`
+   event lands in the trace of the turn that caused the eviction. No summary
+   proposer is configured for this part, so the summary shown is the structural
+   fallback -- promotion does not depend on a model call.
 
 No LLM key is needed. The proposer is scripted -- it nominates exactly what a
 compliant model would nominate, including the poisoned sentence -- and the
@@ -46,12 +57,14 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 
+from agentic_erp_assistant.context.history_injection import HISTORY_TURN_LIMIT
 from agentic_erp_assistant.engine.orchestrator import RunOrchestrator
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime
 from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, MockErp
 from agentic_erp_assistant.llm.prompts import build_messages
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.llm.tools import ToolCallResult
+from agentic_erp_assistant.memory.conversation import ConversationMemory
 from agentic_erp_assistant.memory.models import MemoryCandidate, MemoryScope
 from agentic_erp_assistant.memory.qdrant_index import (
     DEFAULT_MEMORY_COLLECTION,
@@ -60,6 +73,7 @@ from agentic_erp_assistant.memory.qdrant_index import (
 from agentic_erp_assistant.memory.service import MemoryService
 from agentic_erp_assistant.persistence import (
     PostgresAuditLog,
+    PostgresConversationStore,
     PostgresMemoryAudit,
     PostgresMemoryStore,
     PostgresPauseStore,
@@ -157,7 +171,9 @@ class ScriptedModel:
         self.calls = 0
         self.last_memories: tuple[MemoryRecord, ...] = ()
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+    ):
         self.calls += 1
         self.last_memories = tuple(memories)
         return self.results[min(self.calls - 1, len(self.results) - 1)]
@@ -172,7 +188,7 @@ class FakeRetriever:
 
 
 class FakeComposer:
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return GroundedAnswer(
             answer="The cutover slipped two weeks after the vendor delay.",
             citations=[Citation(source_id="vendor-notes.md", locator="p.1")],
@@ -226,11 +242,17 @@ def qdrant_client(url: str | None) -> QdrantClient:
     return QdrantClient(url=resolved, api_key=api_key)
 
 
-def build(url: str | None, erp_path: Path, client: QdrantClient, session_id: str):
+def build(
+    url: str | None,
+    erp_path: Path,
+    client: QdrantClient,
+    session_id: str,
+    turn_limit: int = HISTORY_TURN_LIMIT,
+):
     """One process's worth of construction: its own connection, its own stores.
 
-    Called twice, and nothing crosses between the calls except the database, the
-    vector index and the ids -- which is the demo.
+    Called three times, and nothing crosses between the calls except the
+    database, the vector index and the ids -- which is the demo.
     """
     connection = connect(url)
     erp = MockErp.load(erp_path)
@@ -261,13 +283,19 @@ def build(url: str | None, erp_path: Path, client: QdrantClient, session_id: str
             "demo", project_code=PROJECT, session_id=session_id, scopes=SCOPES
         )
     )
+    conversation = ConversationMemory(
+        store=PostgresConversationStore(connection),
+        model="gpt-4o",
+        turn_limit=turn_limit,
+    )
     orchestrator = RunOrchestrator(
         runtime,
         PostgresTraceStore(connection),
         PostgresPauseStore(connection),
         memory=memory,
+        conversation=conversation,
     )
-    return orchestrator, memory, connection
+    return orchestrator, memory, conversation, connection
 
 
 def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -309,20 +337,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     client = qdrant_client(arguments.qdrant)
 
+    turn_one_request = (
+        "Please reply in Vietnamese from now on. How did the cutover go?"
+    )
     try:
-        first, memory, connection = build(arguments.url, erp_path, client, session_id)
+        first, memory, _, connection = build(arguments.url, erp_path, client, session_id)
     except StoreConnectionError as error:
         logger.error("%s", error)
         return 2
 
     # -- turn one: state a preference, and let the document try its luck ----
-    first.handle(
-        _turn(
-            session_id,
-            1,
-            "Please reply in Vietnamese from now on. How did the cutover go?",
-        )
-    )
+    first.handle(_turn(session_id, 1, turn_one_request))
 
     stored = connection.execute(
         "SELECT kind, key, statement FROM memories "
@@ -390,13 +415,29 @@ def main(argv: list[str] | None = None) -> int:
 
     # -- turn two: a new process is shown what survived ---------------------
     logger.info("--- claim 1, continued: a second turn is shown the preference ---")
-    second, _, _ = build(arguments.url, erp_path, client, session_id)
+    second, _, _, _ = build(arguments.url, erp_path, client, session_id)
     final = second.handle(_turn(session_id, 2, "And what is the budget position?"))
     if not final.memories:
         logger.error("nothing was recalled into turn two; the demo did not hold")
         return 3
     for record in final.memories:
         logger.info("  recalled  %-12s %s", record.kind, record.statement)
+
+    # -- claim 5: the window carried turn one into turn two -----------------
+    logger.info("--- claim 5: the window carried turn one into turn two ---")
+    if len(final.history) != 1 or final.history[0].request != turn_one_request:
+        logger.error(
+            "turn two was shown %d prior turn(s) rather than turn 1 verbatim; "
+            "the demo did not hold",
+            len(final.history),
+        )
+        return 3
+    previous = final.history[0]
+    logger.info("  shown verbatim: %s", previous.request)
+    logger.info(
+        "  its reply carries nothing citation-shaped: %s",
+        "[" not in (previous.response or "") and "#" not in (previous.response or ""),
+    )
 
     # -- claim 4: nothing is deleted ---------------------------------------
     live = connection.execute(
@@ -417,6 +458,47 @@ def main(argv: list[str] | None = None) -> int:
         retired,
     )
 
+    # -- claim 6: eviction feeds the summary --------------------------------
+    # A second session with a deliberately tiny window (turn_limit=2): from the
+    # third turn on, one older turn is evicted per turn and folded into the
+    # session summary. No summary proposer is configured anywhere in build(),
+    # so the summary that appears is the structural fallback.
+    promo_session = f"demo-promo-{uuid4().hex[:8]}"
+    third, _, _, _ = build(arguments.url, erp_path, client, promo_session, turn_limit=2)
+    for number in range(1, HISTORY_TURN_LIMIT + 2):
+        third.handle(_turn(promo_session, number, f"Follow-up question {number}."))
+
+    recorded, promoted = connection.execute(
+        "SELECT count(*), count(promoted_in_run) FROM session_turns "
+        "WHERE session_id = %s",
+        (promo_session,),
+    ).fetchone()
+    summaries = connection.execute(
+        "SELECT count(*) FROM memories WHERE session_id = %s AND "
+        "kind = 'session_summary' AND superseded_at IS NULL",
+        (promo_session,),
+    ).fetchone()[0]
+    events = connection.execute(
+        "SELECT count(*) FROM trace_events WHERE kind = 'history_promoted' "
+        "AND trace_id LIKE %s",
+        (f"{promo_session}%",),
+    ).fetchone()[0]
+    logger.info("--- claim 6: turns leaving the window are promoted, not lost ---")
+    logger.info(
+        "  %d turns recorded, %d promoted, %d still in the window",
+        recorded,
+        promoted,
+        recorded - promoted,
+    )
+    logger.info(
+        "  live session_summary rows: %d, folded by the structural fallback",
+        summaries,
+    )
+    logger.info("  %d history_promoted event(s) in the traces", events)
+    if promoted == 0 or summaries != 1:
+        logger.error("the promotion claim did not hold")
+        return 3
+
     logger.info("")
     logger.info("session %s. Read it back with:", session_id)
     logger.info(
@@ -427,6 +509,11 @@ def main(argv: list[str] | None = None) -> int:
     logger.info(
         "  SELECT decision, rejection, reason FROM memory_audit "
         "WHERE session_id = '%s' ORDER BY id;",
+        session_id,
+    )
+    logger.info(
+        "  SELECT trace_id, request, promoted_in_run FROM session_turns "
+        "WHERE session_id = '%s' ORDER BY started_at;",
         session_id,
     )
     return 0
