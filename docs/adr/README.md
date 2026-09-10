@@ -25,6 +25,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0011](0011-memory-is-written-after-the-turn-by-a-pure-policy.md) | Memory is written after the turn, and only a pure policy may write it | Accepted |
 | [0012](0012-memory-is-context-and-never-a-citation.md) | Memory is context in a role of its own, and can never be a citation | Accepted |
 | [0013](0013-postgres-is-the-memory-record-and-graph-memory-is-rejected.md) | Postgres is the memory record, Qdrant indexes it, and graph memory is rejected | Accepted |
+| [0014](0014-short-term-memory-is-a-verbatim-window-and-eviction-feeds-the-summary.md) | Short-term memory is a verbatim window, and eviction feeds the summary | Accepted |
 
 ## Format
 
