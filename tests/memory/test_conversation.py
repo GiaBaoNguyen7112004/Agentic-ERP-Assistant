@@ -260,3 +260,11 @@ def test_promoted_is_a_no_op_on_nothing() -> None:
     memory = bound()
 
     memory.promoted((), run="run-5")  # must not raise
+
+
+def test_the_service_is_what_the_orchestrator_expects() -> None:
+    """ConversationMemory satisfies the orchestrator's port structurally --
+    neither side imports the other, the arrangement every port here uses."""
+    from agentic_erp_assistant.engine.orchestrator import SessionHistoryPort
+
+    assert isinstance(bound(), SessionHistoryPort)
