@@ -12,7 +12,7 @@ What lives here and why nothing else does:
 
 * :mod:`~agentic_erp_assistant.persistence.connection` opens connections and
   turns every way opening one can fail into one typed error.
-* :mod:`~agentic_erp_assistant.persistence.schema` is the eight tables as
+* :mod:`~agentic_erp_assistant.persistence.schema` is the nine tables as
   hand-written DDL, applied by an explicit script -- nothing migrates on
   connect.
 * The adapters satisfy the ports structurally, with no import of the
@@ -32,6 +32,9 @@ from agentic_erp_assistant.persistence.connection import (
     url_from_environment,
 )
 from agentic_erp_assistant.persistence.postgres_audit import PostgresAuditLog
+from agentic_erp_assistant.persistence.postgres_conversation import (
+    PostgresConversationStore,
+)
 from agentic_erp_assistant.persistence.postgres_memory import (
     PostgresMemoryAudit,
     PostgresMemoryStore,
@@ -47,6 +50,7 @@ from agentic_erp_assistant.persistence.schema import (
 __all__ = [
     "DEFAULT_POSTGRES_URL",
     "PostgresAuditLog",
+    "PostgresConversationStore",
     "PostgresMemoryAudit",
     "PostgresMemoryStore",
     "PostgresPauseStore",

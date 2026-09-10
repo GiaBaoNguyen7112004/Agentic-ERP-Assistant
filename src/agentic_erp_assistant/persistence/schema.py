@@ -1,9 +1,9 @@
-"""The evidence schema: eight tables, as hand-written DDL.
+"""The evidence schema: nine tables, as hand-written DDL.
 
 Design rules, so a reviewer can argue with each of them:
 
 * **Plain SQL, no ORM, no migration framework.** The repo's rule is that a
-  plain SDK is enough wherever one is enough, and eight tables with no join
+  plain SDK is enough wherever one is enough, and nine tables with no join
   inheritance are well under that line. The cost -- schema changes are made
   here and re-applied by ``scripts/init_postgres.py`` -- buys a schema a
   reviewer reads in one screen, the same trade
@@ -52,6 +52,7 @@ from agentic_erp_assistant.memory.models import (
     MemoryDecisionKind,
     RejectionReason,
 )
+from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.events import EventKind
 from agentic_erp_assistant.state.memory import MemoryKind
@@ -59,7 +60,9 @@ from agentic_erp_assistant.state.tool_outcome import ToolStatus
 
 __all__ = [
     "APPROVALS",
+    "DECISION_ROUTES",
     "EVENT_KINDS",
+    "FAILURE_MODES",
     "INTENT_STATUSES",
     "MEMORY_DECISIONS",
     "MEMORY_KINDS",
@@ -90,6 +93,8 @@ MEMORY_KINDS: tuple[str, ...] = get_args(MemoryKind)
 MEMORY_DECISIONS: tuple[str, ...] = get_args(MemoryDecisionKind)
 REJECTION_REASONS: tuple[str, ...] = get_args(RejectionReason)
 INTENT_STATUSES: tuple[str, ...] = get_args(IntentStatus)
+DECISION_ROUTES: tuple[str, ...] = get_args(DecisionRoute)
+FAILURE_MODES: tuple[str, ...] = get_args(FailureMode)
 
 _SCHEMA_TEMPLATE = f"""
 CREATE TABLE IF NOT EXISTS runs (
@@ -108,10 +113,22 @@ CREATE TABLE IF NOT EXISTS trace_events (
     seq integer NOT NULL,
     node text NOT NULL,
     kind text NOT NULL
-        CHECK (kind IN ({_sql_list(EVENT_KINDS)})),
+        CONSTRAINT trace_events_kind_check CHECK (kind IN ({_sql_list(EVENT_KINDS)})),
     detail text NOT NULL DEFAULT '',
     PRIMARY KEY (trace_id, seq)
 );
+
+-- EventKind is a closed set that has grown before (history_recalled,
+-- history_promoted) and will again. CREATE TABLE IF NOT EXISTS never touches
+-- an existing constraint, so on a database initialised before a growth the
+-- old CHECK would silently keep rejecting the new members forever -- and
+-- trace_events.save_run is the one store call an unsaved run cannot survive.
+-- Naming the constraint above and re-applying it here on every init run is
+-- what makes that growth a schema update instead of a silent split between
+-- "databases initialised before" and "after".
+ALTER TABLE trace_events DROP CONSTRAINT IF EXISTS trace_events_kind_check;
+ALTER TABLE trace_events ADD CONSTRAINT trace_events_kind_check
+    CHECK (kind IN ({_sql_list(EVENT_KINDS)}));
 
 CREATE TABLE IF NOT EXISTS audit_rows (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -230,6 +247,27 @@ CREATE TABLE IF NOT EXISTS memory_audit (
 CREATE INDEX IF NOT EXISTS memory_audit_by_run ON memory_audit (trace_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_session ON memory_audit (session_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_decision ON memory_audit (decision);
+
+CREATE TABLE IF NOT EXISTS session_turns (
+    trace_id text PRIMARY KEY,
+    session_id text NOT NULL,
+    actor text NOT NULL,
+    request text NOT NULL,
+    response text,
+    route text
+        CHECK (route IS NULL OR route IN ({_sql_list(DECISION_ROUTES)})),
+    failure text NOT NULL
+        CHECK (failure IN ({_sql_list(FAILURE_MODES)})),
+    tool_name text,
+    approval text NOT NULL
+        CHECK (approval IN ({_sql_list(APPROVALS)})),
+    started_at timestamptz NOT NULL,
+    finished_at timestamptz NOT NULL,
+    promoted_in_run text
+);
+
+CREATE INDEX IF NOT EXISTS session_turns_by_session
+    ON session_turns (session_id, actor, started_at);
 """
 
 SCHEMA_STATEMENTS: tuple[str, ...] = tuple(

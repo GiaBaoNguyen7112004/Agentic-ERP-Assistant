@@ -265,7 +265,7 @@ class FakeComposer:
     def __init__(self, answer_text: str = "M2 is on track.") -> None:
         self.answer_text = answer_text
 
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return {"answer": self.answer_text, "evidence": tuple(evidence)}
 
 

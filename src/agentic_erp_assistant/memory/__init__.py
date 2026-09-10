@@ -40,6 +40,12 @@ from agentic_erp_assistant.memory.audit import (
     MemoryAuditRow,
     MemoryAuditSink,
 )
+from agentic_erp_assistant.memory.conversation import (
+    ConversationMemory,
+    ConversationStorePort,
+    InMemoryConversationStore,
+    PROMOTION_BATCH,
+)
 from agentic_erp_assistant.memory.extractor import (
     LLMMemoryProposer,
     MemoryProposerPort,
@@ -62,6 +68,16 @@ from agentic_erp_assistant.memory.models import (
     memory_id,
 )
 from agentic_erp_assistant.memory.policy import decide, unsafe_to_store
+from agentic_erp_assistant.memory.promotion import (
+    LLMSessionSummaryProposer,
+    MAX_ITEMS_PER_SECTION,
+    PROPOSABLE_SECTIONS,
+    PROPOSE_SESSION_SUMMARY_TOOL,
+    SessionSummaryProposal,
+    SessionSummaryProposerPort,
+    conversation_state,
+    structural_state,
+)
 from agentic_erp_assistant.memory.store import (
     InMemoryMemoryStore,
     IntentStorePort,
@@ -76,6 +92,9 @@ from agentic_erp_assistant.memory.vector_store import (
 
 __all__ = [
     "ACTOR_BOUNDED_KINDS",
+    "ConversationMemory",
+    "ConversationStorePort",
+    "InMemoryConversationStore",
     "InMemoryMemoryAudit",
     "InMemoryMemoryStore",
     "InMemoryMemoryVectorStore",
@@ -83,6 +102,8 @@ __all__ = [
     "IntentStatus",
     "IntentStorePort",
     "LLMMemoryProposer",
+    "LLMSessionSummaryProposer",
+    "MAX_ITEMS_PER_SECTION",
     "MemoryAuditRow",
     "MemoryAuditSink",
     "MemoryCandidate",
@@ -94,15 +115,22 @@ __all__ = [
     "MemoryScope",
     "MemoryStorePort",
     "MemoryVectorStorePort",
+    "PROMOTION_BATCH",
+    "PROPOSABLE_SECTIONS",
     "PROPOSE_MEMORIES_TOOL",
+    "PROPOSE_SESSION_SUMMARY_TOOL",
     "REASON_MAX_CHARS",
     "RejectionReason",
     "SESSION_BOUNDED_KINDS",
     "ScoredMemory",
+    "SessionSummaryProposal",
+    "SessionSummaryProposerPort",
     "bounds",
+    "conversation_state",
     "decide",
     "in_bounds",
     "memory_id",
+    "structural_state",
     "summarize_session",
     "unsafe_to_store",
 ]

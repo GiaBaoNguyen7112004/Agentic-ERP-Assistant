@@ -24,6 +24,15 @@ from agentic_erp_assistant.context.compact import (
     SUMMARY_UNAVAILABLE,
     Summarizer,
 )
+from agentic_erp_assistant.context.history_injection import (
+    CLIP_MARKER,
+    HISTORY_BUDGET_TOKENS,
+    HISTORY_TURN_LIMIT,
+    HistorySelection,
+    clip_to_tokens,
+    select_history,
+    strip_citations,
+)
 from agentic_erp_assistant.context.memory_injection import (
     KIND_PRIORITY,
     MemorySelection,
@@ -35,6 +44,7 @@ from agentic_erp_assistant.context.memory_injection import (
 
 __all__ = [
     "CandidateKind",
+    "CLIP_MARKER",
     "CompactedConversation",
     "compact_conversation",
     "ContextBuilder",
@@ -42,13 +52,19 @@ __all__ = [
     "ContextPlan",
     "ExcludedCandidate",
     "ExclusionReason",
+    "HISTORY_BUDGET_TOKENS",
+    "HISTORY_TURN_LIMIT",
+    "HistorySelection",
+    "clip_to_tokens",
     "KIND_PRIORITY",
     "MemorySelection",
     "PINNED_KINDS",
     "PRESERVED_FIELDS",
+    "select_history",
     "select_memories",
     "SkippedMemory",
     "SkipReason",
+    "strip_citations",
     "structural_summary",
     "SUMMARY_MAX_CHARS",
     "SUMMARY_UNAVAILABLE",

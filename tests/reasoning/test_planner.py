@@ -6,6 +6,8 @@ provider, no HTTP, no prompt: the point of the port is that this file needs
 none of them.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from agentic_erp_assistant.llm.tools import (
@@ -20,6 +22,7 @@ from agentic_erp_assistant.reasoning.planner import (
     UNSCORED_CONFIDENCE,
 )
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
@@ -30,9 +33,20 @@ class ScriptedModel:
     def __init__(self, *results: ToolCallResult) -> None:
         self.results = list(results)
         self.calls: list[tuple] = []
+        self.history_calls: list[tuple] = []
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+    ):
         self.calls.append((question, tuple(evidence), tuple(observations), tuple(tools)))
+        self.history_calls.append(tuple(history))
         return self.results[min(len(self.calls) - 1, len(self.results) - 1)]
 
 
@@ -181,6 +195,27 @@ def test_the_model_sees_the_whole_turn_and_not_just_the_question() -> None:
     assert evidence == (snippet,)
     assert observations == (outcome,)
     assert offered == PLANNING_TOOLS
+
+
+def test_the_model_is_shown_the_history_on_the_state() -> None:
+    turn = ConversationTurn(
+        trace_id="run-0",
+        session_id="sess-1",
+        actor="bao",
+        request="How is M2 tracking?",
+        response="On track.",
+        route="answer",
+        started_at=datetime(2026, 9, 8, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 8, tzinfo=UTC),
+    )
+
+    _, model = plan_for(
+        ToolCallResult.from_content("Still on track."),
+        session_id="sess-1",
+        history=(turn,),
+    )
+
+    assert model.history_calls[0] == (turn,)
 
 
 def test_the_rationale_states_what_was_chosen_and_not_a_reported_thought() -> None:

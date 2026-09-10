@@ -49,6 +49,7 @@ from agentic_erp_assistant.llm.telemetry import (
 )
 from agentic_erp_assistant.llm.tokenizer import TiktokenCounter, TokenCounter
 from agentic_erp_assistant.llm.tools import PLANNING_TOOLS, ToolCallResult, ToolSpec
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
@@ -149,6 +150,7 @@ class LLMGateway:
         question: str,
         evidence: Evidence,
         memories: Sequence[MemoryRecord] = (),
+        history: Sequence[ConversationTurn] = (),
         *,
         temperature: float = 0.0,
     ) -> GroundedAnswer:
@@ -163,6 +165,10 @@ class LLMGateway:
                 about how to reply -- and it cannot become a citation, since a
                 memory has no locator and the caller checks every citation
                 against the evidence actually retrieved.
+            history: The session's recent turns, already clipped and budgeted.
+                Reaches the answering call for the same reason memory does: an
+                answer resolving a follow-up needs the antecedent it was
+                resolved against, and it cannot become a citation either.
             temperature: Defaults to 0.0. A grounded answer is not a place for
                 variety, and a reproducible trace is worth more here than range.
 
@@ -181,7 +187,7 @@ class LLMGateway:
             ValueError: ``question`` is blank (from ``build_messages``).
         """
         # 1. Build.
-        messages = build_messages(question, _as_snippets(evidence), memories)
+        messages = build_messages(question, _as_snippets(evidence), memories, history)
 
         # 2. Budget, before anything is sent.
         estimated = self.counter.count_message_tokens(
@@ -251,6 +257,7 @@ class LLMGateway:
         evidence: Evidence = (),
         observations: Sequence[ToolOutcome] = (),
         memories: Sequence[MemoryRecord] = (),
+        history: Sequence[ConversationTurn] = (),
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
@@ -274,6 +281,7 @@ class LLMGateway:
             observations: What this turn's calls have returned, in order.
             memories: What recall selected for this turn, already filtered and
                 budgeted -- never everything that is stored.
+            history: The session's recent turns, already clipped and budgeted.
             tools: What to offer. Defaults to
                 :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS`.
             temperature: 0.0. A routing decision is not a place for variety.
@@ -293,7 +301,7 @@ class LLMGateway:
         """
         return self.call_tools(
             build_planner_messages(
-                question, _as_snippets(evidence), observations, memories
+                question, _as_snippets(evidence), observations, memories, history
             ),
             tools=tools,
             temperature=temperature,

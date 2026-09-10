@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime, is_paused
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.trace.ports import PauseStore, TraceStore
@@ -99,8 +100,20 @@ class TurnMemoryPort(Protocol):
         """What this turn should be shown. May be empty, and usually is."""
         ...
 
-    def consolidate(self, state: AgentState) -> Sequence["MemoryDecision"]:
+    def consolidate(
+        self, state: AgentState, *, evicted: Sequence[ConversationTurn] = ()
+    ) -> Sequence["MemoryDecision"]:
         """What the finished turn was worth, decided and written down.
+
+        Args:
+            state: The turn, terminal.
+            evicted: Turns the short-term window no longer has room for, once
+                this one joins it. Folded into the session summary when
+                non-empty; see
+                :mod:`agentic_erp_assistant.memory.promotion`. The orchestrator
+                supplies this from
+                :meth:`~agentic_erp_assistant.memory.conversation.ConversationMemory.evicted`,
+                not from ``state``.
 
         Returns every decision, refusals included: a run that refused four
         proposals and kept one is a run where the policy worked, and it must not

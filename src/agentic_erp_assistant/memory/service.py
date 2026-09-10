@@ -42,11 +42,14 @@ slot from the abandoned task answering a question about the new one. So the
 decision belongs to the layer that has the whole conversation, and the machinery
 is finished and tested for when that layer arrives.
 
-**What a session amounts to.** :meth:`SessionMemory.consolidate` takes an
-optional conversation state and summarizes it when one is given. Nothing
-produces that state yet; the compaction allow-list is fed by a caller that does
-not exist. The seam is here so the summary lands with everything else when it
-does.
+**What a session amounts to**, is decided in
+:mod:`agentic_erp_assistant.memory.promotion`, not here.
+:meth:`SessionMemory.consolidate` takes the turns
+:class:`~agentic_erp_assistant.memory.conversation.ConversationMemory` has
+evicted from the short-term window and, when there are any, folds them into
+the session's one summary -- a model may propose what they are worth, and only
+:func:`~agentic_erp_assistant.memory.promotion.conversation_state` and the
+allow-list decide what of that survives.
 """
 
 import logging
@@ -75,11 +78,17 @@ from agentic_erp_assistant.memory.models import (
     memory_id,
 )
 from agentic_erp_assistant.memory.policy import decide
+from agentic_erp_assistant.memory.promotion import (
+    SessionSummaryProposal,
+    SessionSummaryProposerPort,
+    conversation_state,
+)
 from agentic_erp_assistant.memory.store import MemoryStorePort
 from agentic_erp_assistant.memory.summary import SESSION_SUMMARY_KEY, summarize_session
 from agentic_erp_assistant.memory.vector_store import MemoryVectorStorePort
 from agentic_erp_assistant.rag.ports import EmbeddingsPort
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import MemoryRecord
 
 __all__ = [
@@ -191,6 +200,13 @@ class MemoryService:
     step entirely -- recall and the intent operations still work, which is the
     configuration a deployment uses while it decides whether the model call is
     worth its cost."""
+
+    summary_proposer: SessionSummaryProposerPort | None = None
+    """What nominates a session summary for turns leaving the short-term
+    window. ``None`` is a complete configuration, not a degraded one: a
+    session still gets a summary written for it, folded structurally by
+    :func:`~agentic_erp_assistant.memory.promotion.structural_state` alone --
+    see that module for what code can say with no model involved."""
 
     audit: MemoryAuditSink = field(default_factory=InMemoryMemoryAudit)
     """Where every decision is written down. Defaults to the in-memory sink for
@@ -328,7 +344,7 @@ class SessionMemory:
         self,
         state: AgentState,
         *,
-        conversation: Mapping[str, object] | None = None,
+        evicted: Sequence[ConversationTurn] = (),
     ) -> tuple[MemoryDecision, ...]:
         """Decide what the finished turn was worth, and write all of it down.
 
@@ -336,16 +352,18 @@ class SessionMemory:
             state: The turn, terminal. Consolidating a paused turn would store
                 facts from a decision nobody has made yet, which is why the
                 caller checks first.
-            conversation: The session's durable state, if the caller keeps any.
-                When given, the session summary is refreshed from it through the
-                compaction allow-list. ``None`` skips that step -- see the module
-                docstring on what does not exist yet.
+            evicted: Turns the short-term window no longer has room for, once
+                this one joins it -- see
+                :meth:`~agentic_erp_assistant.memory.conversation.ConversationMemory.evicted`.
+                When non-empty, they are folded into the session's summary
+                through :mod:`agentic_erp_assistant.memory.promotion`. Empty is
+                the common case and skips that step entirely.
 
         Returns:
             One decision per candidate, in the order they were proposed, with
-            the summary's own decision appended when there was one. Rejections
-            are included: they are the half of the record that shows the policy
-            working.
+            the summary's own decision appended when ``evicted`` was
+            non-empty. Rejections are included: they are the half of the
+            record that shows the policy working.
         """
         decisions: list[MemoryDecision] = []
         stored: list[MemoryRecord] = []
@@ -373,7 +391,17 @@ class SessionMemory:
             retired.extend(verdict.supersedes)
             self._audit(state, verdict, candidate.kind, identifier, candidate.statement)
 
-        summary = self._summarize(state, conversation)
+        summary, verdict = self._promote(state, evicted)
+        if verdict is not None:
+            decisions.append(verdict)
+            self._audit(
+                state,
+                verdict,
+                "session_summary",
+                summary.memory_id if summary is not None
+                else f"summary-{self.scope.session_id}-{state.trace_id}",
+                summary.statement if summary is not None else "",
+            )
         if summary is not None:
             self.service.store.write(summary)
             stored.append(summary)
@@ -408,6 +436,74 @@ class SessionMemory:
             )
             return ()
 
+    def _promote(
+        self, state: AgentState, evicted: Sequence[ConversationTurn]
+    ) -> tuple[MemoryRecord | None, MemoryDecision | None]:
+        """Fold evicted turns into the session summary, or do nothing.
+
+        Returns:
+            ``(None, None)`` when ``evicted`` is empty -- there is nothing to
+            ask about and nothing to decide. Otherwise a record to write (or
+            ``None`` if nothing durable survived the allow-list and the safety
+            check) paired with the :class:`~agentic_erp_assistant.memory.models.MemoryDecision`
+            that explains it.
+        """
+        if not evicted:
+            return None, None
+
+        previous = next(
+            (
+                record
+                for record in self.service.store.live(
+                    self.scope, kinds=("session_summary",)
+                )
+                if record.key == SESSION_SUMMARY_KEY
+            ),
+            None,
+        )
+        proposal = self._summary_proposal(state, evicted, previous)
+        mapping = conversation_state(evicted, proposal)
+        summary = self._summarize(
+            state, mapping, links=[turn.trace_id for turn in evicted]
+        )
+
+        if summary is None:
+            return None, MemoryDecision(
+                decision="reject",
+                rejection="not_relevant",
+                reason=f"no durable residue in {len(evicted)} evicted turn(s)",
+            )
+
+        decision = "update" if summary.supersedes else "write"
+        return summary, MemoryDecision(
+            decision=decision,
+            supersedes=summary.supersedes,
+            reason=f"session summary folded {len(evicted)} evicted turn(s)",
+        )
+
+    def _summary_proposal(
+        self,
+        state: AgentState,
+        evicted: Sequence[ConversationTurn],
+        previous: MemoryRecord | None,
+    ) -> SessionSummaryProposal | None:
+        """Ask the session-summary proposer, treating any failure as "nothing
+        to add" -- the same severity judgement :meth:`_proposals` makes."""
+        if self.service.summary_proposer is None:
+            return None
+        try:
+            return self.service.summary_proposer.propose(evicted, previous=previous)
+        except Exception as error:  # noqa: BLE001 - see above
+            logger.warning(
+                "the session summary proposer failed on run %s (%s: %s); "
+                "folding %d evicted turn(s) structurally instead",
+                state.trace_id,
+                type(error).__name__,
+                error,
+                len(evicted),
+            )
+            return None
+
     def _record(
         self,
         candidate: MemoryCandidate,
@@ -432,7 +528,11 @@ class SessionMemory:
         )
 
     def _summarize(
-        self, state: AgentState, conversation: Mapping[str, object] | None
+        self,
+        state: AgentState,
+        conversation: Mapping[str, object] | None,
+        *,
+        links: Sequence[str] = (),
     ) -> MemoryRecord | None:
         """Refresh this session's summary, superseding the previous one."""
         if conversation is None:
@@ -453,6 +553,7 @@ class SessionMemory:
             recorded_in_run=state.trace_id,
             recorded_at=self.service.now(),
             supersedes=tuple(sorted(previous)),
+            links=tuple(links),
         )
 
     def _retire(self, memory_ids: Sequence[str], state: AgentState) -> None:

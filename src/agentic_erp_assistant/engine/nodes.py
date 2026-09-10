@@ -316,7 +316,9 @@ class GraphNodes:
             )
 
         try:
-            answer = self.composer.answer(state.request, snippets, state.memories)
+            answer = self.composer.answer(
+                state.request, snippets, state.memories, state.history
+            )
         except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
             logger.warning("composer failed on %s: %s", state.trace_id, error)
             return advance(

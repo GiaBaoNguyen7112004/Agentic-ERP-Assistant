@@ -65,7 +65,9 @@ class ScriptedModel:
         self.results = list(results)
         self.calls = 0
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+    ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
@@ -82,7 +84,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return self.answer_value
 
 
@@ -270,13 +272,15 @@ class RecordingMemory:
         self.decisions = decisions
         self.recalls: list[AgentState] = []
         self.consolidations: list[AgentState] = []
+        self.evicted_seen: list[tuple] = []
 
     def recall(self, state):
         self.recalls.append(state)
         return self.recalled
 
-    def consolidate(self, state):
+    def consolidate(self, state, *, evicted=()):
         self.consolidations.append(state)
+        self.evicted_seen.append(tuple(evicted))
         return self.decisions
 
 
@@ -284,7 +288,7 @@ class BrokenMemory:
     def recall(self, state):
         raise RuntimeError("the store is unreachable")
 
-    def consolidate(self, state):
+    def consolidate(self, state, *, evicted=()):
         raise RuntimeError("the store is unreachable")
 
 

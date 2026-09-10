@@ -214,6 +214,7 @@ def summarize_session(
     recorded_in_run: str,
     recorded_at: datetime,
     supersedes: Sequence[str] = (),
+    links: Sequence[str] = (),
 ) -> MemoryRecord | None:
     """Project a compacted conversation into one durable memory, or nothing.
 
@@ -234,6 +235,10 @@ def summarize_session(
         recorded_at: When.
         supersedes: The previous summary for this session, if there is one. A
             session has one summary that gets replaced, not a stack of them.
+        links: The trace ids of whatever this summary was built from, if the
+            caller has any to name -- see
+            :mod:`agentic_erp_assistant.memory.promotion`, which folds evicted
+            turns and names them here so the record says which turns it folded.
 
     Returns:
         The record, or ``None`` when nothing durable survived -- an empty
@@ -261,4 +266,5 @@ def summarize_session(
         recorded_at=recorded_at,
         confidence=1.0,
         supersedes=tuple(supersedes),
+        links=tuple(links),
     )

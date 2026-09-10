@@ -43,6 +43,7 @@ from agentic_erp_assistant.llm.tools import (
 )
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, ReasoningDecision
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
@@ -103,6 +104,7 @@ class DecisionModel(Protocol):
         evidence: Sequence[EvidenceSnippet] = (),
         observations: Sequence[ToolOutcome] = (),
         memories: Sequence[MemoryRecord] = (),
+        history: Sequence[ConversationTurn] = (),
         *,
         tools: Sequence[ToolSpec] = ...,
     ) -> ToolCallResult:
@@ -135,10 +137,11 @@ class Planner:
         """Decide the next action for ``state``.
 
         Args:
-            state: The turn as it stands. Its request, evidence, observations and
-                recalled memories are what the model is shown -- all four read
-                off the one object, so a routing decision can never be made
-                against a view somebody assembled inconsistently.
+            state: The turn as it stands. Its request, evidence, observations,
+                recalled memories and recent history are what the model is
+                shown -- all five read off the one object, so a routing
+                decision can never be made against a view somebody assembled
+                inconsistently.
 
         Returns:
             A :class:`ReasoningDecision`. Every path returns one -- a choice
@@ -162,6 +165,7 @@ class Planner:
             state.evidence,
             state.observations,
             state.memories,
+            state.history,
             tools=self.tools,
         )
 

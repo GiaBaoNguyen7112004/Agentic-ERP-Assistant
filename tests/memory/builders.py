@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 
 from agentic_erp_assistant.memory.intent import IntentState
 from agentic_erp_assistant.memory.models import MemoryScope
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import MemoryRecord
 
 RECORDED = datetime(2026, 9, 8, 9, 0, tzinfo=UTC)
@@ -49,6 +50,21 @@ def make_record(**overrides: object) -> MemoryRecord:
     }
     fields.update(overrides)
     return MemoryRecord(**fields)  # type: ignore[arg-type]
+
+
+def make_turn(**overrides: object) -> ConversationTurn:
+    fields: dict[str, object] = {
+        "trace_id": "run-1",
+        "session_id": "sess-1",
+        "actor": "priya",
+        "request": "How is M2 tracking?",
+        "response": "On track.",
+        "route": "answer",
+        "started_at": RECORDED,
+        "finished_at": RECORDED,
+    }
+    fields.update(overrides)
+    return ConversationTurn(**fields)  # type: ignore[arg-type]
 
 
 def make_intent(**overrides: object) -> IntentState:

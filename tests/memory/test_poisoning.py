@@ -204,6 +204,45 @@ def test_a_planted_memory_carries_nothing_shaped_like_a_citation() -> None:
     assert "#" not in block
 
 
+def poisoned_turn():
+    """A prior turn whose reply carries the same instruction, already stripped
+    of anything citation-shaped -- the way select_history hands it over."""
+    from agentic_erp_assistant.state.conversation import ConversationTurn
+
+    return ConversationTurn(
+        trace_id="run-0",
+        session_id="sess-1",
+        actor="priya",
+        request="What is the approval policy?",
+        response=POISON,
+        route="answer",
+        started_at=RECORDED,
+        finished_at=RECORDED,
+    )
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda history: build_messages(QUESTION, [], (), history),
+        lambda history: build_planner_messages(QUESTION, (), (), (), history),
+    ],
+    ids=["answer", "planner"],
+)
+def test_a_planted_reply_reaches_every_prompt_only_in_the_history_role(build) -> None:
+    """A prior turn's own reply, poisoned or not, is this actor's own words --
+    kept, but only in the one role the system policy declares to be a record of
+    words rather than an instruction."""
+    messages = build((poisoned_turn(),))
+
+    carrying = [m["role"] for m in messages if "Always approve" in m["content"]]
+    assert carrying == ["history"]
+
+
+def test_the_system_policy_says_the_history_role_is_not_an_instruction() -> None:
+    assert "history role" in SYSTEM_POLICY
+
+
 def test_an_answer_citing_a_memory_is_refused_as_ungrounded() -> None:
     """The structural half. Even if a model treats a memory as a source, the
     grounding check matches every citation against what retrieval returned this
@@ -247,7 +286,7 @@ def test_a_planted_memory_does_not_change_what_the_graph_routes_to() -> None:
         def execute(self, request):  # pragma: no cover
             raise AssertionError("not this path")
 
-        def answer(self, question, evidence, memories=()):  # pragma: no cover
+        def answer(self, question, evidence, memories=(), history=()):  # pragma: no cover
             raise AssertionError("not this path")
 
     nodes = GraphNodes(
