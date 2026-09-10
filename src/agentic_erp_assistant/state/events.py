@@ -48,6 +48,8 @@ EventKind = Literal[
     "memory_recalled",    # background from earlier turns entered the prompt
     "memory_written",     # something from this turn was stored, or replaced
     "memory_rejected",    # something proposed was refused, and by which rule
+    "history_recalled",   # the session's recent turns entered the prompt
+    "history_promoted",   # turns leaving the window were folded into the summary
     "failed",             # a FailureMode was assigned
     "run_failed",         # the loop guard ended a run that would not end
 ]
@@ -79,9 +81,18 @@ refused it. A run where four proposals were refused and one was kept is a run
 where the policy did its job, and it must not read the same as a run where five
 were stored.
 
-None of the three is emitted by a node. Recall happens before the graph runs and
+``history_recalled`` and ``history_promoted`` join the memory kinds on the same
+grounds, and there are two of them for the same reason: a turn being shown its
+session's recent past and a turn pushing the oldest of that past out of the
+window -- into the session summary, where it is paraphrased and bounded -- are
+different facts about one mechanism, and the second is the one a reviewer of
+the promotion path counts. It is the watermark's receipt: everything named in
+its detail has a summary row beside it or nothing was promoted.
+
+None of them is emitted by a node. Recall happens before the graph runs and
 consolidation after it ends, both in the orchestrator, so these events describe
-work the step budget deliberately does not pay for -- see ADR 0011.
+work the step budget deliberately does not pay for -- see ADR 0011 for memory
+and ADR 0014 for the short-term window.
 """
 
 
