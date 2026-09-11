@@ -18,7 +18,7 @@ from agentic_erp_assistant.llm.tools import (
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.tool_request import ToolRequest
 from agentic_erp_assistant.tools.gateway import GATEWAY_NODE, ToolGateway
-from agentic_erp_assistant.tools.handlers import HandlerResult
+from agentic_erp_assistant.tools.handlers import build_handlers, HandlerResult
 from agentic_erp_assistant.tools.models import (
     ExecutionContext,
     ToolError,
@@ -596,6 +596,7 @@ def limited(
     scope: str = "project.status.read",
     approval_required: bool = False,
     retry: RetryPolicy = NO_RETRY,
+    project_argument: str | None = None,
 ) -> ToolDefinition:
     """One tool whose only unusual policy is a budget small enough to hit."""
     return ToolDefinition(
@@ -605,6 +606,7 @@ def limited(
         timeout_seconds=5.0,
         retry=retry,
         rate_limit=RateLimitPolicy(max_calls=max_calls, per_seconds=per_seconds),
+        project_argument=project_argument,
         handler=handler,  # type: ignore[arg-type]
     )
 
@@ -876,4 +878,209 @@ def test_the_write_is_budgeted_more_tightly_than_the_reads(erp: MockErp) -> None
         registry.get("create_risk").rate_limit.max_calls
         < registry.get("list_risks").rate_limit.max_calls
     )
+
+
+# --------------------------------------------------------------------------
+# The project check: a call cannot name a project its actor is not bound to
+# --------------------------------------------------------------------------
+
+
+def test_a_call_naming_another_project_is_denied_before_the_handler(
+    gateway: ToolGateway, erp: MockErp
+) -> None:
+    before = len(erp.risks_for("orion"))
+
+    outcome = gateway.execute(
+        call("list_risks", {"project_id": "orion"})  # actor is bound to atlas
+    )
+
+    assert outcome.status == "denied"
+    assert "orion" in (outcome.error or "")
+    assert "atlas" in (outcome.error or "")
+    assert len(erp.risks_for("orion")) == before
+
+
+def test_the_project_mismatch_still_produces_an_audit_row(
+    gateway: ToolGateway, erp: MockErp
+) -> None:
+    """A denied write is still a gated call, and the audit trail is where a
+    reviewer would look for "who tried to touch another project"."""
+    gateway.execute(new_risk({"project_id": "orion", "title": "x", "severity": "low"}))
+
+    (row,) = gateway.audit.rows  # type: ignore[union-attr]
+    assert (row.approval, row.status) == ("not_required", "denied")
+
+
+def test_a_tool_with_no_project_argument_is_not_checked_this_way(
+    gateway: ToolGateway,
+) -> None:
+    """get_project_status names a milestone, not a project -- ids are unique
+    across the fixture, so there is nothing here to compare against. The
+    project boundary for this tool is enforced by the view instead (see
+    tests/erp/test_mock.py)."""
+    outcome = gateway.execute(call("get_project_status", {"milestone_id": "M2"}))
+
+    assert outcome.status == "ok"
+
+
+def test_every_gated_tool_refuses_or_hides_another_projects_data(
+    erp: MockErp,
+) -> None:
+    """The drift test: for every tool in the default registry, a call bound
+    to orion asking about atlas either is denied at the gateway (a
+    project_argument tool) or reads as nonexistent through the view (one
+    that has none) -- no path returns another project's data."""
+    registry = build_default_registry(erp)
+    gateway = ToolGateway(registry)
+    arguments_by_tool: dict[str, dict[str, object]] = {
+        "get_project_status": {"milestone_id": "M2"},  # atlas's milestone
+        "get_project_status_flaky": {"milestone_id": "M2"},
+        "get_sprint_progress": {"sprint_id": "SPR-12"},  # atlas's sprint
+        "get_budget_summary": {"project_id": "atlas", "include_forecast": False},
+        "list_risks": {"project_id": "atlas"},
+        "create_risk": {
+            "project_id": "atlas",
+            "title": "should never land",
+            "severity": "low",
+        },
+    }
+
+    for name in registry.names():
+        outcome = gateway.execute(
+            call(
+                name,
+                arguments_by_tool[name],
+                project_code="orion",
+                approval="approved",
+            )
+        )
+        if registry.get(name).project_argument is not None:
+            assert outcome.status == "denied", name
+        else:
+            assert outcome.status == "failed", name
+            assert "atlas" not in (outcome.summary or "")
+
+
+# --------------------------------------------------------------------------
+# preflight: every check before execution, and nothing that is execution
+# --------------------------------------------------------------------------
+
+
+def test_preflight_on_a_missing_scope_is_denied_and_never_reaches_the_handler(
+    erp: MockErp,
+) -> None:
+    spy = SpyHandler()
+    gateway = ToolGateway(
+        registry_with(
+            ToolDefinition(
+                spec=CREATE_RISK_TOOL,
+                required_scope="project.risk.write",
+                approval_required=True,
+                timeout_seconds=5.0,
+                retry=NO_RETRY,
+                project_argument="project_id",
+                handler=spy,
+            )
+        )
+    )
+
+    outcome = gateway.preflight(new_risk(scopes=frozenset()))
+
+    assert outcome.status == "denied"
+    assert spy.calls == 0
+
+
+def test_preflight_on_a_spent_budget_is_rate_limited(erp: MockErp) -> None:
+    gateway = ToolGateway(
+        registry_with(
+            limited(
+                CREATE_RISK_TOOL,
+                build_handlers(erp)["create_risk"],
+                max_calls=1,
+                scope="project.risk.write",
+                approval_required=True,
+                project_argument="project_id",
+            )
+        )
+    )
+    gateway.execute(new_risk(approval="approved"))  # spends the one unit
+
+    outcome = gateway.preflight(new_risk())
+
+    assert outcome.status == "rate_limited"
+    assert outcome.retry_after_seconds is not None
+
+
+def test_preflight_on_a_valid_write_says_approval_required(
+    gateway: ToolGateway, events: list[TraceEvent]
+) -> None:
+    outcome = gateway.preflight(new_risk())
+
+    assert outcome.status == "approval_required"
+    (row,) = gateway.audit.rows  # type: ignore[union-attr]
+    assert row.status == "approval_required"
+    assert any(event.kind == "approval_requested" for event in events)
+
+
+def test_preflight_does_not_count_against_the_limiter(erp: MockErp) -> None:
+    """The budget is spent at execution, not at the check -- a call that
+    never gets approved must not have already used up the actor's budget."""
+    spy = SpyHandler()
+    gateway = ToolGateway(
+        registry_with(
+            limited(
+                CREATE_RISK_TOOL,
+                spy,
+                max_calls=1,
+                scope="project.risk.write",
+                approval_required=True,
+                project_argument="project_id",
+            )
+        )
+    )
+
+    gateway.preflight(new_risk())
+    gateway.preflight(new_risk())
+    outcome = gateway.preflight(new_risk())
+
+    assert outcome.status == "approval_required"
+
+
+def test_preflight_never_calls_the_handler() -> None:
+    def never(arguments: BaseModel, context: ExecutionContext) -> HandlerResult:
+        raise AssertionError("preflight must never reach a handler")
+
+    gateway = ToolGateway(
+        registry_with(
+            ToolDefinition(
+                spec=CREATE_RISK_TOOL,
+                required_scope="project.risk.write",
+                approval_required=True,
+                timeout_seconds=5.0,
+                retry=NO_RETRY,
+                project_argument="project_id",
+                handler=never,
+            )
+        )
+    )
+
+    outcome = gateway.preflight(new_risk())
+
+    assert outcome.status == "approval_required"
+
+
+def test_preflight_on_an_ungated_tool_is_refused_with_a_clear_message(
+    gateway: ToolGateway,
+) -> None:
+    with pytest.raises(ValueError, match="ungated"):
+        gateway.preflight(call("get_project_status", {"milestone_id": "M2"}))
+
+
+def test_preflight_on_an_already_approved_call_is_also_refused(
+    gateway: ToolGateway,
+) -> None:
+    """Not preflight's job either: an approval already granted is a call for
+    execute(), not a call still being checked before a human sees it."""
+    with pytest.raises(ValueError):
+        gateway.preflight(new_risk(approval="approved"))
 

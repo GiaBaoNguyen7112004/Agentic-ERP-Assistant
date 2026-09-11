@@ -5,11 +5,18 @@
 1. find the tool in the registry
 2. validate the arguments against its declaration
 3. check the actor holds the tool's scope
+3b. check the call's own project argument, if it names one, against the
+    actor's project
 4. check the actor has budget left for this tool
 5. stop for approval, if the tool needs one
 6. write the audit row for a gated call
 7. count the call and run the handler, inside its retry budget and its timeout
 8. emit a trace event
+
+Steps 1-5 are also exposed alone, as :meth:`ToolGateway.preflight`: everything
+that would refuse a call, with nothing that runs it. ADR 0016 is why it
+exists -- a write must be put to a human only after the checks that would
+refuse it anyway have already passed, not before.
 
 Steps 3, 4 and 5 come before step 7, and that is the whole point of writing
 this as one function. A gateway that checked permission after execution, asked
@@ -195,6 +202,66 @@ class ToolGateway:
             A :class:`ToolOutcome`. Never raises for a failed call -- see the
             module docstring.
         """
+        checked = self._checks(request)
+        if isinstance(checked, ToolOutcome):
+            return checked
+        definition, arguments = checked
+
+        # 6, 7, 8. Run it, record it, trace it.
+        outcome = self._run(definition, arguments, request)
+        self._write_audit_row(request, definition, outcome)
+        self._emit(
+            "tool_called" if outcome.status == "ok" else "failed",
+            f"{definition.name} -> {outcome.status} in {outcome.attempts} "
+            f"attempt{'s' if outcome.attempts != 1 else ''}",
+        )
+        return outcome
+
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        """Every check that precedes execution, and nothing that is execution.
+
+        Steps 1-5 of :meth:`execute`, with the handler never reached and the
+        budget never counted (counted at execution, not at the check -- see
+        the module docstring). The answer a caller wants is the status:
+        ``"approval_required"`` means the call may be put to a human;
+        anything else is the refusal that human would otherwise have been
+        asked to rule on.
+
+        Exists so a write is put to a human only after the checks that would
+        refuse it anyway have already passed -- see ADR 0016. Called by
+        :meth:`~agentic_erp_assistant.engine.nodes.GraphNodes.think` on the
+        ``request_approval`` route, where the tool is mutating and therefore
+        gated by the registry's own invariant
+        (:meth:`~agentic_erp_assistant.tools.registry.ToolDefinition.__post_init__`).
+
+        Raises:
+            ValueError: The call is not one that would stop for a human --
+                either the tool needs no approval, or ``request.approval`` was
+                already ``"approved"``. Neither has an honest ``ToolOutcome``
+                to return: an ``"ok"`` would claim a call ran, and
+                ``"approval_required"`` would claim a gate that does not
+                exist or has already been passed.
+        """
+        checked = self._checks(request)
+        if isinstance(checked, ToolOutcome):
+            return checked
+        raise ValueError(
+            "preflight is for calls that will stop for a human; run ungated "
+            "tools with execute()"
+        )
+
+    # -- the shared checks ---------------------------------------------------
+
+    def _checks(
+        self, request: ToolRequest
+    ) -> tuple[ToolDefinition, BaseModel] | ToolOutcome:
+        """Steps 1-5, shared by :meth:`execute` and :meth:`preflight`.
+
+        Returns the definition and the validated arguments when every check
+        passes -- meaning the call is either ungated or already approved, and
+        is ready to run -- or the :class:`ToolOutcome` a refusal already
+        produced. A caller tells the two apart with ``isinstance``.
+        """
         # 1. Find the tool. A model naming one that does not exist is a routed,
         #    recorded failure, not a crash: the registry is the authority, and
         #    the turn still has to say what it tried.
@@ -220,10 +287,11 @@ class ToolGateway:
                 error=self._first_problem(error),
             )
 
-        # 3. Permission. Before approval, deliberately: approval decides
-        #    whether a permitted call should happen now, and it can never grant
-        #    an entitlement its holder never had. One attempt, no retry -- a
-        #    missing scope will still be missing on the second try.
+        # 3. Permission: scope, then project. Before approval, deliberately --
+        #    approval decides whether a permitted call should happen now, and
+        #    it can never grant an entitlement its holder never had, nor bind
+        #    a call to a project its holder is not on. One attempt, no retry
+        #    for either -- neither fact changes on a second try.
         if definition.required_scope not in request.scopes:
             return self._refused(
                 request,
@@ -234,6 +302,20 @@ class ToolGateway:
                     f"{definition.required_scope!r}"
                 ),
             )
+
+        if definition.project_argument is not None:
+            named = getattr(arguments, definition.project_argument)
+            if named != request.project_code:
+                return self._refused(
+                    request,
+                    definition=definition,
+                    status="denied",
+                    error=(
+                        f"call names project {named!r}; actor "
+                        f"{request.actor!r} is bound to "
+                        f"{request.project_code!r}"
+                    ),
+                )
 
         # 4. Budget. Above the approval gate on purpose: a human should never
         #    be asked to decide a call that will be refused whatever they say.
@@ -271,15 +353,7 @@ class ToolGateway:
                 ),
             )
 
-        # 6, 7, 8. Run it, record it, trace it.
-        outcome = self._run(definition, arguments, request)
-        self._write_audit_row(request, definition, outcome)
-        self._emit(
-            "tool_called" if outcome.status == "ok" else "failed",
-            f"{definition.name} -> {outcome.status} in {outcome.attempts} "
-            f"attempt{'s' if outcome.attempts != 1 else ''}",
-        )
-        return outcome
+        return definition, arguments
 
     # -- execution ---------------------------------------------------------
 

@@ -153,6 +153,36 @@ class ToolGatewayPort(Protocol):
         """
         ...
 
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        """Every check that precedes execution, and nothing that is execution.
+
+        Exists so a write can be put to a human only after the checks that
+        would refuse it anyway have already passed (ADR 0016): the tool
+        exists, its arguments are valid, the actor holds its scope, any
+        project the call names matches the actor's, and there is budget left
+        -- with nothing counted and no handler reached. The answer a caller
+        wants is the status: ``"approval_required"`` means the call may be
+        put to a human; anything else is the refusal that human would
+        otherwise have been asked to rule on.
+
+        Args:
+            request: The call as it would be made, with the actor's scopes
+                and project -- ``approval`` is expected not yet
+                ``"approved"``, since this is called before a human has seen
+                the call.
+
+        Returns:
+            A :class:`ToolOutcome`: a refusal (``"failed"``,
+            ``"invalid_arguments"``, ``"denied"``, ``"rate_limited"``) or
+            ``"approval_required"`` when every check passes.
+
+        Raises:
+            ValueError: ``request`` names a tool that needs no approval, or
+                one that is already approved -- neither has an honest
+                outcome for this method to return.
+        """
+        ...
+
 
 @runtime_checkable
 class PlannerPort(Protocol):

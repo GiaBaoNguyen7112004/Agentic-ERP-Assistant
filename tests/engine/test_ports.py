@@ -49,6 +49,9 @@ class FakeGateway:
         self.calls.append(request)
         return self.outcome
 
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        return self.outcome
+
 
 def snippet(locator: str) -> EvidenceSnippet:
     return EvidenceSnippet(

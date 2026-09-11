@@ -201,6 +201,19 @@ class ToolDefinition:
     every field that has one.
     """
 
+    project_argument: str | None = field(default=None, kw_only=True)
+    """The argument that names the project this call is about, if any.
+
+    ``None`` for a tool whose arguments do not name a project at all
+    (``get_project_status``, ``get_sprint_progress`` -- a milestone or a
+    sprint id is unambiguous without one). When set, the gateway reads this
+    attribute off the *validated* arguments and refuses the call as
+    ``denied`` if it does not match the request's ``project_code`` -- the
+    same principle ``rag/access.py`` applies to documents, enforced here
+    because a tool argument is data the model chose and never the authority
+    on which project an actor is entitled to touch.
+    """
+
     handler: Handler
     """The code that runs, already bound to its data store.
 
@@ -312,7 +325,11 @@ def build_default_registry(
     handlers = build_handlers(store)
 
     def read(
-        spec: ToolSpec, scope: str, *, retry: RetryPolicy = NO_RETRY
+        spec: ToolSpec,
+        scope: str,
+        *,
+        retry: RetryPolicy = NO_RETRY,
+        project_argument: str | None = None,
     ) -> ToolDefinition:
         return ToolDefinition(
             spec=spec,
@@ -321,6 +338,7 @@ def build_default_registry(
             timeout_seconds=5.0,
             retry=retry,
             rate_limit=read_rate_limit,
+            project_argument=project_argument,
             handler=handlers[spec.name],
         )
 
@@ -337,13 +355,20 @@ def build_default_registry(
                 retry=RetryPolicy(max_attempts=2),
             ),
             read(GET_SPRINT_PROGRESS_TOOL, "project.sprint.read"),
-            read(GET_BUDGET_SUMMARY_TOOL, "project.budget.read"),
-            read(LIST_RISKS_TOOL, "project.risk.read"),
+            read(
+                GET_BUDGET_SUMMARY_TOOL,
+                "project.budget.read",
+                project_argument="project_id",
+            ),
+            read(
+                LIST_RISKS_TOOL, "project.risk.read", project_argument="project_id"
+            ),
             ToolDefinition(
                 spec=CREATE_RISK_TOOL,
                 required_scope="project.risk.write",
                 approval_required=True,
                 timeout_seconds=5.0,
+                project_argument="project_id",
                 # One attempt, on purpose. A retried write is how one approved
                 # risk becomes three, and the approval was for one.
                 retry=NO_RETRY,
