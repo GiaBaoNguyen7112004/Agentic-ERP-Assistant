@@ -296,7 +296,24 @@ class GraphNodes:
         would eventually answer from it.
         """
         query = self._query(state)
-        snippets = tuple(self.retriever.search(query, limit=self.evidence_limit))
+        try:
+            snippets = tuple(self.retriever.search(query, limit=self.evidence_limit))
+        except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
+            logger.warning("retriever failed on %s: %s", state.trace_id, error)
+            return advance(
+                state,
+                "fail",
+                failure="provider_failure",
+                error_detail=_clip(
+                    f"{type(error).__name__}: {error}", ERROR_DETAIL_MAX_CHARS
+                ),
+                events=state.events
+                + (
+                    _event(
+                        "retrieve", "failed", f"retriever raised {type(error).__name__}"
+                    ),
+                ),
+            )
         events = state.events + (
             _event(
                 "retrieve",

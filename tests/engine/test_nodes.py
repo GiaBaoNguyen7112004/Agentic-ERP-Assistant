@@ -38,6 +38,14 @@ class FakeRetriever:
         return self.snippets[:limit]
 
 
+class RaisingRetriever:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def search(self, query: str, *, limit: int):
+        raise self.error
+
+
 class FakeGateway:
     def __init__(self, *outcomes: ToolOutcome) -> None:
         self.outcomes = list(outcomes)
@@ -365,6 +373,17 @@ def test_a_composer_that_raises_ends_the_turn_as_a_provider_failure() -> None:
 
     assert (result.route, result.failure) == ("fail", "provider_failure")
     assert result.evidence == (snippet(),)
+
+
+def test_a_retriever_that_raises_ends_the_turn_as_a_provider_failure() -> None:
+    graph = nodes(retriever=RaisingRetriever(RuntimeError("embeddings down")))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents"))
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+    assert result.evidence == ()
+    assert "embeddings down" in (result.error_detail or "")
+    assert kinds(result)[-1] == "failed"
 
 
 # --------------------------------------------------------------------------
