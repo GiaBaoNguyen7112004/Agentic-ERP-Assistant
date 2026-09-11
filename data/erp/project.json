@@ -1,10 +1,15 @@
 {
-  "_readme": "Synthetic delivery data for one fictional project. Small enough to read in review, and the only dataset the mock ERP serves. No real customer data belongs here.",
+  "_readme": "Synthetic delivery data for two fictional, unrelated projects -- Atlas and Orion, mirroring data/documents/orion-status-report-2026-09.md. Small enough to read in review, and the only dataset the mock ERP serves. Orion has no sprint and no risk row on purpose: the report narrates one open risk (O-1) that nobody has recorded in the tracker yet, so a project-bound actor recording it is a real write, not a duplicate. No real customer data belongs here.",
   "projects": [
     {
       "project_id": "atlas",
       "name": "Atlas ERP rollout",
       "source_id": "project-atlas"
+    },
+    {
+      "project_id": "orion",
+      "name": "Orion CRM migration",
+      "source_id": "project-orion"
     }
   ],
   "milestones": [
@@ -34,6 +39,15 @@
       "schedule_status": "on_track",
       "days_late": 0,
       "source_id": "milestone-m3"
+    },
+    {
+      "milestone_id": "O2",
+      "project_id": "orion",
+      "title": "Pipeline migration",
+      "due_on": "2026-10-02",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-o2"
     }
   ],
   "sprints": [
@@ -62,6 +76,14 @@
       "forecast_at_completion_usd": 515000.0,
       "as_of": "2026-08-31",
       "source_id": "budget-summary-q3"
+    },
+    {
+      "project_id": "orion",
+      "approved_usd": 260000.0,
+      "spent_usd": 118400.0,
+      "forecast_at_completion_usd": 249000.0,
+      "as_of": "2026-08-31",
+      "source_id": "budget-orion-q3"
     }
   ],
   "risks": [

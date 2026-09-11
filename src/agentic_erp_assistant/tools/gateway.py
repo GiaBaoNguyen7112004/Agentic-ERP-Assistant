@@ -77,6 +77,7 @@ from agentic_erp_assistant.tools.limits import InMemoryRateLimiter, RateLimiter
 from agentic_erp_assistant.tools.models import (
     ARGUMENTS_SUMMARY_MAX_CHARS,
     AuditRow,
+    ExecutionContext,
     ToolError,
     ToolStatus,
     TransientToolError,
@@ -296,6 +297,11 @@ class ToolGateway:
             request.actor, definition.name, definition.rate_limit, self.now()
         )
         attempts = 0
+        context = ExecutionContext(
+            trace_id=request.trace_id,
+            actor=request.actor,
+            project_code=request.project_code,
+        )
 
         def attempt() -> Any:
             nonlocal attempts
@@ -305,7 +311,7 @@ class ToolGateway:
             # client would carry the deadline itself; this stops one slow tool
             # from holding a turn open indefinitely, and says so in the outcome.
             with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(definition.handler, arguments)
+                future = pool.submit(definition.handler, arguments, context)
                 try:
                     return future.result(timeout=definition.timeout_seconds)
                 except FutureTimeout:

@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.erp.mock import (
     DEFAULT_DATASET_PATH,
+    ErpAccessError,
     ErpNotPersistedError,
     Milestone,
     MockErp,
@@ -226,3 +227,75 @@ def test_the_repo_fixture_is_untouched_by_the_write_tests() -> None:
     raw = json.loads(DEFAULT_DATASET_PATH.read_text(encoding="utf-8"))
     risk_ids = [risk["risk_id"] for risk in raw["risks"]]
     assert risk_ids == ["R-1", "R-2"]
+
+
+# --------------------------------------------------------------------------
+# ProjectErp: a project's slice of the store, and nothing else
+# --------------------------------------------------------------------------
+
+
+def test_a_record_of_another_project_does_not_exist_through_the_view(
+    erp: MockErp,
+) -> None:
+    """The same "does not exist for you" a filtered document gets: a handler
+    bound to orion cannot see atlas's M2, even though the record is in the
+    file."""
+    orion = erp.for_project("orion")
+
+    assert orion.milestone("M2") is None
+    assert orion.sprint("SPR-12") is None
+    assert orion.budget("atlas") is None
+    assert orion.project("atlas") is None
+    assert orion.risks_for("atlas") == ()
+
+
+def test_a_record_of_the_bound_project_is_visible(erp: MockErp) -> None:
+    orion = erp.for_project("orion")
+
+    milestone = orion.milestone("O2")
+
+    assert milestone is not None
+    assert milestone.title == "Pipeline migration"
+
+
+def test_the_view_never_widens_what_the_store_would_answer(erp: MockErp) -> None:
+    """A milestone that does not exist anywhere reads the same through a view
+    as through the store directly -- the view narrows, it never invents."""
+    atlas = erp.for_project("atlas")
+
+    assert atlas.milestone("no-such-milestone") is None
+    assert erp.milestone("no-such-milestone") is None
+
+
+def test_create_risk_through_the_matching_view_succeeds(erp: MockErp) -> None:
+    orion = erp.for_project("orion")
+
+    created = orion.create_risk(
+        project_id="orion", title="Legal has not released the extract", severity="medium"
+    )
+
+    assert created.project_id == "orion"
+    assert created in erp.risks
+
+
+def test_create_risk_through_the_wrong_view_is_refused(erp: MockErp) -> None:
+    """Defence in depth: the gateway's project check refuses this first, but
+    the view must still refuse if it is ever called directly."""
+    atlas = erp.for_project("atlas")
+    before = len(erp.risks)
+
+    with pytest.raises(ErpAccessError):
+        atlas.create_risk(project_id="orion", title="x", severity="low")
+
+    assert len(erp.risks) == before
+
+
+def test_for_project_returns_a_fresh_view_each_time_over_the_same_store(
+    erp: MockErp,
+) -> None:
+    """Two views of one store still see one write: for_project is a lens, not
+    a copy."""
+    atlas = erp.for_project("atlas")
+    atlas.create_risk(project_id="atlas", title="x", severity="low")
+
+    assert erp.for_project("atlas").risks_for("atlas")[-1].title == "x"

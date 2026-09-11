@@ -36,6 +36,7 @@ leave that record unwritten. The rule is the same one
 :mod:`agentic_erp_assistant.llm.ports` follows for provider failures.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -48,12 +49,33 @@ __all__ = [
     "ApprovalDecision",
     "ARGUMENTS_SUMMARY_MAX_CHARS",
     "AuditRow",
+    "ExecutionContext",
     "ToolError",
     "ToolOutcome",
     "ToolRequest",
     "ToolStatus",
     "TransientToolError",
 ]
+
+
+@dataclass(frozen=True)
+class ExecutionContext:
+    """What a handler is told about the call it is running, beyond the
+    already-validated arguments.
+
+    A handler reads no permission and makes no policy decision -- that is the
+    gateway's job, in one ordered place -- but it still has to know *whose*
+    call this is and *which project* to read through
+    (:meth:`~agentic_erp_assistant.erp.mock.MockErp.for_project`). Carrying
+    that as a second parameter rather than folding it into the arguments model
+    keeps "what the model supplied" and "what the gateway already verified"
+    visibly separate: an argument the model invented is rejected by the
+    argument model's own schema, and nothing here can be spoofed the same way.
+    """
+
+    trace_id: str
+    actor: str
+    project_code: str
 
 
 ARGUMENTS_SUMMARY_MAX_CHARS = 200

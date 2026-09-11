@@ -49,6 +49,7 @@ either appends would hand out the same id twice.
 import json
 import os
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -57,10 +58,12 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "Budget",
     "DEFAULT_DATASET_PATH",
+    "ErpAccessError",
     "ErpNotPersistedError",
     "Milestone",
     "MockErp",
     "Project",
+    "ProjectErp",
     "Risk",
     "RiskSeverity",
     "Sprint",
@@ -145,6 +148,20 @@ class ErpNotPersistedError(RuntimeError):
     :class:`~agentic_erp_assistant.tools.models.ToolError` so nothing escapes
     the gateway; defined here rather than there so ``erp/`` stays importable
     without the tool layer.
+    """
+
+
+class ErpAccessError(RuntimeError):
+    """A write was attempted through a :class:`ProjectErp` view for a project
+    it is not bound to.
+
+    Defence in depth, not the first line: the tool gateway's project check
+    (``ToolDefinition.project_argument``) refuses a call naming another
+    project before a handler ever runs. This is what fires if that check were
+    ever bypassed or a handler were called directly -- the view itself must
+    still refuse, the same way :class:`ErpNotPersistedError` is a second,
+    independent guarantee rather than trust that every caller remembered the
+    first one.
     """
 
 
@@ -238,6 +255,10 @@ class MockErp:
         """
         return tuple(risk for risk in self.risks if risk.project_id == project_id)
 
+    def for_project(self, project_code: str) -> "ProjectErp":
+        """One project's slice of this store -- see :class:`ProjectErp`."""
+        return ProjectErp(store=self, project_code=project_code)
+
     # -- the one write -----------------------------------------------------
 
     def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
@@ -313,3 +334,66 @@ class MockErp:
         except BaseException:
             temporary.unlink(missing_ok=True)
             raise
+
+
+@dataclass(frozen=True)
+class ProjectErp:
+    """One project's slice of the store -- the only thing a handler may read.
+
+    Records of another project do not exist through this view: :meth:`milestone`,
+    :meth:`sprint`, :meth:`budget`, and :meth:`project` return ``None`` for
+    them, and :meth:`risks_for` returns ``()`` -- the same "does not exist for
+    you" a filtered document gets (``rag/access.py``). The rule is decided
+    here, before a handler sees data, for the reason ``rag/access.py`` filters
+    before ranking: a check a handler has to remember to make is a check one
+    handler forgets.
+
+    Built by :meth:`MockErp.for_project`, never constructed directly by a
+    handler -- the constructor takes the whole store and a project code
+    rather than a filtered copy, so a write still lands on the one store
+    every other view and every other request shares.
+    """
+
+    store: MockErp
+    project_code: str
+
+    def milestone(self, milestone_id: str) -> Milestone | None:
+        record = self.store.milestone(milestone_id)
+        return record if record is not None and record.project_id == self.project_code else None
+
+    def sprint(self, sprint_id: str) -> Sprint | None:
+        record = self.store.sprint(sprint_id)
+        return record if record is not None and record.project_id == self.project_code else None
+
+    def budget(self, project_id: str) -> Budget | None:
+        if project_id != self.project_code:
+            return None
+        return self.store.budget(project_id)
+
+    def project(self, project_id: str) -> Project | None:
+        if project_id != self.project_code:
+            return None
+        return self.store.project(project_id)
+
+    def risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        if project_id != self.project_code:
+            return ()
+        return self.store.risks_for(project_id)
+
+    def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
+        """Record a new risk, through the store this view wraps.
+
+        Raises:
+            ErpAccessError: ``project_id`` does not match this view's project.
+                Defence in depth -- the gateway's project check refuses a
+                mismatched call before a handler is ever reached; see
+                :class:`ErpAccessError`.
+        """
+        if project_id != self.project_code:
+            raise ErpAccessError(
+                f"this view is bound to project {self.project_code!r}; a "
+                f"write naming {project_id!r} does not belong to it"
+            )
+        return self.store.create_risk(
+            project_id=project_id, title=title, severity=severity
+        )

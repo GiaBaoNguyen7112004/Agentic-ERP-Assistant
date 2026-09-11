@@ -12,6 +12,7 @@ from agentic_erp_assistant.llm.tools import (
     LIST_RISKS_TOOL,
 )
 from agentic_erp_assistant.tools.handlers import HandlerResult
+from agentic_erp_assistant.tools.models import ExecutionContext
 from agentic_erp_assistant.tools.registry import (
     build_default_registry,
     NO_RETRY,
@@ -276,13 +277,15 @@ def test_two_registries_do_not_share_a_store(tmp_path) -> None:
     mine = build_default_registry(a_writable_copy(tmp_path / "mine.json"))
     yours = build_default_registry(a_writable_copy(tmp_path / "yours.json"))
 
+    context = ExecutionContext(trace_id="run-1", actor="pm", project_code="atlas")
     mine.get("create_risk").handler(
         CREATE_RISK_TOOL.validate_arguments(
             {"project_id": "atlas", "title": "mine", "severity": "low"}
-        )
+        ),
+        context,
     )
     listed = yours.get("list_risks").handler(
-        LIST_RISKS_TOOL.validate_arguments({"project_id": "atlas"})
+        LIST_RISKS_TOOL.validate_arguments({"project_id": "atlas"}), context
     )
 
     assert "mine" not in listed.summary

@@ -19,7 +19,11 @@ from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.tool_request import ToolRequest
 from agentic_erp_assistant.tools.gateway import GATEWAY_NODE, ToolGateway
 from agentic_erp_assistant.tools.handlers import HandlerResult
-from agentic_erp_assistant.tools.models import ToolError, TransientToolError
+from agentic_erp_assistant.tools.models import (
+    ExecutionContext,
+    ToolError,
+    TransientToolError,
+)
 from agentic_erp_assistant.tools.registry import (
     build_default_registry,
     NO_RETRY,
@@ -102,7 +106,7 @@ class SpyHandler:
     def __init__(self) -> None:
         self.calls = 0
 
-    def __call__(self, arguments: BaseModel) -> HandlerResult:
+    def __call__(self, arguments: BaseModel, context: ExecutionContext) -> HandlerResult:
         self.calls += 1
         return HandlerResult(summary="ran", source_ids=("spy",))
 
@@ -403,7 +407,7 @@ def test_a_permanent_failure_does_not_spend_the_retry_budget() -> None:
     only buys latency."""
     calls = {"n": 0}
 
-    def always_broken(_: BaseModel) -> HandlerResult:
+    def always_broken(_: BaseModel, __: ExecutionContext) -> HandlerResult:
         calls["n"] += 1
         raise ToolError("the ERP rejected it")
 
@@ -428,7 +432,7 @@ def test_a_permanent_failure_does_not_spend_the_retry_budget() -> None:
 
 
 def test_an_exhausted_budget_reports_a_transient_failure_with_its_cost() -> None:
-    def always_timing_out(_: BaseModel) -> HandlerResult:
+    def always_timing_out(_: BaseModel, __: ExecutionContext) -> HandlerResult:
         raise TransientToolError("the ERP timed out")
 
     gateway = ToolGateway(
@@ -456,7 +460,7 @@ def test_a_write_that_failed_is_still_audited(erp: MockErp) -> None:
     """A row is written on every path a gated call can take. "Approved, then
     unknown" is not evidence."""
 
-    def refusing_backend(_: BaseModel) -> HandlerResult:
+    def refusing_backend(_: BaseModel, __: ExecutionContext) -> HandlerResult:
         raise ToolError("the ERP rejected the risk")
 
     gateway = ToolGateway(

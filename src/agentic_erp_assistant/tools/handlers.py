@@ -27,7 +27,7 @@ from collections.abc import Callable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentic_erp_assistant.erp.mock import ErpNotPersistedError, MockErp
+from agentic_erp_assistant.erp.mock import ErpAccessError, ErpNotPersistedError, MockErp
 from agentic_erp_assistant.llm.tools import (
     BudgetSummaryArguments,
     CreateRiskArguments,
@@ -35,7 +35,11 @@ from agentic_erp_assistant.llm.tools import (
     ProjectStatusArguments,
     SprintProgressArguments,
 )
-from agentic_erp_assistant.tools.models import ToolError, TransientToolError
+from agentic_erp_assistant.tools.models import (
+    ExecutionContext,
+    ToolError,
+    TransientToolError,
+)
 
 __all__ = ["build_handlers", "Handler", "HandlerResult"]
 
@@ -63,10 +67,11 @@ class HandlerResult(BaseModel):
     """
 
 
-Handler = Callable[[BaseModel], HandlerResult]
-"""A validated-arguments-in, result-out function. Bound to a store when the
-registry is built, so the registry entry is complete and nothing has to be
-looked up at call time."""
+Handler = Callable[[BaseModel, ExecutionContext], HandlerResult]
+"""A validated-arguments-in, result-out function, also told whose call this is
+and which project to read through. Bound to a store when the registry is
+built, so the registry entry is complete and nothing has to be looked up at
+call time."""
 
 
 def build_handlers(erp: MockErp) -> dict[str, Handler]:
@@ -77,9 +82,12 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
     milestones instead of the repo fixture should be able to have them.
     """
 
-    def get_project_status(arguments: BaseModel) -> HandlerResult:
+    def get_project_status(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         assert isinstance(arguments, ProjectStatusArguments)
-        milestone = erp.milestone(arguments.milestone_id)
+        store = erp.for_project(context.project_code)
+        milestone = store.milestone(arguments.milestone_id)
         if milestone is None:
             raise ToolError(f"no milestone {arguments.milestone_id!r} exists")
 
@@ -102,18 +110,23 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
     # is a test that sometimes proves nothing.
     flaky_calls = {"count": 0}
 
-    def get_project_status_flaky(arguments: BaseModel) -> HandlerResult:
+    def get_project_status_flaky(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         flaky_calls["count"] += 1
         if flaky_calls["count"] == 1:
             raise TransientToolError(
                 "the ERP status endpoint timed out; it is usually up again "
                 "immediately"
             )
-        return get_project_status(arguments)
+        return get_project_status(arguments, context)
 
-    def get_sprint_progress(arguments: BaseModel) -> HandlerResult:
+    def get_sprint_progress(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         assert isinstance(arguments, SprintProgressArguments)
-        sprint = erp.sprint(arguments.sprint_id)
+        store = erp.for_project(context.project_code)
+        sprint = store.sprint(arguments.sprint_id)
         if sprint is None:
             raise ToolError(f"no sprint {arguments.sprint_id!r} exists")
 
@@ -127,9 +140,12 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
             source_ids=(sprint.source_id,),
         )
 
-    def get_budget_summary(arguments: BaseModel) -> HandlerResult:
+    def get_budget_summary(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         assert isinstance(arguments, BudgetSummaryArguments)
-        budget = erp.budget(arguments.project_id)
+        store = erp.for_project(context.project_code)
+        budget = store.budget(arguments.project_id)
         if budget is None:
             raise ToolError(f"no budget recorded for project {arguments.project_id!r}")
 
@@ -146,13 +162,16 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
 
         return HandlerResult(summary=summary, source_ids=(budget.source_id,))
 
-    def list_risks(arguments: BaseModel) -> HandlerResult:
+    def list_risks(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         assert isinstance(arguments, ListRisksArguments)
-        project = erp.project(arguments.project_id)
+        store = erp.for_project(context.project_code)
+        project = store.project(arguments.project_id)
         if project is None:
             raise ToolError(f"no project {arguments.project_id!r} exists")
 
-        risks = erp.risks_for(arguments.project_id)
+        risks = store.risks_for(arguments.project_id)
         if risks:
             listed = "; ".join(f"{risk.risk_id} ({risk.severity}) {risk.title}" for risk in risks)
             summary = f"{len(risks)} open risk{'s' if len(risks) != 1 else ''}: {listed}"
@@ -167,24 +186,29 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
             source_ids=(project.source_id, *(risk.source_id for risk in risks)),
         )
 
-    def create_risk(arguments: BaseModel) -> HandlerResult:
+    def create_risk(
+        arguments: BaseModel, context: ExecutionContext
+    ) -> HandlerResult:
         assert isinstance(arguments, CreateRiskArguments)
-        if erp.project(arguments.project_id) is None:
+        store = erp.for_project(context.project_code)
+        if store.project(arguments.project_id) is None:
             raise ToolError(f"no project {arguments.project_id!r} exists")
 
         try:
-            created = erp.create_risk(
+            created = store.create_risk(
                 project_id=arguments.project_id,
                 title=arguments.title,
                 severity=arguments.severity,
             )
-        except ErpNotPersistedError as error:
+        except (ErpNotPersistedError, ErpAccessError) as error:
             # Re-raised as a ToolError because the gateway catches exactly the
             # two tool-layer exceptions and nothing else; a store failure that
             # unwound past it would violate "nothing escapes the gateway" --
-            # and this one is permanent by nature, so no retry budget is spent
-            # proving it. The store has already rolled its own append back, so
-            # what was refused is the claim that anything was recorded.
+            # and both are permanent by nature, so no retry budget is spent
+            # proving either. ErpAccessError should never actually fire here:
+            # the gateway's project check refuses a mismatched call before
+            # this handler is reached. Caught anyway as defence in depth, the
+            # same reason the view itself still checks.
             raise ToolError(str(error)) from error
         return HandlerResult(
             summary=(
