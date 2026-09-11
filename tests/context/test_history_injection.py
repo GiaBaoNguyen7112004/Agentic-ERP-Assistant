@@ -82,6 +82,20 @@ def test_no_tag_survives_even_inline() -> None:
     assert "]" not in stripped
 
 
+def test_a_locator_with_a_space_is_stripped_too() -> None:
+    """CSV rows and split sections produce locators with spaces (ADR 0009);
+    the old pattern refused whitespace and let a real tag survive inline."""
+    text = "see [risk-register#row R-2] and [status-report-2026-09#§3.2 part 1] for details"
+
+    stripped = strip_citations(text)
+
+    assert "[" not in stripped
+    assert "#" not in stripped
+    assert "]" not in stripped
+    assert "risk-register" not in stripped
+    assert "row R-2" not in stripped
+
+
 def test_strip_runs_before_clip() -> None:
     """A trailer cut mid-tag by the clip would leave a stray '[doc#' fragment;
     stripping first means the clip never sees a tag at all."""

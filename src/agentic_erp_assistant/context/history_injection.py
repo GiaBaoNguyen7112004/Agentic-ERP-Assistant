@@ -98,11 +98,15 @@ here would invert the dependency direction the rest of this layer keeps
 pattern undoes what that function does.
 """
 
-_CITATION_TAG = re.compile(r"\[[^\[\]\s]+#[^\[\]\s]+\]")
-"""One evidence-style tag: ``[source_id#locator]``, with no ``[``, ``]``, or
-whitespace inside either half -- the same shape
-:class:`~agentic_erp_assistant.state.evidence.EvidenceSnippet` enforces on
-construction, matched here so a tag cannot survive inline in a reply."""
+_CITATION_TAG = re.compile(r"\[[^\[\]\n#]+#[^\[\]\n]+\]")
+"""One evidence-style tag: ``[source_id#locator]``. The locator half may
+contain spaces -- a CSV row (``row R-2``) or a split section (``§3.2 part
+1``), see ADR 0009 and ``evidence/rag/retrieval-report.json`` -- so only
+``[``, ``]``, and line breaks are excluded, matching what
+:class:`~agentic_erp_assistant.state.evidence.EvidenceSnippet` actually
+forbids on construction. A stricter pattern that rejected whitespace let a
+real tag with a spaced locator survive inline into the ``history`` role,
+which ADR 0014 says must never carry anything citation-shaped."""
 
 
 def strip_citations(text: str) -> str:
