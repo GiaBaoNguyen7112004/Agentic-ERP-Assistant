@@ -151,7 +151,11 @@ def an_orchestrator(*decisions, erp: MockErp | None = None) -> tuple[
 
 def start(request: str = "Record the risk.") -> AgentState:
     return AgentState(
-        request=request, actor="bao", trace_id="run-1", scopes=SCOPES
+        request=request,
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
 
 
@@ -161,6 +165,7 @@ def start_in_session(
     return AgentState(
         request=request,
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         scopes=SCOPES,
         session_id=session_id,

@@ -407,6 +407,7 @@ class GraphNodes:
                 tool_name=state.tool_name or "",
                 arguments=state.tool_arguments or {},
                 actor=state.actor,
+                project_code=state.project_code,
                 scopes=state.scopes,
                 approval=state.approval,
             )

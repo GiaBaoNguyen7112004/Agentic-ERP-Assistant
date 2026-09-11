@@ -71,6 +71,7 @@ def state(**overrides: object) -> AgentState:
     fields: dict[str, object] = {
         "request": "Answer me in Vietnamese from now on, and how is M2 tracking?",
         "actor": "priya",
+        "project_code": "atlas",
         "trace_id": "run-1",
         "session_id": "sess-1",
         "response": "M2 is tracking to plan.",

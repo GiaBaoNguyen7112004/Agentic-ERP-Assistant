@@ -127,7 +127,11 @@ def nodes(**overrides) -> GraphNodes:
 
 def state(**changes) -> AgentState:
     base = AgentState(
-        request="How is M2 tracking?", actor="bao", trace_id="run-1", scopes=SCOPES
+        request="How is M2 tracking?",
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
     return base.evolve(**changes) if changes else base
 

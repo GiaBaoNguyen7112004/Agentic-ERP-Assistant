@@ -17,6 +17,7 @@ def finished_state(**changes: object) -> AgentState:
     return AgentState(
         request="How is M2 tracking?",
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         route="answer",
         terminal=True,
@@ -30,6 +31,7 @@ def paused_state() -> AgentState:
     return AgentState(
         request="Record the vendor risk.",
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         route="request_approval",
         tool_name="create_risk",

@@ -73,6 +73,7 @@ def call(tool_name: str, arguments: dict[str, object], **overrides: object) -> T
         "tool_name": tool_name,
         "arguments": arguments,
         "actor": "pm@example.com",
+        "project_code": "atlas",
         "scopes": READ_SCOPES | WRITE_SCOPE,
     }
     fields.update(overrides)

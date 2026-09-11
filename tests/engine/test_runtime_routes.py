@@ -165,7 +165,11 @@ def runtime(
 
 def start(request: str = "How is M2 tracking?") -> AgentState:
     return AgentState(
-        request=request, actor="bao", trace_id="run-1", scopes=SCOPES
+        request=request,
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
 
 

@@ -68,7 +68,13 @@ def called(name: str, **arguments) -> ToolCallResult:
 
 
 def start(request: str = "How is M2 tracking?") -> AgentState:
-    return AgentState(request=request, actor="bao", trace_id="run-1", scopes=SCOPES)
+    return AgentState(
+        request=request,
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
+    )
 
 
 def runtime(*decisions: ToolCallResult, **overrides) -> WorkflowRuntime:

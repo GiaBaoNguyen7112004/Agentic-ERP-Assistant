@@ -68,7 +68,7 @@ __all__ = [
 ]
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 """The shape this module writes and is willing to read.
 
 Carried in the state and checked at construction so a state serialized by an
@@ -82,6 +82,12 @@ state written before the field existed still validates, and the default is the
 truthful reading of it -- ``memories=()`` on a run that had no memory layer, and
 ``session_id=None`` on a run that belonged to no session. The version guards
 against fields whose *meaning* changed, which is the case no default can rescue.
+
+v2 added the required :attr:`AgentState.project_code`: a v1 state refuses to
+load rather than being read as a turn on no project. There is no honest
+default to give it -- every authorization decision downstream of this field
+is "this project and this entitlement", and guessing one would let a v1 run
+resume with a project it never had.
 """
 
 
@@ -116,6 +122,16 @@ class AgentState(BaseModel):
     Carried from the first state because approval routing has to know who a
     write would be performed on behalf of, and a decision recorded without an
     actor cannot be audited afterwards.
+    """
+
+    project_code: str = Field(min_length=1)
+    """The project this turn works on, snapshotted with the actor and the scopes.
+
+    Required for the reason ``actor`` is: every authorization decision -- a
+    document, a memory, an ERP record -- is "this project and this
+    entitlement", and a turn that could exist without a project is a turn
+    whose tool calls cannot be bound to one. The composition root reads it
+    off the user record, next to the scopes.
     """
 
     scopes: frozenset[str] = frozenset()

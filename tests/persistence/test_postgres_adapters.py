@@ -124,6 +124,7 @@ def finished_state(trace_id: str = "run-1") -> AgentState:
     return AgentState(
         request="How is M2 tracking?",
         actor="bao",
+        project_code="atlas",
         trace_id=trace_id,
         route="answer",
         terminal=True,
@@ -136,6 +137,7 @@ def paused_state(trace_id: str = "run-1") -> AgentState:
     return AgentState(
         request="Record the vendor risk.",
         actor="bao",
+        project_code="atlas",
         trace_id=trace_id,
         route="request_approval",
         tool_name="create_risk",
@@ -482,6 +484,7 @@ def test_a_pause_answers_after_a_restart_and_settles_once(
     state = AgentState(
         request="Record the vendor risk.",
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         scopes=SCOPES,
     )

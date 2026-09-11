@@ -138,6 +138,7 @@ def test_a_model_that_proposes_it_gets_nothing_stored() -> None:
     turn = AgentState(
         request=QUESTION,
         actor="priya",
+        project_code="atlas",
         trace_id="run-1",
         session_id="sess-1",
         response="I cannot approve that myself.",
@@ -298,6 +299,7 @@ def test_a_planted_memory_does_not_change_what_the_graph_routes_to() -> None:
     turn = AgentState(
         request=QUESTION,
         actor="priya",
+        project_code="atlas",
         trace_id="run-1",
         session_id="sess-1",
         memories=(poisoned_record(),),

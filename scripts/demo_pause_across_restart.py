@@ -74,7 +74,16 @@ class ScriptedModel:
         self.results = list(results)
         self.calls = 0
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+    ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
@@ -85,7 +94,7 @@ class FakeRetriever:
 
 
 class FakeComposer:
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return GroundedAnswer(
             answer="Risk recorded.",
             citations=[Citation(source_id="m2-status.md", locator="p.2")],
@@ -161,6 +170,7 @@ def main(argv: list[str] | None = None) -> int:
     state = AgentState(
         request="Record the vendor risk.",
         actor="demo",
+        project_code="atlas",
         trace_id=trace_id,
         scopes=SCOPES,
     )

@@ -13,6 +13,7 @@ def request(**overrides: object) -> ToolRequest:
         "tool_name": "close_milestone",
         "arguments": {"milestone_id": "M2"},
         "actor": "bao",
+        "project_code": "atlas",
         "scopes": frozenset({"erp:write"}),
     }
     fields.update(overrides)
@@ -25,22 +26,30 @@ def request(**overrides: object) -> ToolRequest:
 
 
 @pytest.mark.parametrize(
-    "field", ["trace_id", "tool_name", "arguments", "actor", "scopes"]
+    "field", ["trace_id", "tool_name", "arguments", "actor", "project_code", "scopes"]
 )
 def test_a_request_cannot_be_built_without_it(field: str) -> None:
-    """None of the five has a default. A call missing any of them is one no
+    """None of the six has a default. A call missing any of them is one no
     check downstream could make a decision about."""
     fields = {
         "trace_id": "run-1",
         "tool_name": "t",
         "arguments": {},
         "actor": "bao",
+        "project_code": "atlas",
         "scopes": frozenset(),
     }
     del fields[field]
 
     with pytest.raises(ValidationError, match=field):
         ToolRequest(**fields)  # type: ignore[arg-type]
+
+
+def test_a_request_bound_to_no_project_is_rejected() -> None:
+    """The same argument scopes already makes: a call unbindable to a project
+    is one the gateway's project check has nothing to compare against."""
+    with pytest.raises(ValidationError, match="project_code"):
+        request(project_code="")
 
 
 def test_an_anonymous_request_is_rejected() -> None:

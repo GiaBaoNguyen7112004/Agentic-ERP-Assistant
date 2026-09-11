@@ -149,6 +149,7 @@ def test_the_gateway_is_told_who_asked_and_what_the_approver_said() -> None:
         tool_name="create_risk",
         arguments={"project_id": "atlas", "title": "x", "severity": "low"},
         actor="bao",
+        project_code="atlas",
         scopes=frozenset({"project.risk.write"}),
         approval="approved",
     )
@@ -168,6 +169,7 @@ def test_no_audit_fact_can_be_left_out_of_a_call(missing: str) -> None:
         "tool_name": "create_risk",
         "arguments": {},
         "actor": "bao",
+        "project_code": "atlas",
         "scopes": frozenset({"project.risk.write"}),
     }
     del fields[missing]
@@ -283,7 +285,12 @@ def test_a_planner_is_handed_the_whole_state_it_decides_from() -> None:
     """Not a question and a history assembled at the call site -- that is how a
     loop re-decides on a stale view and repeats a call it already made."""
     planner = FakePlanner(ReasoningDecision(route="answer", confidence=0.9))
-    state = AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+    state = AgentState(
+        request="How is M2 tracking?",
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+    )
 
     planner.plan(state)
 

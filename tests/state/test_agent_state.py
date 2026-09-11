@@ -18,8 +18,13 @@ from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 
 def initial() -> AgentState:
-    """The smallest state a turn can start from: the three required fields."""
-    return AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+    """The smallest state a turn can start from: the four required fields."""
+    return AgentState(
+        request="How is M2 tracking?",
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -131,18 +136,28 @@ def test_evolve_with_no_changes_produces_an_equal_but_separate_state() -> None:
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("field", ["request", "actor", "trace_id"])
+@pytest.mark.parametrize("field", ["request", "actor", "project_code", "trace_id"])
 def test_the_identifying_fields_have_no_default(field: str) -> None:
-    kwargs = {"request": "q", "actor": "bao", "trace_id": "run-1"}
+    kwargs = {
+        "request": "q",
+        "actor": "bao",
+        "project_code": "atlas",
+        "trace_id": "run-1",
+    }
     del kwargs[field]
 
     with pytest.raises(ValidationError, match=field):
         AgentState(**kwargs)
 
 
-@pytest.mark.parametrize("field", ["request", "actor", "trace_id"])
+@pytest.mark.parametrize("field", ["request", "actor", "project_code", "trace_id"])
 def test_the_identifying_fields_cannot_be_empty(field: str) -> None:
-    kwargs = {"request": "q", "actor": "bao", "trace_id": "run-1"}
+    kwargs = {
+        "request": "q",
+        "actor": "bao",
+        "project_code": "atlas",
+        "trace_id": "run-1",
+    }
     kwargs[field] = ""
 
     with pytest.raises(ValidationError, match=field):
@@ -305,7 +320,24 @@ def test_a_state_from_another_version_is_not_loaded_silently() -> None:
     meaning changed."""
     with pytest.raises(ValidationError, match="state_version"):
         AgentState(
-            request="q", actor="bao", trace_id="run-1", state_version=STATE_VERSION + 1
+            request="q",
+            actor="bao",
+            project_code="atlas",
+            trace_id="run-1",
+            state_version=STATE_VERSION + 1,
+        )
+
+
+def test_a_v1_state_refuses_to_load_rather_than_being_read_as_projectless() -> None:
+    """v2 added the required project_code; a v1 run stored before that field
+    existed must not be silently read as a turn on no project."""
+    with pytest.raises(ValidationError, match="state_version"):
+        AgentState(
+            request="q",
+            actor="bao",
+            project_code="atlas",
+            trace_id="run-1",
+            state_version=1,
         )
 
 
@@ -328,7 +360,13 @@ def test_a_state_survives_a_round_trip_through_plain_data() -> None:
 
 def test_an_unmodelled_field_is_rejected_at_construction() -> None:
     with pytest.raises(ValidationError):
-        AgentState(request="q", actor="bao", trace_id="run-1", escalate=True)
+        AgentState(
+            request="q",
+            actor="bao",
+            project_code="atlas",
+            trace_id="run-1",
+            escalate=True,
+        )
 
 
 # --------------------------------------------------------------------------

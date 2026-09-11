@@ -318,6 +318,7 @@ def _turn(session_id: str, number: int, request: str) -> AgentState:
     return AgentState(
         request=request,
         actor="demo",
+        project_code=PROJECT,
         trace_id=f"{session_id}-run-{number}",
         session_id=session_id,
         scopes=SCOPES,

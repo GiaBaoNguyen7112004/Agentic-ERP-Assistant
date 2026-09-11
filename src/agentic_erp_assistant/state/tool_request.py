@@ -76,6 +76,15 @@ class ToolRequest(BaseModel):
     audit row is the artifact the approval rule exists to produce.
     """
 
+    project_code: str = Field(min_length=1)
+    """The project the actor is bound to for this turn.
+
+    Required, the same argument ``scopes`` already makes: a call that could
+    happen without one would be unbindable to a project, and the gateway's
+    project check (a tool whose arguments name a project it does not match)
+    would have nothing to compare against.
+    """
+
     scopes: frozenset[str]
     """What the actor is entitled to do, as granted by whatever authenticated
     them.

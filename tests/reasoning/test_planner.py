@@ -55,7 +55,9 @@ def called(name: str, **arguments) -> ToolCallResult:
 
 
 def state(request: str = "How is M2 tracking?", **changes) -> AgentState:
-    base = AgentState(request=request, actor="bao", trace_id="run-1")
+    base = AgentState(
+        request=request, actor="bao", project_code="atlas", trace_id="run-1"
+    )
     return base.evolve(**changes) if changes else base
 
 
