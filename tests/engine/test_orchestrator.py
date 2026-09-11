@@ -223,6 +223,19 @@ def test_an_approved_resume_completes_the_turn_and_empties_the_queue() -> None:
     assert any(risk.title == "vendor risk" for risk in store.risks)
 
 
+def test_resume_records_who_decided_it() -> None:
+    orchestrator, _, pauses, _, _ = an_orchestrator(a_write(), answered("Risk recorded."))
+    orchestrator.handle(start())
+
+    final = orchestrator.resume("run-1", approved=True, decided_by="priya")
+
+    assert pauses.decided_by("run-1") == "priya"
+    assert any(
+        event.kind == "approval_recorded" and "by priya" in event.detail
+        for event in final.events
+    )
+
+
 def test_a_denied_resume_ends_the_turn_without_executing_anything() -> None:
     orchestrator, traces, pauses, _, store = an_orchestrator(a_write())
     orchestrator.handle(start())

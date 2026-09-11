@@ -172,6 +172,24 @@ def test_claiming_a_run_nobody_paused_gets_nothing() -> None:
     assert InMemoryPauseStore().claim("no-such-run", approved=True) is None
 
 
+def test_claim_keeps_decided_by_beside_the_decision() -> None:
+    store = InMemoryPauseStore()
+    store.save(paused_state())
+
+    store.claim("run-1", approved=True, decided_by="priya")
+
+    assert store.decided_by("run-1") == "priya"
+
+
+def test_decided_by_defaults_to_none_when_nobody_is_named() -> None:
+    store = InMemoryPauseStore()
+    store.save(paused_state())
+
+    store.claim("run-1", approved=True)
+
+    assert store.decided_by("run-1") is None
+
+
 # --------------------------------------------------------------------------
 # The run-scoped telemetry adapter
 # --------------------------------------------------------------------------

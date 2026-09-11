@@ -182,6 +182,11 @@ CREATE TABLE IF NOT EXISTS pauses (
 CREATE UNIQUE INDEX IF NOT EXISTS pauses_one_pending_per_run
     ON pauses (trace_id) WHERE status = 'pending';
 
+-- Added after the table first shipped: who claimed the pause, beside what
+-- they decided. Idempotent, like the constraint re-apply above, so a
+-- database initialised before this column gains it on the next init run.
+ALTER TABLE pauses ADD COLUMN IF NOT EXISTS decided_by text;
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id text PRIMARY KEY,
     kind text NOT NULL

@@ -112,7 +112,9 @@ class PauseStore(Protocol):
         """
         ...
 
-    def claim(self, trace_id: str, *, approved: bool) -> AgentState | None:
+    def claim(
+        self, trace_id: str, *, approved: bool, decided_by: str | None = None
+    ) -> AgentState | None:
         """Settle the pending pause and hand back the paused state.
 
         Atomic: the decision is recorded and the pause leaves the queue in one
@@ -121,5 +123,12 @@ class PauseStore(Protocol):
         late they mean the same thing: the decision is not theirs to make
         anymore. The caller that receives a state is the only caller whose
         ``approved`` counts.
+
+        Args:
+            trace_id: The paused run being answered.
+            approved: What the human said.
+            decided_by: Who said it, for the audit trail. ``None`` when the
+                caller is a script or a test with no actor to name -- the
+                pause is still settled, just without an attributed approver.
         """
         ...

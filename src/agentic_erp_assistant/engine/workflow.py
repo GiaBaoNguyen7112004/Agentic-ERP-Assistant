@@ -274,7 +274,9 @@ class WorkflowRuntime:
 
     # -- the only way past a pause -----------------------------------------
 
-    def resume_approval(self, state: AgentState, approved: bool) -> AgentState:
+    def resume_approval(
+        self, state: AgentState, approved: bool, *, decided_by: str | None = None
+    ) -> AgentState:
         """Record a human's decision on a paused call and carry on, or refuse.
 
         The only way a paused state moves. Nothing else sets ``approval`` to
@@ -287,6 +289,8 @@ class WorkflowRuntime:
         Args:
             state: The paused state, exactly as ``run`` returned it.
             approved: What the human said.
+            decided_by: Who said it, recorded in the trace event's detail.
+                ``None`` when the caller has nobody to name.
 
         Returns:
             An approved call runs and the turn continues to a terminal state; a
@@ -302,6 +306,9 @@ class WorkflowRuntime:
                 f"it would audit an approval nobody was asked for"
             )
 
+        detail = f"{state.tool_name} {'approved' if approved else 'denied'}"
+        if decided_by is not None:
+            detail = f"{detail} by {decided_by}"
         decided = state.evolve(
             approval="approved" if approved else "denied",
             events=state.events
@@ -309,7 +316,7 @@ class WorkflowRuntime:
                 TraceEvent(
                     node="approval",
                     kind="approval_recorded",
-                    detail=f"{state.tool_name} {'approved' if approved else 'denied'}",
+                    detail=detail,
                 ),
             ),
         )

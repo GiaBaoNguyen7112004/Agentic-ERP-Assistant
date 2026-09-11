@@ -255,7 +255,9 @@ class RunOrchestrator:
         self._recorded(final, started)
         return final
 
-    def resume(self, trace_id: str, *, approved: bool) -> AgentState:
+    def resume(
+        self, trace_id: str, *, approved: bool, decided_by: str | None = None
+    ) -> AgentState:
         """Settle one approval and carry the turn on from it.
 
         The claim happens before anything runs, and that order is the
@@ -277,6 +279,8 @@ class RunOrchestrator:
         Args:
             trace_id: The paused run being answered.
             approved: What the human said.
+            decided_by: Who said it, recorded in the pause's row and in the
+                trace event. ``None`` when the caller has nobody to name.
 
         Returns:
             The turn's new final state: terminal, or paused again on a
@@ -287,7 +291,7 @@ class RunOrchestrator:
             ApprovalAlreadySettled: The pause was not waiting anymore:
                 already claimed, already denied, or never filed.
         """
-        paused = self.pauses.claim(trace_id, approved=approved)
+        paused = self.pauses.claim(trace_id, approved=approved, decided_by=decided_by)
         if paused is None:
             raise ApprovalAlreadySettled(
                 f"run {trace_id!r} has no pause waiting on a human; a decision "
@@ -295,7 +299,9 @@ class RunOrchestrator:
             )
 
         started = self.now()
-        final = self.runtime.resume_approval(paused, approved=approved)
+        final = self.runtime.resume_approval(
+            paused, approved=approved, decided_by=decided_by
+        )
         final = self._consolidated(final)
         self.traces.save_run(self._record(started, final))
         if is_paused(final):

@@ -357,6 +357,18 @@ def test_the_first_claim_wins_the_second_gets_nothing(store_connection) -> None:
     assert row[2] is not None
 
 
+def test_claim_records_who_decided_it(store_connection) -> None:
+    pauses = PostgresPauseStore(store_connection)
+    pauses.save(paused_state())
+
+    pauses.claim("run-1", approved=True, decided_by="priya")
+
+    row = store_connection.execute(
+        "SELECT decided_by FROM pauses WHERE trace_id = 'run-1'"
+    ).fetchone()
+    assert row[0] == "priya"
+
+
 # --------------------------------------------------------------------------
 # The whole story: pause, restart, approve, and settle exactly once
 # --------------------------------------------------------------------------
