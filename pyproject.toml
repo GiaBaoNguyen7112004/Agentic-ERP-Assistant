@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.5",
@@ -15,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.0",
     "tiktoken>=0.14.0",
+    "uvicorn>=0.52.4",
 ]
 
 [project.scripts]
