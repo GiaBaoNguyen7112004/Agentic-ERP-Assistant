@@ -16,7 +16,7 @@ Three things live here:
   cannot silently swallow an auth or configuration failure and retry it forever.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, Protocol, TypedDict, runtime_checkable
 
 from agentic_erp_assistant.llm.tools import ToolCallResult, ToolSpec
@@ -130,6 +130,7 @@ class LargeLanguageModelClient(Protocol):
         messages: Sequence[Message],
         *,
         temperature: float,
+        on_delta: Callable[[str], None] | None = None,
     ) -> CompletionResponse:
         """Run one completion and return its normalized result.
 
@@ -141,6 +142,18 @@ class LargeLanguageModelClient(Protocol):
         concatenated into the user turn.** An adapter that joins them has undone
         the separation the roles exist to provide, and the prompt module's
         injection boundary becomes decorative.
+
+        Args:
+            messages: The prompt, by role.
+            temperature: Passed through to the provider unchanged.
+            on_delta: When given, the adapter *may* stream: it calls this with
+                each fragment of reply content, in order, as the provider
+                sends it, and still returns the complete, normalized result
+                once the call finishes. Never called with tool-call
+                arguments -- there are none on this path. An adapter that
+                cannot stream is free to ignore it entirely; every existing
+                fake remains a valid client precisely because this is
+                optional and advisory, never a second contract to satisfy.
 
         Raises:
             ClientConfigurationError: Required local configuration is missing, so
@@ -178,6 +191,7 @@ class ToolCallingClient(Protocol):
         *,
         tools: Sequence[ToolSpec],
         temperature: float,
+        on_delta: Callable[[str], None] | None = None,
     ) -> ToolCallResult:
         """Offer ``tools`` and report the single choice that came back.
 
@@ -198,6 +212,11 @@ class ToolCallingClient(Protocol):
                 the model to choose is a caller bug.
             temperature: A routing decision is not a place for variety; callers
                 pass 0.0.
+            on_delta: The same contract as ``complete``'s -- reply *content*
+                fragments only, in order, never tool-call arguments. A model
+                choosing a tool typically streams no content at all, so
+                ``on_delta`` may simply never be called on that path; a model
+                answering directly (no tool chosen) may stream normally.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: a tool
