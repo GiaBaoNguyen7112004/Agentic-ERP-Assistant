@@ -92,6 +92,14 @@ class PendingDecision:
     requester: User
     session_id: str | None
     approver: User
+    events_already_seen: int
+    """``len(events)`` on the paused state, as it stood at precheck time.
+
+    The route uses this as ``TurnStream(start_seq=...)``: the client that
+    is deciding this approval already saw these rows when the turn first
+    paused, and re-streaming them on resume would duplicate what its trace
+    panel already has.
+    """
 
 
 @dataclass
@@ -195,6 +203,7 @@ class ChatService:
                 requester=requester,
                 session_id=pending.session_id,
                 approver=approver,
+                events_already_seen=len(pending.events),
             )
         finally:
             connection.close()

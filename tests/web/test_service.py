@@ -283,7 +283,15 @@ def test_precheck_an_already_settled_pause_is_a_conflict() -> None:
 
 
 def test_precheck_a_pending_pause_resolves_the_original_requester() -> None:
-    pending = paused_state(actor="wei")
+    from agentic_erp_assistant.state.events import TraceEvent
+
+    pending = paused_state(
+        actor="wei",
+        events=(
+            TraceEvent(node="start", kind="node_entered"),
+            TraceEvent(node="think", kind="approval_requested", detail="create_risk needs a human"),
+        ),
+    )
     service = ChatService(
         a_resources(connect=lambda: FakeConnection(pause_status="pending", pause_state=pending))
     )
@@ -293,6 +301,7 @@ def test_precheck_a_pending_pause_resolves_the_original_requester() -> None:
     assert decision.requester.actor == "wei"
     assert decision.approver.actor == "priya"
     assert decision.session_id == "sess-1"
+    assert decision.events_already_seen == 2
 
 
 # --------------------------------------------------------------------------
@@ -308,6 +317,7 @@ def a_decision(**changes):
         "requester": a_directory().get("priya"),
         "session_id": "sess-1",
         "approver": a_directory().get("priya"),
+        "events_already_seen": 3,
     }
     fields.update(changes)
     return PendingDecision(**fields)
