@@ -30,7 +30,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.llm.telemetry import InMemoryTelemetry
-from agentic_erp_assistant.llm.tools import LIST_RISKS_TOOL
+from agentic_erp_assistant.llm.tools import LIST_RISKS_TOOL, ToolCallResult
 
 MODEL = "gpt-4o"  # priced in pricing.py, so cost assertions are real
 API_KEY = "sk-test-not-a-real-key"
@@ -717,3 +717,135 @@ def test_decide_is_call_tools_with_the_planner_prompt() -> None:
     blocks = [message["content"] for message in body["messages"]]
     assert PLANNER_CONTRACT in blocks
     assert "What could go wrong on atlas?" in blocks
+
+
+# --------------------------------------------------------------------------
+# stream: the gateway streams to a sink it was built with
+# --------------------------------------------------------------------------
+
+
+class RecordingSink:
+    def __init__(self) -> None:
+        self.deltas: list[str] = []
+        self.resets = 0
+
+    def delta(self, text: str) -> None:
+        self.deltas.append(text)
+
+    def reset(self) -> None:
+        self.resets += 1
+        self.deltas.clear()
+
+
+class FakeStreamingClient:
+    """A bare port-conforming client that actually streams -- for gateway-
+    level behavior (reset-on-retry, which field gets extracted) without
+    going through real HTTP or SSE, which the adapter's own tests already
+    cover."""
+
+    model_name = "fake-streaming-1"
+
+    def __init__(self, *outcomes: object) -> None:
+        self.calls = 0
+        self._outcomes = list(outcomes)
+
+    def _next(self) -> object:
+        outcome = self._outcomes[min(self.calls, len(self._outcomes) - 1)]
+        self.calls += 1
+        return outcome
+
+    def complete(self, messages, *, temperature: float, on_delta=None):
+        outcome = self._next()
+        if isinstance(outcome, Exception):
+            raise outcome
+        text = outcome
+        if on_delta is not None:
+            for character in text:
+                on_delta(character)
+        return {
+            "text": text,
+            "model": self.model_name,
+            "stop_reason": "stop",
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        }
+
+    def call_with_tools(self, messages, *, tools, temperature: float, on_delta=None):
+        outcome = self._next()
+        if isinstance(outcome, Exception):
+            raise outcome
+        if isinstance(outcome, ToolCallResult):
+            return outcome
+        content = outcome
+        if on_delta is not None:
+            for character in content:
+                on_delta(character)
+        return ToolCallResult.from_content(content)
+
+
+def test_a_recording_sink_receives_only_the_answer_field_text() -> None:
+    client = FakeStreamingClient(GROUNDED_JSON)
+    sink = RecordingSink()
+    gateway = LLMGateway(client, context_window=128_000, stream=sink)
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+
+    assert "".join(sink.deltas) == answer.answer == "Refunds close after 30 days."
+    assert "doc-1" not in "".join(sink.deltas)
+
+
+def test_a_failed_attempt_then_a_success_resets_the_sink_exactly_once() -> None:
+    client = FakeStreamingClient(
+        TransientProviderError("boom"), GROUNDED_JSON
+    )
+    sink = RecordingSink()
+    gateway = LLMGateway(
+        client,
+        context_window=128_000,
+        stream=sink,
+        sleep=lambda _: None,
+        jitter=lambda: 1.0,
+    )
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+
+    assert sink.resets == 1
+    assert "".join(sink.deltas) == answer.answer
+    assert client.calls == 2
+
+
+def test_decide_streams_content_for_a_no_tool_reply() -> None:
+    client = FakeStreamingClient("Nothing is at risk.")
+    sink = RecordingSink()
+    gateway = LLMGateway(client, context_window=128_000, stream=sink)
+
+    decision = gateway.decide("Anything at risk?")
+
+    assert decision.tool_name is None
+    assert "".join(sink.deltas) == "Nothing is at risk."
+
+
+def test_decide_streams_nothing_for_a_tool_call() -> None:
+    client = FakeStreamingClient(
+        ToolCallResult.from_tool_call(
+            tool_name="list_risks", arguments={"project_id": "atlas"}
+        )
+    )
+    sink = RecordingSink()
+    gateway = LLMGateway(client, context_window=128_000, stream=sink)
+
+    decision = gateway.decide("What could go wrong on atlas?")
+
+    assert decision.tool_name == "list_risks"
+    assert sink.deltas == []
+
+
+def test_a_gateway_without_a_sink_never_passes_on_delta() -> None:
+    """FakePortClient's complete() has no on_delta parameter at all; if the
+    gateway ever passed the keyword regardless of whether a sink is bound,
+    this would raise TypeError instead of answering."""
+    client = FakePortClient()
+    gateway = LLMGateway(client, context_window=128_000)  # stream=None, the default
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+
+    assert answer.grounded is True

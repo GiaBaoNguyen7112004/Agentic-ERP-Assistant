@@ -39,6 +39,7 @@ from agentic_erp_assistant.llm.ports import (
 from agentic_erp_assistant.llm.prompts import build_messages, build_planner_messages
 from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
+from agentic_erp_assistant.llm.streaming import AnswerStreamSink, JsonStringFieldExtractor
 from agentic_erp_assistant.llm.telemetry import (
     InMemoryTelemetry,
     ModelCallRecord,
@@ -79,6 +80,19 @@ class ContextWindowExceeded(Exception):
     about the provider failed. This is a local refusal, decided from a local
     estimate, and the fix is to retrieve less or reserve less -- never to retry.
     """
+
+
+def _on_delta_kwarg(on_delta: Callable[[str], None] | None) -> dict[str, object]:
+    """``{"on_delta": on_delta}``, or nothing at all.
+
+    Not ``{"on_delta": None}`` when there is no sink: a client that never
+    declared the parameter (every fake predating streaming) would raise
+    ``TypeError`` on an unexpected keyword. Omitting the key entirely is
+    what keeps every such fake a valid client, exactly as the port's
+    docstring promises -- the gateway only asks a client to stream when a
+    sink is actually bound.
+    """
+    return {"on_delta": on_delta} if on_delta is not None else {}
 
 
 def _as_snippets(evidence: Evidence) -> list[EvidenceSnippet]:
@@ -145,6 +159,21 @@ class LLMGateway:
     jitter: Callable[[], float] | None = None
     """Passed to the retry engine when set; ``None`` keeps its full-jitter default."""
 
+    stream: AnswerStreamSink | None = None
+    """Where reply text goes while it is still arriving. ``None`` -- the
+    default -- means this gateway never asks the client to stream at all.
+
+    Bound here rather than threaded through :meth:`answer` and
+    :meth:`call_tools` as a parameter: the planner and the composer stay
+    ignorant of streaming either way, and a second gateway built for memory
+    work (:class:`~agentic_erp_assistant.memory.extractor.LLMMemoryProposer`
+    and its summary sibling) is built with no sink, so a memory proposal can
+    never stream into the chat. Each retried
+    attempt gets ``reset()`` called on it before its first delta -- a stream
+    that died partway is replayed from the top on the next attempt, and a
+    sink that was not told would show the reply twice.
+    """
+
     def answer(
         self,
         question: str,
@@ -201,7 +230,21 @@ class LLMGateway:
         def one_attempt():
             nonlocal attempts
             attempts += 1
-            return self.client.complete(messages, temperature=temperature)
+            on_delta = None
+            if self.stream is not None:
+                if attempts > 1:
+                    self.stream.reset()
+                extractor = JsonStringFieldExtractor("answer")
+                sink = self.stream
+
+                def on_delta(fragment: str) -> None:
+                    piece = extractor.feed(fragment)
+                    if piece:
+                        sink.delta(piece)
+
+            return self.client.complete(
+                messages, temperature=temperature, **_on_delta_kwarg(on_delta)
+            )
 
         started = time.perf_counter()
         try:
@@ -369,8 +412,17 @@ class LLMGateway:
         def one_attempt() -> ToolCallResult:
             nonlocal attempts
             attempts += 1
+            on_delta = None
+            if self.stream is not None:
+                if attempts > 1:
+                    self.stream.reset()
+                on_delta = self.stream.delta
+
             return client.call_with_tools(
-                messages, tools=tools, temperature=temperature
+                messages,
+                tools=tools,
+                temperature=temperature,
+                **_on_delta_kwarg(on_delta),
             )
 
         started = time.perf_counter()
