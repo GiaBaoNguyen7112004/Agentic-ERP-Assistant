@@ -154,6 +154,36 @@ def test_a_write_persists_to_the_file_on_disk(erp: MockErp, erp_file) -> None:
     assert "persisted, not just appended" in titles
 
 
+def test_concurrent_writes_do_not_collide_on_the_same_id(erp: MockErp) -> None:
+    """Two request threads can now reach one store; without the lock, both
+    could read ``len(self.risks)`` before either appended and hand out the
+    same id twice."""
+    import threading
+
+    errors: list[BaseException] = []
+
+    def write(title: str) -> None:
+        try:
+            erp.create_risk(project_id="atlas", title=title, severity="low")
+        except BaseException as error:  # noqa: BLE001 - captured, not swallowed
+            errors.append(error)
+
+    threads = [
+        threading.Thread(target=write, args=(f"concurrent risk {i}",))
+        for i in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    new_titles = {f"concurrent risk {i}" for i in range(8)}
+    written = [risk for risk in erp.risks if risk.title in new_titles]
+    assert len(written) == 8
+    assert len({risk.risk_id for risk in written}) == 8
+
+
 def test_a_write_keeps_the_documentation_keys(erp: MockErp, erp_file) -> None:
     """The ``_readme`` is review material; a rewrite that erased it would be a
     write that destroyed the thing it was writing to."""

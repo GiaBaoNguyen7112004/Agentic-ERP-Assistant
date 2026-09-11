@@ -40,13 +40,15 @@ documentation keys are carried across a rewrite: they are review material, and
 a write that erased its own readme would be worse than one that never touched
 the file.
 
-No lock, because there is nothing to lock against yet: the engine runs one
-node at a time and there is no web layer. Revisit this when a second request
-can arrive while the first is mid-write.
+``create_risk`` holds a lock around its append-flush-rollback sequence: the
+web layer means a second request can now arrive while the first is
+mid-write, and without one, two threads reading ``len(self.risks)`` before
+either appends would hand out the same id twice.
 """
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -173,6 +175,7 @@ class MockErp:
         self.risks = list(risks)
         self._path = path
         self._documentation: dict[str, Any] = {}
+        self._lock = threading.Lock()
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any], path: Path | None = None) -> Self:
@@ -251,21 +254,28 @@ class MockErp:
         raises :class:`ErpNotPersistedError` instead -- and any flush failure
         rolls the append back, because a store that kept the row in memory
         after refusing to write it would be claiming a write it did not make.
+
+        Holds ``self._lock`` around the append-flush-rollback sequence: the
+        web layer can have two approved writes reach this store from two
+        request threads, and without a lock one thread's ``len(self.risks)``
+        could be read before the other's append lands, handing out the same
+        id twice.
         """
-        created = Risk(
-            risk_id=f"R-{len(self.risks) + 1}",
-            project_id=project_id,
-            title=title,
-            severity=severity,
-            source_id=f"risk-r-{len(self.risks) + 1}",
-        )
-        self.risks.append(created)
-        try:
-            self._flush()
-        except BaseException:
-            self.risks.pop()
-            raise
-        return created
+        with self._lock:
+            created = Risk(
+                risk_id=f"R-{len(self.risks) + 1}",
+                project_id=project_id,
+                title=title,
+                severity=severity,
+                source_id=f"risk-r-{len(self.risks) + 1}",
+            )
+            self.risks.append(created)
+            try:
+                self._flush()
+            except BaseException:
+                self.risks.pop()
+                raise
+            return created
 
     def _flush(self) -> None:
         """Rewrite the file this store was loaded from, atomically.
