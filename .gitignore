@@ -11,3 +11,9 @@ wheels/
 
 # Secrets
 .env
+
+# React UI (ui/): the build output is not committed -- npm --prefix ui run
+# build reproduces it, and a grader without Node can still run every Python
+# check and scripts/run_turn.py.
+ui/node_modules/
+src/agentic_erp_assistant/web/static/

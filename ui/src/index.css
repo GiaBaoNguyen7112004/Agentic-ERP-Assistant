@@ -1,0 +1,307 @@
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --bg-alt: #f4f5f7;
+  --border: #d9dce1;
+  --text: #1a1d21;
+  --text-dim: #5c6370;
+  --accent: #2563eb;
+  --danger: #b3261e;
+  --ok: #1a7f37;
+  --warn: #9a5b00;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181c;
+    --bg-alt: #202226;
+    --border: #33363c;
+    --text: #eceef1;
+    --text-dim: #9aa0aa;
+    --accent: #6ea8fe;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+#root {
+  min-height: 100vh;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.app-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 340px;
+  /* Fixed, not min-height: each column below scrolls its own overflow
+     (sidebar, trace panel, the message list), so the composer stays
+     pinned at the bottom of the chat column instead of being pushed off
+     the bottom of the page as messages accumulate. */
+  height: 100vh;
+}
+
+@media (max-width: 1000px) {
+  .app-layout {
+    grid-template-columns: 1fr;
+    /* Stacked layout: the page itself scrolls, one section after another,
+       rather than three independently-scrolling panes. */
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .sidebar,
+  .trace-panel,
+  .chat-panel {
+    height: auto;
+    overflow-y: visible;
+  }
+}
+
+.sidebar,
+.trace-panel {
+  background: var(--bg-alt);
+  border-inline: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 8px;
+}
+
+h1 {
+  font-size: 1.1rem;
+}
+
+h2 {
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+select,
+textarea,
+input[type='text'] {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  width: 100%;
+}
+
+.scope-chip,
+.citation-chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  margin: 2px 4px 2px 0;
+}
+
+.citation-chip.document {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.message-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  min-height: 0; /* the flexbox scrolling gotcha: without this, flex:1 cannot
+                    shrink below the content's natural height, and overflow-y
+                    never actually scrolls -- the composer gets pushed down
+                    with the content instead. */
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.message {
+  border-radius: 10px;
+  padding: 10px 14px;
+  max-width: 90%;
+}
+
+.message.user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: #fff;
+}
+
+.message.assistant {
+  align-self: flex-start;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+}
+
+.route-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  display: block;
+}
+
+.failure-block {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+.approval-card {
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 10px;
+  margin-top: 8px;
+}
+
+.approval-card dl {
+  margin: 6px 0;
+  font-size: 0.85rem;
+}
+
+.approval-card dt {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+.approval-card dd {
+  margin: 0 0 6px;
+}
+
+.approval-actions button {
+  padding: 4px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  margin-right: 8px;
+}
+
+.approval-actions button.approve {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.approval-actions button.deny {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.composer {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.composer textarea {
+  resize: vertical;
+  min-height: 2.5em;
+}
+
+.trace-row {
+  font-size: 0.78rem;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--border);
+  display: flex;
+  gap: 6px;
+}
+
+.trace-row .kind {
+  font-weight: 600;
+}
+
+.trace-row.gateway {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.kind-decision {
+  color: var(--accent);
+}
+
+.kind-tool {
+  color: var(--ok);
+}
+
+.kind-approval {
+  color: var(--warn);
+}
+
+.kind-memory {
+  color: #9333ea;
+}
+
+.kind-failure {
+  color: var(--danger);
+}
+
+.decision-list {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: 0.82rem;
+}
+
+.turn-summary {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 8px;
+}
+
+.session-list,
+.approval-queue {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  font-size: 0.85rem;
+}
+
+.session-list li,
+.approval-queue li {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.approval-queue button {
+  margin-top: 4px;
+}

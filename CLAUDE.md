@@ -139,16 +139,18 @@ uv run pytest -q                     # once tests exist
 Add `uv run mypy src` / `uv run ruff check src` to this list as soon as those tools are
 installed, and update this file when they are.
 
-Frontend — the exact command depends on the web stack (see Open decisions); use whichever
-applies and record the real command here once the stack lands:
+Frontend — React + TypeScript + Vite in `ui/` (see Open decisions):
 
 ```bash
-npm run build          # or: npx tsc --noEmit   (bundled/TypeScript UI)
+npm --prefix ui run typecheck && npm --prefix ui test && npm --prefix ui run build
+uv run agentic-erp-assistant serve        # then open http://127.0.0.1:8000 and use it
 ```
 
-If the UI stays dependency-free browser JS with no build step, the check is: start the
-server, load the chat page, and confirm the browser console is free of errors and a
-message round-trips. A UI that was never loaded has not been verified.
+The build writes to `src/agentic_erp_assistant/web/static/` (git-ignored) and the last
+step is not optional: load the page, send a message as an actor with document access,
+watch it stream and end with clickable citations, and confirm the browser console is
+free of errors. A UI that was never loaded in a browser has not been verified —
+`npm run build` succeeding proves the code compiles, not that it works.
 
 ### 2. Commit the step
 
