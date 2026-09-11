@@ -60,10 +60,25 @@ class Citation(_Contract):
     chunk id, and this module is not the place to decide which.
     """
 
-    source_id: str = Field(min_length=1)
+    source_id: str = Field(
+        min_length=1,
+        description=(
+            "The document id alone, exactly as given with the passage -- e.g. "
+            "'sprint-12-report.md'. Never combine it with the locator and never "
+            "include '#': that shape belongs only in the rendered "
+            "[source_id#locator] tag, not in this field."
+        ),
+    )
     """The document the claim came from, e.g. ``"sprint-12-report.md"``."""
 
-    locator: str = Field(min_length=1)
+    locator: str = Field(
+        min_length=1,
+        description=(
+            "Where inside the document, alone -- e.g. '3.2', 'chunk-14', "
+            "'p.4', 'row R-2'. Never the document id, never a '#', never the "
+            "combined tag."
+        ),
+    )
     """Where inside it, e.g. ``"3.2"``, ``"chunk-14"``, ``"p.4"``."""
 
     quote: str | None = None
