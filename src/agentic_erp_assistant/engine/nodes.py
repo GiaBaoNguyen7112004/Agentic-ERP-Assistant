@@ -237,28 +237,80 @@ class GraphNodes:
                 events=events,
             )
 
-        if decision.route in ("call_tool", "request_approval"):
-            asked = decision.route == "request_approval"
+        if decision.route == "request_approval":
+            # ADR 0016: a write is put to a human only after the checks that
+            # would refuse it anyway have already passed. The transition
+            # guard still forbids an unapproved write from reaching
+            # call_tool -- this only decides whether the human is asked at
+            # all.
+            outcome = self.tools.preflight(
+                ToolRequest(
+                    trace_id=state.trace_id,
+                    tool_name=decision.required_tool,
+                    arguments=decision.tool_arguments or {},
+                    actor=state.actor,
+                    project_code=state.project_code,
+                    scopes=state.scopes,
+                    # Deliberately not state.approval: that field describes
+                    # the *previous* tool call this turn made, if any -- an
+                    # approved write earlier in the same turn must not make a
+                    # second, unrelated write look pre-approved here. Nothing
+                    # has been decided yet about *this* call, so the honest
+                    # value is the request's own default.
+                    approval="not_required",
+                )
+            )
+            if outcome.status != "approval_required":
+                return advance(
+                    state,
+                    "fail",
+                    tool_name=decision.required_tool,
+                    tool_arguments=decision.tool_arguments,
+                    tool_mutating=decision.mutating,
+                    observations=state.observations + (outcome,),
+                    failure="tool_failure",
+                    error_detail=_clip(
+                        f"{outcome.tool_name} -> {outcome.status}: "
+                        f"{outcome.error or ''}",
+                        ERROR_DETAIL_MAX_CHARS,
+                    ),
+                    events=events
+                    + (
+                        _event(
+                            "think",
+                            "failed",
+                            f"{outcome.tool_name} refused before approval: "
+                            f"{outcome.status}",
+                        ),
+                    ),
+                )
             return advance(
                 state,
                 decision.route,
-                mutating=decision.mutating if decision.route == "call_tool" else None,
                 tool_name=decision.required_tool,
                 tool_arguments=decision.tool_arguments,
                 tool_mutating=decision.mutating,
-                approval="pending" if asked else state.approval,
+                approval="pending",
+                observations=state.observations + (outcome,),
                 events=events
                 + (
-                    (
-                        _event(
-                            "think",
-                            "approval_requested",
-                            f"{decision.required_tool} needs a human",
-                        ),
-                    )
-                    if asked
-                    else ()
+                    _event(
+                        "think",
+                        "approval_requested",
+                        f"{decision.required_tool} needs a human",
+                    ),
                 ),
+            )
+
+        if decision.route == "call_tool":
+            return advance(
+                state,
+                decision.route,
+                mutating=decision.mutating,
+                tool_name=decision.required_tool,
+                tool_arguments=decision.tool_arguments,
+                tool_mutating=decision.mutating,
+                events=events,
             )
 
         if decision.route == "answer":

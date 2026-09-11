@@ -505,10 +505,18 @@ def test_a_pause_answers_after_a_restart_and_settles_once(
     reread = MockErp.load(tmp_path / "project.json")
     assert any(risk.title == "vendor slipped" for risk in reread.risks)
 
-    audit_row = store_connection.execute(
-        "SELECT trace_id, tool_name, approval FROM audit_rows"
-    ).fetchone()
-    assert audit_row == ("run-1", "create_risk", "approved")
+    # Two rows now: the preflight's approval_required row, written when the
+    # turn first paused (ADR 0016), and the execution row written on resume.
+    audit_rows = store_connection.execute(
+        "SELECT trace_id, tool_name, approval, status FROM audit_rows "
+        "ORDER BY id"
+    ).fetchall()
+    assert [row[:2] for row in audit_rows] == [
+        ("run-1", "create_risk"),
+        ("run-1", "create_risk"),
+    ]
+    assert audit_rows[0][2:] == ("not_required", "approval_required")
+    assert audit_rows[1][2:] == ("approved", "ok")
 
     with pytest.raises(ApprovalAlreadySettled):
         restarted.resume("run-1", approved=True)

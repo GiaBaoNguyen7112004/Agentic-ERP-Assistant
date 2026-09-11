@@ -287,6 +287,15 @@ def test_a_planted_memory_does_not_change_what_the_graph_routes_to() -> None:
         def execute(self, request):  # pragma: no cover
             raise AssertionError("not this path")
 
+        def preflight(self, request):
+            from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+            return ToolOutcome(
+                tool_name=request.tool_name,
+                status="approval_required",
+                error=f"{request.tool_name} needs a human",
+            )
+
         def answer(self, question, evidence, memories=(), history=()):  # pragma: no cover
             raise AssertionError("not this path")
 

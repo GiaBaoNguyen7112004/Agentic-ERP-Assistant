@@ -47,13 +47,27 @@ class RaisingRetriever:
 
 
 class FakeGateway:
-    def __init__(self, *outcomes: ToolOutcome) -> None:
+    def __init__(
+        self, *outcomes: ToolOutcome, preflight_outcome: ToolOutcome | None = None
+    ) -> None:
         self.outcomes = list(outcomes)
         self.requests: list[ToolRequest] = []
+        self.preflight_requests: list[ToolRequest] = []
+        self.preflight_outcome = preflight_outcome
 
     def execute(self, request: ToolRequest) -> ToolOutcome:
         self.requests.append(request)
         return self.outcomes[min(len(self.requests) - 1, len(self.outcomes) - 1)]
+
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        self.preflight_requests.append(request)
+        if self.preflight_outcome is not None:
+            return self.preflight_outcome
+        return ToolOutcome(
+            tool_name=request.tool_name,
+            status="approval_required",
+            error=f"{request.tool_name} needs a human",
+        )
 
 
 class FakePlanner:
@@ -184,6 +198,46 @@ def test_a_write_decision_pauses_the_turn_and_says_so_in_the_trace() -> None:
     assert result.tool_mutating
     assert "approval_requested" in kinds(result)
     assert not result.terminal
+    assert result.observations[-1].status == "approval_required"
+
+
+def test_a_write_the_preflight_refuses_never_pauses() -> None:
+    """ADR 0016: a human is asked only after the checks that would refuse the
+    call anyway have already passed. A missing scope is exactly such a check,
+    so the turn ends here instead of pausing on a call the gateway will
+    refuse whatever the human says."""
+    gateway = FakeGateway(
+        preflight_outcome=ToolOutcome(
+            tool_name="create_risk", status="denied", error="missing scope"
+        )
+    )
+    graph = nodes(
+        tools=gateway,
+        planner=FakePlanner(
+            ReasoningDecision(
+                route="request_approval",
+                confidence=0.5,
+                required_tool="create_risk",
+                tool_arguments={"project_id": "atlas", "title": "x", "severity": "low"},
+                mutating=True,
+                approval_required=True,
+            )
+        ),
+    )
+
+    result = graph.think(state())
+
+    assert (result.route, result.failure) == ("fail", "tool_failure")
+    assert result.terminal
+    assert result.approval != "pending"
+    assert result.observations[-1].status == "denied"
+    assert "create_risk -> denied" in (result.error_detail or "")
+    assert any(
+        event.kind == "failed" and "refused before approval" in event.detail
+        for event in result.events
+    )
+    assert gateway.requests == [], "execute() must never be reached"
+    assert len(gateway.preflight_requests) == 1
 
 
 def test_a_read_decision_goes_straight_to_execution() -> None:
