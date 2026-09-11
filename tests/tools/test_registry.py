@@ -15,10 +15,12 @@ from agentic_erp_assistant.tools.handlers import HandlerResult
 from agentic_erp_assistant.tools.registry import (
     build_default_registry,
     NO_RETRY,
+    RateLimitPolicy,
     RetryPolicy,
     ToolDefinition,
     ToolRegistry,
     UnknownTool,
+    WRITE_RATE_LIMIT,
 )
 
 EXPECTED = (
@@ -284,3 +286,33 @@ def test_two_registries_do_not_share_a_store(tmp_path) -> None:
     )
 
     assert "mine" not in listed.summary
+
+
+# --------------------------------------------------------------------------
+# read_rate_limit
+# --------------------------------------------------------------------------
+
+
+def test_read_rate_limit_reaches_every_read_definition(erp_file) -> None:
+    tight = RateLimitPolicy(max_calls=2, per_seconds=20.0)
+    registry = build_default_registry(MockErp.load(erp_file), read_rate_limit=tight)
+
+    for name in EXPECTED:
+        if name == "create_risk":
+            continue
+        assert registry.get(name).rate_limit == tight
+
+
+def test_read_rate_limit_does_not_reach_the_write(erp_file) -> None:
+    tight = RateLimitPolicy(max_calls=2, per_seconds=20.0)
+    registry = build_default_registry(MockErp.load(erp_file), read_rate_limit=tight)
+
+    assert registry.get("create_risk").rate_limit == WRITE_RATE_LIMIT
+
+
+def test_read_rate_limit_defaults_to_the_module_default(
+    registry: ToolRegistry,
+) -> None:
+    from agentic_erp_assistant.tools.registry import DEFAULT_RATE_LIMIT
+
+    assert registry.get("get_project_status").rate_limit == DEFAULT_RATE_LIMIT

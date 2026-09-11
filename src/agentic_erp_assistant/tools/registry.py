@@ -287,11 +287,22 @@ class ToolRegistry:
         return len(self._by_name)
 
 
-def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
+def build_default_registry(
+    erp: MockErp | None = None,
+    *,
+    read_rate_limit: RateLimitPolicy = DEFAULT_RATE_LIMIT,
+) -> ToolRegistry:
     """The six tools, with their policy, bound to one ERP store.
 
     ``erp`` is injectable so a test can hand in its own data and so two tests
     cannot see each other's writes. Defaults to the repo fixture.
+
+    ``read_rate_limit`` overrides the budget every read tool gets (writes keep
+    :data:`WRITE_RATE_LIMIT` regardless -- a mutating tool's budget is a
+    safety backstop, not something a dev toggle should loosen). The
+    composition root uses this to tighten reads for a browser demo, where a
+    person clicking around can exhaust the default budget in a way a scripted
+    test never does.
 
     The scopes are namespaced by what they grant rather than by who holds them
     (``project.risk.write``, not ``pm``), so an entitlement can be read without
@@ -309,6 +320,7 @@ def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
             approval_required=False,
             timeout_seconds=5.0,
             retry=retry,
+            rate_limit=read_rate_limit,
             handler=handlers[spec.name],
         )
 
