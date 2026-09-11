@@ -41,7 +41,7 @@ one policy for every graph and hide it from the place a reviewer looks for it.
 
 from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -53,6 +53,8 @@ from pydantic import (
 )
 
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
+from agentic_erp_assistant.state.approval import ApprovalDecision
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
@@ -80,22 +82,6 @@ state written before the field existed still validates, and the default is the
 truthful reading of it -- ``memories=()`` on a run that had no memory layer, and
 ``session_id=None`` on a run that belonged to no session. The version guards
 against fields whose *meaning* changed, which is the case no default can rescue.
-"""
-
-
-ApprovalDecision = Literal[
-    "not_required",  # nothing mutating is pending
-    "pending",       # a human has been asked and has not answered
-    "approved",      # a human said yes, and it is recorded here
-    "denied",        # a human said no
-]
-"""Where a mutating call stands with its approver.
-
-Four members, and ``"not_required"`` is a string rather than ``None`` for the
-reason ``FailureMode`` uses ``"none"``: an optional field invites
-``if state.approval:`` at the gate, which collapses "nobody needs to approve
-this" and "we asked and were refused" into the same falsy value. The one place
-that must never be ambiguous is the gate in front of a write.
 """
 
 
@@ -213,6 +199,21 @@ class AgentState(BaseModel):
     of a reason-act cycle cannot quietly change what the model is remembering.
 
     A tuple for the same reason :attr:`evidence` is one.
+    """
+
+    history: tuple[ConversationTurn, ...] = ()
+    """The session's recent turns, as this turn was shown them.
+
+    Filled by the orchestrator before the graph runs, never by a node -- the
+    same rule :attr:`memories` follows, and for the same reason: a re-plan in
+    the middle of a reason-act cycle must not quietly change what the model is
+    reminded of. Holds the clipped, tag-stripped copies the prompt actually
+    renders, not the full turns, so the trace shows exactly what the model saw
+    rather than a superset of it.
+
+    Empty on a turn with no session, and on the first turn of one. Unlike
+    :attr:`memories`, nothing here is judged by a policy: it is this actor's
+    own words, kept verbatim within the window rather than accepted or refused.
     """
 
     observations: tuple[ToolOutcome, ...] = ()

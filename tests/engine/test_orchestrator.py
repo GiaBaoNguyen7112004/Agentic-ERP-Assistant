@@ -26,15 +26,22 @@ from agentic_erp_assistant.engine.orchestrator import (
 from agentic_erp_assistant.erp.mock import DEFAULT_DATASET_PATH, MockErp
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.llm.tools import ToolCallResult
+from agentic_erp_assistant.memory.conversation import (
+    ConversationMemory,
+    InMemoryConversationStore,
+)
 from agentic_erp_assistant.memory.models import MemoryDecision
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.tools.gateway import ToolGateway
 from agentic_erp_assistant.tools.registry import build_default_registry
 from agentic_erp_assistant.trace import InMemoryPauseStore, InMemoryTraceStore
+
+from tests.memory.builders import make_turn
 
 SCOPES = frozenset(
     {
@@ -64,9 +71,13 @@ class ScriptedModel:
     def __init__(self, *results: ToolCallResult) -> None:
         self.results = list(results)
         self.calls = 0
+        self.shown_history: tuple = ()
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+    ):
         self.calls += 1
+        self.shown_history = tuple(history)
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
 
@@ -82,7 +93,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return self.answer_value
 
 
@@ -141,6 +152,18 @@ def an_orchestrator(*decisions, erp: MockErp | None = None) -> tuple[
 def start(request: str = "Record the risk.") -> AgentState:
     return AgentState(
         request=request, actor="bao", trace_id="run-1", scopes=SCOPES
+    )
+
+
+def start_in_session(
+    request: str = "Record the risk.", session_id: str = "sess-1"
+) -> AgentState:
+    return AgentState(
+        request=request,
+        actor="bao",
+        trace_id="run-1",
+        scopes=SCOPES,
+        session_id=session_id,
     )
 
 
@@ -270,13 +293,15 @@ class RecordingMemory:
         self.decisions = decisions
         self.recalls: list[AgentState] = []
         self.consolidations: list[AgentState] = []
+        self.evicted_seen: list[tuple] = []
 
     def recall(self, state):
         self.recalls.append(state)
         return self.recalled
 
-    def consolidate(self, state):
+    def consolidate(self, state, *, evicted=()):
         self.consolidations.append(state)
+        self.evicted_seen.append(tuple(evicted))
         return self.decisions
 
 
@@ -284,7 +309,7 @@ class BrokenMemory:
     def recall(self, state):
         raise RuntimeError("the store is unreachable")
 
-    def consolidate(self, state):
+    def consolidate(self, state, *, evicted=()):
         raise RuntimeError("the store is unreachable")
 
 
@@ -455,3 +480,258 @@ def test_a_memory_layer_that_is_down_cannot_fail_a_turn() -> None:
     assert final.terminal is True
     assert final.response == "Answered."
     assert traces.runs["run-1"].outcome == "terminal"
+
+
+# --------------------------------------------------------------------------
+# History: recalled before the run, recorded after it is filed, promoted
+# during consolidation
+# --------------------------------------------------------------------------
+
+
+class RecordingConversation:
+    """A SessionHistoryPort that hands back what it was built with, and counts."""
+
+    def __init__(self, *, recalled=(), evicted=()) -> None:
+        self.recalled = tuple(recalled)
+        self.evicted_turns = tuple(evicted)
+        self.recalls: list[AgentState] = []
+        self.records: list[tuple[AgentState, datetime]] = []
+        self.eviction_checks: list[AgentState] = []
+        self.promotions: list[tuple[tuple[str, ...], str]] = []
+
+    def recall(self, state):
+        self.recalls.append(state)
+        return self.recalled
+
+    def record(self, state, *, started_at):
+        self.records.append((state, started_at))
+
+    def evicted(self, state):
+        self.eviction_checks.append(state)
+        return self.evicted_turns
+
+    def promoted(self, turns, *, run):
+        self.promotions.append((tuple(turn.trace_id for turn in turns), run))
+
+
+class BrokenConversation:
+    def recall(self, state):
+        raise RuntimeError("the store is unreachable")
+
+    def record(self, state, *, started_at):
+        raise RuntimeError("the store is unreachable")
+
+    def evicted(self, state):
+        raise RuntimeError("the store is unreachable")
+
+    def promoted(self, turns, *, run):
+        raise RuntimeError("the store is unreachable")
+
+
+class BrokenTraceStore:
+    """A TraceStore whose save_run raises, for ordering assertions."""
+
+    def save_run(self, record):
+        raise RuntimeError("the trace store is down")
+
+
+def prior_turn(trace_id: str = "run-0") -> ConversationTurn:
+    return make_turn(trace_id=trace_id, actor="bao", request="Record the risk.")
+
+
+def with_conversation(
+    conversation, *decisions, memory=None, erp: MockErp | None = None
+):
+    orchestrator, traces, pauses, model, store = an_orchestrator(*decisions, erp=erp)
+    if memory is not None:
+        orchestrator.memory = memory
+    orchestrator.conversation = conversation
+    return orchestrator, traces, pauses, model, store
+
+
+def test_history_is_on_the_state_before_the_engine_sees_it() -> None:
+    conversation = RecordingConversation(recalled=(prior_turn(),))
+    orchestrator, traces, _, model, _ = with_conversation(
+        conversation, answered("On track.")
+    )
+
+    final = orchestrator.handle(start_in_session())
+
+    assert conversation.recalls[0].history == ()  # nothing had arrived yet
+    assert model.shown_history == (prior_turn(),)  # the engine was shown it
+    assert final.history == (prior_turn(),)
+    assert traces.runs["run-1"].state.history == (prior_turn(),)
+
+
+def test_no_session_means_no_history_read_and_no_turn_recorded() -> None:
+    conversation = RecordingConversation(recalled=(prior_turn(),))
+    orchestrator, _, _, _, _ = with_conversation(conversation, answered("On track."))
+
+    orchestrator.handle(start())
+
+    assert conversation.recalls == []
+    assert conversation.records == []
+
+
+def test_the_turn_is_recorded_after_the_run_is_filed() -> None:
+    """The trace store's contract is that an unsaved run did not happen, so a
+    turn whose run record could not be filed joins no window either."""
+    conversation = RecordingConversation()
+    orchestrator, _, _, _, _ = with_conversation(conversation, answered("On track."))
+    orchestrator.traces = BrokenTraceStore()
+
+    with pytest.raises(RuntimeError):
+        orchestrator.handle(start_in_session())
+
+    assert conversation.records == []
+
+
+def test_a_paused_turn_is_recorded_with_no_reply() -> None:
+    """The session's next request must see the wait in the window, not a
+    re-request of the write."""
+    conversation = ConversationMemory(
+        store=InMemoryConversationStore(), model="gpt-4o"
+    )
+    orchestrator, _, _, _, _ = with_conversation(conversation, a_write())
+
+    orchestrator.handle(start_in_session())
+
+    kept = conversation.store.recent("sess-1", actor="bao", limit=10)
+    assert len(kept) == 1
+    assert kept[0].paused is True
+    assert kept[0].response is None
+    assert kept[0].tool_name == "create_risk"
+
+
+def test_resume_records_the_same_trace_id_with_the_reply() -> None:
+    conversation = ConversationMemory(
+        store=InMemoryConversationStore(), model="gpt-4o"
+    )
+    orchestrator, _, _, _, _ = with_conversation(
+        conversation, a_write(), answered("Risk recorded.")
+    )
+    orchestrator.handle(start_in_session())
+
+    orchestrator.resume("run-1", approved=True)
+
+    kept = conversation.store.recent("sess-1", actor="bao", limit=10)
+    assert [t.trace_id for t in kept] == ["run-1"]
+    assert kept[0].response.startswith("Risk recorded.")  # plus its sources trailer
+    assert kept[0].settled is True
+
+
+def test_resume_does_not_recall_history_again() -> None:
+    """The approver's decision was judged against one window; executing it
+    against another would make the two disagree."""
+    conversation = RecordingConversation(recalled=(prior_turn(),))
+    orchestrator, _, _, _, _ = with_conversation(
+        conversation, a_write(), answered("Risk recorded.")
+    )
+    orchestrator.handle(start_in_session())
+
+    orchestrator.resume("run-1", approved=True)
+
+    assert len(conversation.recalls) == 1
+
+
+def test_a_broken_conversation_store_cannot_fail_a_turn() -> None:
+    orchestrator, traces, _, _, _ = with_conversation(
+        BrokenConversation(), answered("Answered.")
+    )
+
+    final = orchestrator.handle(start_in_session())
+
+    assert final.terminal is True
+    assert final.response == "Answered."
+    assert traces.runs["run-1"].outcome == "terminal"
+
+
+def test_history_recalled_is_in_the_run_record_only_when_non_empty() -> None:
+    """Most turns recall nothing; an event per turn saying so would bury the
+    ones that did."""
+    empty, empty_traces, _, _, _ = with_conversation(
+        RecordingConversation(), answered("On track.")
+    )
+    empty.handle(start_in_session())
+    kinds = [event.kind for event in empty_traces.runs["run-1"].state.events]
+    assert "history_recalled" not in kinds
+
+    full, full_traces, _, _, _ = with_conversation(
+        RecordingConversation(recalled=(prior_turn(),)), answered("On track.")
+    )
+    full.handle(start_in_session())
+    events = full_traces.runs["run-1"].state.events
+    assert "history_recalled" in [event.kind for event in events]
+    event = next(event for event in events if event.kind == "history_recalled")
+    assert event.node == "history"
+    assert "1 prior turn" in event.detail
+
+
+def test_evicted_turns_are_handed_to_consolidation_and_then_marked_promoted() -> None:
+    evicted = (prior_turn("run-0"),)
+    memory = RecordingMemory(decisions=(MemoryDecision(decision="write"),))
+    conversation = RecordingConversation(evicted=evicted)
+    orchestrator, traces, _, _, _ = with_conversation(
+        conversation, answered("On track."), memory=memory
+    )
+
+    orchestrator.handle(start_in_session())
+
+    assert memory.evicted_seen == [evicted]
+    assert conversation.promotions == [(("run-0",), "run-1")]
+    kinds = [event.kind for event in traces.runs["run-1"].state.events]
+    assert "history_promoted" in kinds
+
+
+def test_a_consolidation_that_raises_leaves_the_turns_unpromoted() -> None:
+    """Marking happens only when consolidation returned: a raise leaves the
+    turns in the store, retried on the session's next turn."""
+    conversation = RecordingConversation(evicted=(prior_turn("run-0"),))
+    orchestrator, traces, _, _, _ = with_conversation(
+        conversation, answered("On track."), memory=BrokenMemory()
+    )
+
+    final = orchestrator.handle(start_in_session())
+
+    assert final.terminal is True
+    assert conversation.promotions == []
+    kinds = [event.kind for event in traces.runs["run-1"].state.events]
+    assert "history_promoted" not in kinds
+
+
+def test_a_paused_turn_promotes_nothing() -> None:
+    """Consolidation is skipped for a pause, so eviction is too: the turns
+    this pause would push out stay in the window until the turn resumes."""
+    memory = RecordingMemory()
+    conversation = RecordingConversation(evicted=(prior_turn("run-0"),))
+    orchestrator, _, _, _, _ = with_conversation(
+        conversation, a_write(), memory=memory
+    )
+
+    orchestrator.handle(start_in_session())
+
+    assert memory.consolidations == []
+    assert conversation.eviction_checks == []
+    assert conversation.promotions == []
+
+
+def test_the_memory_layer_can_be_absent_while_history_is_present() -> None:
+    """``memory=None, conversation=...`` is a legitimate configuration: turns
+    are shown and recorded, and nothing is ever promoted."""
+    conversation = RecordingConversation(
+        recalled=(prior_turn(),), evicted=(prior_turn("run-0"),)
+    )
+    orchestrator, traces, _, _, _ = with_conversation(
+        conversation, answered("On track.")
+    )
+    assert orchestrator.memory is None
+
+    final = orchestrator.handle(start_in_session())
+
+    assert final.history == (prior_turn(),)
+    assert len(conversation.records) == 1
+    assert conversation.eviction_checks == []
+    assert conversation.promotions == []
+    kinds = [event.kind for event in traces.runs["run-1"].state.events]
+    assert "history_recalled" in kinds
+    assert "history_promoted" not in kinds

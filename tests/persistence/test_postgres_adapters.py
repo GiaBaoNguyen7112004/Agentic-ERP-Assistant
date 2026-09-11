@@ -104,12 +104,13 @@ def database():
 def store_connection(database):
     """A database with nothing in it, so a test's rows are its own.
 
-    Five tables, CASCADE from runs -- the same shape an operator's fresh
+    Six tables, CASCADE from runs -- the same shape an operator's fresh
     ``init_postgres`` run produces, so these tests observe the adapters, not
     whatever the previous test left behind.
     """
     database.execute(
-        "TRUNCATE runs, trace_events, audit_rows, model_calls, pauses CASCADE"
+        "TRUNCATE runs, trace_events, audit_rows, model_calls, pauses, "
+        "session_turns CASCADE"
     )
     return database
 
@@ -368,7 +369,9 @@ class ScriptedModel:
         self.results = list(results)
         self.calls = 0
 
-    def decide(self, question, evidence=(), observations=(), memories=(), *, tools=()):
+    def decide(
+        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+    ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
 
@@ -377,7 +380,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         return self.answer_value
 
 

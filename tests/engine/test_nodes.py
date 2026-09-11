@@ -6,6 +6,8 @@ writes into the trace, and -- the load-bearing one -- that an answer citing a
 source nobody retrieved never reaches a user.
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
@@ -17,11 +19,13 @@ from agentic_erp_assistant.engine.nodes import (
     SOURCES_PREFIX,
 )
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
 SCOPES = frozenset({"project.risk.read", "project.risk.write"})
+NOW = datetime(2026, 9, 8, tzinfo=UTC)
 
 
 class FakeRetriever:
@@ -62,9 +66,11 @@ class FakeComposer:
         self.answer_value = answer
         self.raises = raises
         self.calls: list[tuple] = []
+        self.history_calls: list[tuple] = []
 
-    def answer(self, question: str, evidence, memories=()):
+    def answer(self, question: str, evidence, memories=(), history=()):
         self.calls.append((question, tuple(evidence)))
+        self.history_calls.append(tuple(history))
         if self.raises is not None:
             raise self.raises
         return self.answer_value
@@ -262,6 +268,27 @@ def test_a_document_answer_carries_the_sources_it_rests_on() -> None:
     assert result.response.endswith(f"{SOURCES_PREFIX}[m2-status.md#p.2]")
     assert result.evidence == (snippet(),)
     assert "evidence_retrieved" in kinds(result)
+
+
+def test_the_composer_is_shown_the_history_on_the_state() -> None:
+    composer = FakeComposer(grounded("m2-status.md"))
+    graph = nodes(composer=composer)
+    turn = ConversationTurn(
+        trace_id="run-0",
+        session_id="sess-1",
+        actor="bao",
+        request="How is M2 tracking?",
+        response="On track.",
+        route="answer",
+        started_at=NOW,
+        finished_at=NOW,
+    )
+
+    graph.retrieve_and_answer(
+        state(route="retrieve_project_documents", session_id="sess-1", history=(turn,))
+    )
+
+    assert composer.history_calls[0] == (turn,)
 
 
 def test_the_planner_query_is_what_gets_searched() -> None:

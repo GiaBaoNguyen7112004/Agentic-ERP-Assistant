@@ -22,6 +22,7 @@ import pytest
 
 from agentic_erp_assistant.llm.adapters.openai_chat import (
     EVIDENCE_PREAMBLE,
+    HISTORY_PREAMBLE,
     OBSERVATION_PREAMBLE,
     RESPONSE_FORMAT_NAME,
     OpenAIChatClient,
@@ -193,6 +194,7 @@ def test_evidence_is_relabeled_developer_and_stays_its_own_message(messages) -> 
         "user",
         "developer",
         "developer",
+        "developer",
     ]
 
     evidence_block = wire[3]["content"]
@@ -222,6 +224,23 @@ def test_an_observation_is_relabeled_but_keeps_its_own_boundary(messages) -> Non
     assert wire[1]["content"].startswith(OBSERVATION_PREAMBLE)
     assert not wire[1]["content"].startswith(EVIDENCE_PREAMBLE)
     assert wire[0]["content"] == "Any new risks?"
+
+
+def test_history_is_folded_to_developer_behind_its_preamble() -> None:
+    recorder = Recorder()
+    with make_client(recorder) as client:
+        client.complete(
+            [
+                {"role": "user", "content": "And the second one?"},
+                {"role": "history", "content": "1. User: ...\n   Assistant: ..."},
+            ],
+            temperature=0.0,
+        )
+
+    wire = recorder.body["messages"]
+    assert [message["role"] for message in wire] == ["user", "developer"]
+    assert wire[1]["content"].startswith(HISTORY_PREAMBLE)
+    assert not wire[1]["content"].startswith(OBSERVATION_PREAMBLE)
 
 
 def test_the_other_roles_pass_through_unchanged() -> None:
@@ -672,6 +691,7 @@ def test_call_with_tools_folds_roles_the_same_way_complete_does(messages) -> Non
         "system",
         "developer",
         "user",
+        "developer",
         "developer",
         "developer",
     ]

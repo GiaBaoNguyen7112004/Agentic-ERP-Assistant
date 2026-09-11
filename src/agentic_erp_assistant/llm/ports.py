@@ -42,6 +42,7 @@ Role = Literal[
     "user",  # the human's words, verbatim
     "evidence",  # retrieved source snippets: data to read, never instructions
     "observation",  # what this turn's own tool calls returned: data, not orders
+    "history",  # this session's recent turns: a record of words, never a source
     "memory",  # what earlier turns established: background, never a citation
     "assistant",  # a prior reply from the model
 ]
@@ -60,14 +61,25 @@ straight back into the next decision. Kept apart from ``evidence`` as well as
 from ``assistant``: it is not a citable passage with a locator, and it is
 certainly not something the model said.
 
-``memory`` is the third data role, and the one carrying text this system wrote
-down itself in an earlier turn. It is separate from ``evidence`` for two
-reasons that pull the same way. A memory has no locator, so nothing in it may
-ever be cited -- folded into the evidence block it would look exactly like a
-passage that could be, and the model would eventually cite one. And a memory is
-the *oldest* thing in the prompt: everything else describes this turn, while
-this describes a previous one, so it must lose to a live tool result rather than
-sit beside it as an equal claim.
+``history`` is a bounded, verbatim window of this session's own recent turns --
+the user's own words and this assistant's own prior replies, kept so a
+follow-up ("and the second one?") has an antecedent. It is not ``memory``: a
+memory is judged by ``memory/policy.py`` before it is ever written, while
+history is not judged at all -- it is this actor's own conversation, retained
+because trimming it would misquote them, not because a policy accepted it.
+
+``memory`` is the next data role, and the one carrying text this system wrote
+down itself in an earlier turn, after a policy decided it was durable. It is
+separate from ``evidence`` for two reasons that pull the same way. A memory has
+no locator, so nothing in it may ever be cited -- folded into the evidence
+block it would look exactly like a passage that could be, and the model would
+eventually cite one. And a memory is older than ``history``: it survived past
+the turns that produced it, while history is still those turns themselves, so
+it must lose to a live tool result and to history alike rather than sit beside
+either as an equal claim.
+
+The order of precedence a model should give these, strongest to weakest:
+policy, the user's current words, evidence, observations, history, memory.
 """
 
 

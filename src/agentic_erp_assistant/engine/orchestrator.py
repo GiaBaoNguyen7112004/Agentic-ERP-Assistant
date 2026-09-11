@@ -33,6 +33,15 @@ one:
   central question -- will a human approve this? -- has no answer yet, and
   storing facts from it would remember a decision nobody has made.
 
+The short-term window -- the session's recent turns, ADR 0014 -- runs in the
+same two places on the same grounds: recall before the engine
+(:attr:`~agentic_erp_assistant.state.agent_state.AgentState.history`), and
+recording after the run is filed, so a history row never names a run the trace
+store does not have. Its third act, promotion, rides on consolidation: the
+turns this one pushed out of the window are folded into the session summary
+before the record is filed, so the ``history_promoted`` event lands in the
+trace of the turn that caused the eviction.
+
 And it can never fail a request. Recall that raises produces a turn with no
 background; consolidation that raises produces a turn nobody learned from. Both
 are logged and both leave the answer standing, because the alternative is a
@@ -53,6 +62,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime, is_paused
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.trace.ports import PauseStore, TraceStore
@@ -61,7 +71,12 @@ from agentic_erp_assistant.trace.records import RunOutcome, RunRecord
 if TYPE_CHECKING:  # pragma: no cover - a name in a signature, not a dependency
     from agentic_erp_assistant.memory.models import MemoryDecision
 
-__all__ = ["ApprovalAlreadySettled", "RunOrchestrator", "TurnMemoryPort"]
+__all__ = [
+    "ApprovalAlreadySettled",
+    "RunOrchestrator",
+    "SessionHistoryPort",
+    "TurnMemoryPort",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +114,20 @@ class TurnMemoryPort(Protocol):
         """What this turn should be shown. May be empty, and usually is."""
         ...
 
-    def consolidate(self, state: AgentState) -> Sequence["MemoryDecision"]:
+    def consolidate(
+        self, state: AgentState, *, evicted: Sequence[ConversationTurn] = ()
+    ) -> Sequence["MemoryDecision"]:
         """What the finished turn was worth, decided and written down.
+
+        Args:
+            state: The turn, terminal.
+            evicted: Turns the short-term window no longer has room for, once
+                this one joins it. Folded into the session summary when
+                non-empty; see
+                :mod:`agentic_erp_assistant.memory.promotion`. The orchestrator
+                supplies this from
+                :meth:`~agentic_erp_assistant.memory.conversation.ConversationMemory.evicted`,
+                not from ``state``.
 
         Returns every decision, refusals included: a run that refused four
         proposals and kept one is a run where the policy worked, and it must not
@@ -109,14 +136,51 @@ class TurnMemoryPort(Protocol):
         ...
 
 
+@runtime_checkable
+class SessionHistoryPort(Protocol):
+    """What the orchestrator assumes about the session's short-term window.
+
+    Declared next to its one consumer, for the same reason
+    :class:`TurnMemoryPort` is: the graph does not depend on the window at
+    all, and
+    :class:`~agentic_erp_assistant.memory.conversation.ConversationMemory`
+    satisfies this structurally without importing it.
+
+    The window is the other half of memory -- this principal's recent turns,
+    verbatim and bounded, where durable memory is judged and paraphrased --
+    and it lives by the same never-fail discipline: a store that is down
+    costs the turn its context and its summary, never its answer, and the
+    turns a broken store fails to promote are still in the store, retried on
+    a later turn.
+    """
+
+    def recall(self, state: AgentState) -> Sequence[ConversationTurn]:
+        """What this turn should be shown of its session's recent turns."""
+        ...
+
+    def record(self, state: AgentState, *, started_at: datetime) -> None:
+        """File this finished turn into its session's window.
+
+        A paused turn is recorded here too, with no reply, so the session's
+        next request is shown the wait rather than the write.
+        """
+        ...
+
+    def evicted(self, state: AgentState) -> Sequence[ConversationTurn]:
+        """Turns this turn's arrival pushed out of the window, not yet promoted."""
+        ...
+
+    def promoted(self, turns: Sequence[ConversationTurn], *, run: str) -> None:
+        """Mark these turns as folded into the session summary in ``run``."""
+        ...
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _event(kind, detail: str) -> TraceEvent:
-    return TraceEvent(
-        node="memory", kind=kind, detail=detail[:EVENT_DETAIL_MAX_CHARS]
-    )
+def _event(node: str, kind, detail: str) -> TraceEvent:
+    return TraceEvent(node=node, kind=kind, detail=detail[:EVENT_DETAIL_MAX_CHARS])
 
 
 @dataclass
@@ -136,22 +200,34 @@ class RunOrchestrator:
             ``None`` is a complete configuration and not a degraded one: a
             replay, an evaluation case and a one-shot script have no
             conversation to remember anything for.
+        conversation: The short-term window, also bound to one session and
+            actor. ``None`` is the same complete configuration: a turn with
+            no session has no recent past to be shown, and one-shot scripts
+            are shown nothing either. The two ports are independent -- the
+            window can be present while durable memory is absent, and then
+            turns are shown and recorded but nothing is promoted.
         now: The clock, injected so a test can make time deterministic and
             so the orchestrator itself never calls ``datetime.now`` at a
             distance.
 
     The ordering inside both methods is the load-bearing part and reads the
-    same in both: recall first, the engine second, the run record third, and
-    only then a pause. A pause therefore never exists without its run record
-    beside it -- an approver opening the queue always has the trace to read --
-    and consolidation happens before the record is filed, so the events it
-    produces are in the trace rather than in the next one.
+    same in both: short-term recall first, long-term recall second, the
+    engine third, consolidation -- and the promotion of evicted turns --
+    fourth, the run record fifth, only then a pause, and only then the
+    finished turn joins the window. A pause therefore never exists without
+    its run record beside it -- an approver opening the queue always has the
+    trace to read -- and consolidation happens before the record is filed, so
+    the events it produces are in the trace rather than in the next one. The
+    window record goes last for the matching reason: the trace store's
+    contract is that an unsaved run "did not happen", so a history row is
+    only ever written about a run the trace already holds.
     """
 
     runtime: WorkflowRuntime
     traces: TraceStore
     pauses: PauseStore
     memory: TurnMemoryPort | None = None
+    conversation: SessionHistoryPort | None = None
     now: Callable[[], datetime] = _utc_now
 
     def handle(self, state: AgentState) -> AgentState:
@@ -159,20 +235,24 @@ class RunOrchestrator:
 
         Args:
             state: Where the turn starts. Usually unrouted; the engine takes
-                it from there. Its ``memories`` are filled here rather than by
-                the caller -- recall is this class's job, and a caller that
-                supplied them would be a second place recall could happen.
+                it from there. Its ``history`` and ``memories`` are filled
+                here rather than by the caller -- recall is this class's job,
+                and a caller that supplied either would be a second place
+                recall could happen.
 
         Returns:
             The final state, exactly as ``runtime.run`` produced it: terminal,
-            or paused on an approval, with the memory events appended.
+            or paused on an approval, with the memory and history events
+            appended.
         """
         started = self.now()
+        state = self._with_history(state)
         final = self.runtime.run(self._recalled(state))
         final = self._consolidated(final)
         self.traces.save_run(self._record(started, final))
         if is_paused(final):
             self.pauses.save(final)
+        self._recorded(final, started)
         return final
 
     def resume(self, trace_id: str, *, approved: bool) -> AgentState:
@@ -188,7 +268,11 @@ class RunOrchestrator:
 
         Recall does not run again. The paused state already carries what this
         turn was shown, and re-recalling would mean an approver's decision was
-        made against one set of background and executed against another.
+        made against one set of background and executed against another -- the
+        same reasoning keeps short-term recall off this path. The window's
+        record is updated, though: the turn filed while it paused is upserted
+        in place with the reply it finally gave, so the session's next request
+        is shown the outcome rather than the wait.
 
         Args:
             trace_id: The paused run being answered.
@@ -216,9 +300,51 @@ class RunOrchestrator:
         self.traces.save_run(self._record(started, final))
         if is_paused(final):
             self.pauses.save(final)
+        self._recorded(final, started)
         return final
 
     # -- memory, on both sides of the run ----------------------------------
+
+    def _with_history(self, state: AgentState) -> AgentState:
+        """The starting state with the session's recent turns attached.
+
+        Never raises, for the same reason :meth:`_recalled` does not: a
+        short-term store that is down costs this turn its context, and raising
+        would cost the turn its answer. Nothing is recalled for a turn with no
+        session -- a one-shot run has no recent past to be shown, the same
+        rule the durable recall applies.
+
+        ``resume`` deliberately skips this method entirely: the paused state
+        already carries what it was shown, and re-recalling would mean the
+        approver's decision was judged against one window and executed
+        against another.
+        """
+        if self.conversation is None or state.session_id is None:
+            return state
+
+        try:
+            recalled = tuple(self.conversation.recall(state))
+        except Exception as error:  # noqa: BLE001 - a worse answer, not no answer
+            logger.warning(
+                "short-term recall failed for run %s (%s: %s); the turn "
+                "continues with no history",
+                state.trace_id,
+                type(error).__name__,
+                error,
+            )
+            return state
+
+        if not recalled:
+            return state
+        return state.evolve(
+            history=recalled,
+            events=state.events
+            + (
+                _event(
+                    "history", "history_recalled", f"{len(recalled)} prior turn(s)"
+                ),
+            ),
+        )
 
     def _recalled(self, state: AgentState) -> AgentState:
         """The starting state with its background filled in.
@@ -247,7 +373,11 @@ class RunOrchestrator:
         return state.evolve(
             memories=recalled,
             events=state.events
-            + (_event("memory_recalled", f"{len(recalled)} memor(y|ies) recalled"),),
+            + (
+                _event(
+                    "memory", "memory_recalled", f"{len(recalled)} memor(y|ies) recalled"
+                ),
+            ),
         )
 
     def _consolidated(self, final: AgentState) -> AgentState:
@@ -259,12 +389,22 @@ class RunOrchestrator:
         :meth:`~agentic_erp_assistant.trace.ports.TraceStore.record_model_call`
         does not -- the turn already answered the user, and losing what it might
         have taught is not a reason to unwind that.
+
+        The turns the short-term window evicted are folded in here, through
+        the same consolidation call, and marked promoted only once
+        consolidation has returned: a consolidation that raises leaves the
+        turns unpromoted, still in the store, to be retried on the session's
+        next turn rather than lost. That is also the price of
+        ``conversation`` without ``memory`` -- promotion lives in
+        consolidation, so turns accumulate unpromoted until a turn runs with
+        the memory layer present.
         """
         if self.memory is None or is_paused(final):
             return final
 
+        evicted = self._evicted(final)
         try:
-            decisions = self.memory.consolidate(final)
+            decisions = self.memory.consolidate(final, evicted=evicted)
         except Exception as error:  # noqa: BLE001 - see above
             logger.exception(
                 "consolidation failed for run %s (%s); the turn stands and "
@@ -274,13 +414,25 @@ class RunOrchestrator:
             )
             return final
 
+        if evicted:
+            self._promoted(evicted, final)
+
         stored = [decision for decision in decisions if decision.stores]
         refused = [decision for decision in decisions if not decision.stores]
 
         events = final.events
+        if evicted:
+            events = events + (
+                _event(
+                    "history",
+                    "history_promoted",
+                    f"{len(evicted)} turn(s) folded into the session summary",
+                ),
+            )
         if stored:
             events = events + (
                 _event(
+                    "memory",
                     "memory_written",
                     ", ".join(
                         f"{decision.decision} ({decision.reason})"
@@ -290,10 +442,84 @@ class RunOrchestrator:
             )
         for decision in refused:
             events = events + (
-                _event("memory_rejected", f"{decision.rejection}: {decision.reason}"),
+                _event("memory", "memory_rejected", f"{decision.rejection}: {decision.reason}"),
             )
 
         return final if events is final.events else final.evolve(events=events)
+
+    def _evicted(self, final: AgentState) -> Sequence[ConversationTurn]:
+        """What this turn's arrival pushed out of the window, not yet promoted.
+
+        Never raises: a short-term store that is down yields no eviction this
+        turn, and the turns it would have named are still in the store to be
+        folded in on a later turn. ``()`` for a turn with no session, before
+        the store is asked -- a question with a structural answer is not
+        worth an I/O round trip.
+        """
+        if self.conversation is None or final.session_id is None:
+            return ()
+        try:
+            return tuple(self.conversation.evicted(final))
+        except Exception as error:  # noqa: BLE001 - retried on a later turn
+            logger.warning(
+                "asking the window for evicted turns failed for run %s (%s: "
+                "%s); they stay unpromoted and are retried",
+                final.trace_id,
+                type(error).__name__,
+                error,
+            )
+            return ()
+
+    def _promoted(self, turns: Sequence[ConversationTurn], final: AgentState) -> None:
+        """Mark the evicted turns as folded into the session summary.
+
+        Never raises, and a failure here loses nothing durable: the turns
+        were already folded into the summary, and promotion is idempotent,
+        so the next turn's re-fold supersedes the same summary harmlessly.
+        What the watermark being stale does mean is that the turns stay
+        visible to a later eviction and are folded again -- one redundant
+        summary row and one more audit line, not a wrong one.
+        """
+        if self.conversation is None:  # pragma: no cover - _consolidated checked
+            return
+        try:
+            self.conversation.promoted(turns, run=final.trace_id)
+        except Exception as error:  # noqa: BLE001 - a re-fold supersedes harmlessly
+            logger.warning(
+                "marking %d promoted turn(s) failed for run %s (%s: %s); they "
+                "will be folded again on the session's next turn",
+                len(turns),
+                final.trace_id,
+                type(error).__name__,
+                error,
+            )
+
+    def _recorded(self, final: AgentState, started: datetime) -> None:
+        """File the finished turn into its session's window.
+
+        Runs after the run record is filed and after a pause is saved: the
+        trace store's contract is that an unsaved run "did not happen", so a
+        history row is only ever written about a run the trace already holds.
+        A paused turn is recorded here too, with no reply, so the session's
+        next request is shown the wait rather than the write.
+
+        Never raises, for the reason :meth:`_with_history` does not: a turn
+        that failed to join the window is one the session's next turn is not
+        shown, not a turn that failed. A turn with no session is skipped here
+        rather than trusted to the store -- a turn outside a session is never
+        history, and the question has a structural answer.
+        """
+        if self.conversation is None or final.session_id is None:
+            return
+        try:
+            self.conversation.record(final, started_at=started)
+        except Exception as error:  # noqa: BLE001 - one line of context lost, not the answer
+            logger.warning(
+                "recording the turn into the window failed for run %s (%s: %s)",
+                final.trace_id,
+                type(error).__name__,
+                error,
+            )
 
     def _record(self, started: datetime, final: AgentState) -> RunRecord:
         """The run record for a finished segment, in the shape the store takes.

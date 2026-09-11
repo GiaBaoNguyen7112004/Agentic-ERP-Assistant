@@ -51,9 +51,9 @@ uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 
 docker compose up -d postgres                        # the evidence store
-uv run python scripts/init_postgres.py               # create the eight tables
+uv run python scripts/init_postgres.py               # create the nine tables
 uv run pytest -m postgres                            # the SQL adapters, for real
-uv run python scripts/demo_memory_session.py         # two turns, and what was kept
+uv run python scripts/demo_memory_session.py         # two turns, the window, and what was kept
 ```
 
 Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile stays in sync.
@@ -203,10 +203,16 @@ Not yet chosen; ask before assuming, and update this file once settled.
   lookups rather than traversals (ADR 0013). What is stored is decided by
   `memory/policy.py`, a pure function whose default is to refuse (ADR 0011), and
   memory reaches a prompt in its own role where it can never become a citation
-  (ADR 0012). `QDRANT_MEMORY_COLLECTION` and `MemoryService.required_scope` are
+  (ADR 0012). On top of that sits short-term memory (ADR 0014): `session_turns`
+  keeps a verbatim, bounded window of the session's recent turns, they reach the
+  prompt in a `history` role of their own — not policy-gated, defended
+  structurally — and turns evicted from the window are folded into the session's
+  `session_summary` through the compaction allow-list, with an audit row.
+  `QDRANT_MEMORY_COLLECTION` and `MemoryService.required_scope` are
   the two configuration points.
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
-  are driven by the caller — and nothing produces the conversation state a
-  session summary is built from until the web layer does.
+  are driven by the caller — and the `think -> answer` route has no structural
+  grounding check, so a planner answering from the history block remains
+  model-dependent (ADR 0014's stated residual risk).
 - Trace persistence (files vs. SQLite) and eval report format.

@@ -12,6 +12,7 @@ from agentic_erp_assistant.state.agent_state import (
     ERROR_DETAIL_MAX_CHARS,
     STATE_VERSION,
 )
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import (
     EVENT_DETAIL_MAX_CHARS,
     EventKind,
@@ -30,6 +31,7 @@ from agentic_erp_assistant.state.tool_request import ToolRequest
 __all__ = [
     "AgentState",
     "ApprovalDecision",
+    "ConversationTurn",
     "ERROR_DETAIL_MAX_CHARS",
     "EVENT_DETAIL_MAX_CHARS",
     "EventKind",

@@ -10,6 +10,7 @@ from agentic_erp_assistant.state.agent_state import (
     ERROR_DETAIL_MAX_CHARS,
     STATE_VERSION,
 )
+from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
@@ -468,3 +469,47 @@ def test_a_state_written_before_memory_existed_still_loads() -> None:
     assert loaded.memories == ()
     assert loaded.session_id is None
     assert loaded.state_version == STATE_VERSION
+
+
+def turn() -> ConversationTurn:
+    return ConversationTurn(
+        trace_id="run-0",
+        session_id="sess-1",
+        actor="bao",
+        request="How is M2 tracking?",
+        response="On track.",
+        route="answer",
+        started_at=datetime(2026, 9, 8, tzinfo=UTC),
+        finished_at=datetime(2026, 9, 8, tzinfo=UTC),
+    )
+
+
+def test_a_turn_starts_with_no_history() -> None:
+    state = initial()
+
+    assert state.history == ()
+
+
+def test_a_stored_state_without_history_loads_with_none() -> None:
+    stored = initial().model_dump()
+    del stored["history"]
+
+    loaded = AgentState.model_validate(stored)
+
+    assert loaded.history == ()
+    assert loaded.state_version == STATE_VERSION
+
+
+def test_evolve_carries_history() -> None:
+    state = initial().evolve(session_id="sess-1", history=(turn(),))
+
+    carried = state.evolve(step_count=1)
+
+    assert carried.history == (turn(),)
+    assert carried.session_id == "sess-1"
+
+
+def test_a_state_carrying_history_round_trips_through_plain_data() -> None:
+    state = initial().evolve(session_id="sess-1", history=(turn(),))
+
+    assert AgentState.model_validate(state.model_dump()) == state
