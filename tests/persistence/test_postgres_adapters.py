@@ -178,6 +178,21 @@ def test_a_run_round_trips_into_its_identical_state(store_connection) -> None:
     assert events[0] == len(EVENTS)
 
 
+def test_a_saved_run_writes_its_project_code_as_its_own_column(
+    store_connection,
+) -> None:
+    """Not only inside the jsonb state -- a screen listing runs by project
+    should not have to parse the state to filter on it."""
+    traces = PostgresTraceStore(store_connection)
+
+    traces.save_run(a_record(finished_state()))
+
+    row = store_connection.execute(
+        "SELECT project_code FROM runs WHERE trace_id = 'run-1'"
+    ).fetchone()
+    assert row[0] == "atlas"
+
+
 def test_a_run_that_never_happened_loads_as_none(store_connection) -> None:
     assert PostgresTraceStore(store_connection).load_run("no-such-run") is None
 

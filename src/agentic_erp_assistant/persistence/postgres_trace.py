@@ -79,15 +79,16 @@ class PostgresTraceStore:
                 """
                 INSERT INTO runs
                     (trace_id, actor, request, outcome, started_at, finished_at,
-                     state)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                     state, project_code)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (trace_id) DO UPDATE SET
                     actor = EXCLUDED.actor,
                     request = EXCLUDED.request,
                     outcome = EXCLUDED.outcome,
                     started_at = LEAST(runs.started_at, EXCLUDED.started_at),
                     finished_at = EXCLUDED.finished_at,
-                    state = EXCLUDED.state
+                    state = EXCLUDED.state,
+                    project_code = EXCLUDED.project_code
                 """,
                 (
                     record.trace_id,
@@ -97,6 +98,7 @@ class PostgresTraceStore:
                     record.started_at,
                     record.finished_at,
                     Jsonb(state.model_dump(mode="json")),
+                    state.project_code,
                 ),
             )
             self._connection.cursor().executemany(

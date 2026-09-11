@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS runs (
     state jsonb NOT NULL
 );
 
+-- Added after the table first shipped, alongside AgentState.project_code
+-- (STATE_VERSION 2). Idempotent, like the pauses.decided_by column above.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS project_code text;
+
 CREATE TABLE IF NOT EXISTS trace_events (
     trace_id text NOT NULL REFERENCES runs (trace_id) ON DELETE CASCADE,
     seq integer NOT NULL,
