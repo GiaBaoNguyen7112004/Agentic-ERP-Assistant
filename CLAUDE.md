@@ -39,7 +39,7 @@ be able to defend every trade-off verbally.
 
 ```bash
 uv sync                      # install/refresh the environment
-uv run agentic-erp-assistant # run the CLI entry point
+uv run agentic-erp-assistant serve # start the web layer (FastAPI + the built React app)
 uv run pytest                # tests (once pytest is a dev dependency)
 uv add <pkg>                 # add a runtime dependency
 uv add --dev <pkg>           # add a dev dependency
@@ -54,6 +54,13 @@ docker compose up -d postgres                        # the evidence store
 uv run python scripts/init_postgres.py               # create the nine tables
 uv run pytest -m postgres                            # the SQL adapters, for real
 uv run python scripts/demo_memory_session.py         # two turns, the window, and what was kept
+uv run python scripts/demo_pause_across_restart.py   # a pause survives a restart, for real
+
+uv run python scripts/run_turn.py --actor priya "Why is milestone M2 late?"   # one real turn
+uv run python scripts/run_turn.py --actor priya --approve <trace_id>          # resume a pause
+
+npm --prefix ui install && npm --prefix ui run build # the React app -> web/static/
+uv run agentic-erp-assistant serve                   # http://127.0.0.1:8000
 ```
 
 Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile stays in sync.
@@ -81,11 +88,18 @@ src/agentic_erp_assistant/
   llm/adapters/  vendor adapters (openai_chat.py); the only place a provider is named
   rag/         ingestion, chunking, index, retrieval, citation objects
   tools/       MCP-style tool boundary: typed schemas, router, approval gating
-  erp/         optional ERP provider plugin over mock project data
+  erp/         mock ERP provider over project data, project-bound (ProjectErp, ADR 0017)
   guardrails/  input/output checks, refusal + escalation paths
   trace/       structured trace records, run store, export for evidence
+  persistence/ the Postgres adapters behind trace/memory's ports, schema, and
+               EvidenceQueries -- the plain-SQL read model web/ uses
   eval/        offline eval harness, datasets, scored runs
-  web/         HTTP/SSE surface + the browser chat UI (accessible, responsive)
+  composition/ where the environment becomes typed config (settings.py), the
+               process-wide clients get built once (resources.py), and one
+               turn's ports get assembled per request (turn.py) -- the one
+               place engine/llm/tools/rag/memory's ports meet a real adapter
+  web/         FastAPI + hand-written SSE over the engine, and the built React
+               app (ui/) it serves -- ADR 0015
 ```
 
 Design rules:
@@ -182,9 +196,26 @@ Rules:
 
 Not yet chosen; ask before assuming, and update this file once settled.
 
-- Web layer: no HTTP framework or JS tooling is present yet. Default suggestion is a
-  Python framework serving SSE plus a dependency-free browser UI, matching the
-  Python-only repo — confirm before scaffolding.
+- ~~Web layer~~ — settled: FastAPI + uvicorn, one worker (the rate limiter, the
+  flaky-tool counter, and the ERP lock are in-process state, ADR 0004), hand-written
+  SSE (`web/protocol.py`'s nine event types, `web/stream.py`'s thread → asyncio
+  bridge) over the engine, which stays synchronous — a turn runs on a worker thread
+  via `loop.run_in_executor`, never on the event loop. React 18+ TypeScript + Vite in
+  `ui/`, building into `web/static/` (git-ignored); `ui/src/turnReducer.ts` is the
+  pure, tested core every rendered turn goes through, and
+  `tests/web/test_protocol_drift.py` fails the Python suite the day
+  `web/protocol.py` and `ui/src/protocol.ts` disagree. `AgentState.project_code`
+  is required (`STATE_VERSION = 2`, ADR 0017) and a write is put to a human only
+  after the gateway's own checks already passed (ADR 0016) — see ADR 0015 for the
+  web layer itself. `agentic-erp-assistant serve [--host] [--port] [--reload]`
+  starts it; `scripts/run_turn.py --actor <name> [--session ...] "<question>"` (or
+  `--approve`/`--deny <trace_id>`) proves the composition root from the terminal,
+  no browser required. `data/users.json` is the dev-only actor directory (no
+  login); `OPENAI_CONTEXT_WINDOW` is required in `.env` alongside `OPENAI_MODEL`;
+  the `DEV_*` toggles (`DEV_TOOL_RATE_LIMIT`, `DEV_FLAKY_STATUS`, `DEV_MAX_STEPS`,
+  `DEV_HISTORY_TURN_LIMIT`) exist only so a browser session can reach paths a
+  scripted test reaches with a fake clock instead — see `.env.example` and
+  `composition/settings.py`.
 - ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
   `llm/adapters/openai_chat.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
   repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
@@ -217,4 +248,11 @@ Not yet chosen; ask before assuming, and update this file once settled.
   are driven by the caller — and the `think -> answer` route has no structural
   grounding check, so a planner answering from the history block remains
   model-dependent (ADR 0014's stated residual risk).
-- Trace persistence (files vs. SQLite) and eval report format.
+- ~~Trace persistence~~ — settled: Postgres (`persistence/schema.py`, nine tables,
+  `docker compose up -d postgres && uv run python scripts/init_postgres.py`).
+  `web/`'s read model (`persistence/postgres_queries.py::EvidenceQueries`) is
+  plain SQL over those tables, deliberately not new methods on the write-side
+  ports — a listing query is a screen's need, and widening a port to serve it
+  would give every fake standing in for it in an engine test a method the engine
+  never calls.
+- Eval report format: still open.

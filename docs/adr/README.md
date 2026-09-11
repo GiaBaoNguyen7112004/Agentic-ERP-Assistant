@@ -26,6 +26,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0012](0012-memory-is-context-and-never-a-citation.md) | Memory is context in a role of its own, and can never be a citation | Accepted |
 | [0013](0013-postgres-is-the-memory-record-and-graph-memory-is-rejected.md) | Postgres is the memory record, Qdrant indexes it, and graph memory is rejected | Accepted |
 | [0014](0014-short-term-memory-is-a-verbatim-window-and-eviction-feeds-the-summary.md) | Short-term memory is a verbatim window, and eviction feeds the summary | Accepted |
+| [0015](0015-the-web-layer-is-a-thin-shell-and-the-filed-trace-is-the-record.md) | The web layer is a thin async shell, streamed text is a preview, and the filed trace is the record | Accepted |
 | [0016](0016-a-write-is-put-to-a-human-only-after-the-gateway-agrees-it-could-run.md) | A write is put to a human only after the gateway agrees it could run | Accepted |
 | [0017](0017-tools-are-bound-to-the-actors-project-at-the-store-and-at-the-gateway.md) | Tools are bound to the actor's project, at the store and at the gateway | Accepted |
 
