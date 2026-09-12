@@ -118,9 +118,9 @@ the corpus (it costs money; `ingest_documents.py --dry-run` says how much).
 | `orion.lead` | Delivery lead (Orion) | **orion** | docs, status, budget, risk read+write | read the Orion report; Orion's `O2`, budget and risks; record an Orion risk (needs an approver) | read anything Atlas — documents *and* ERP records: Atlas's `M2` does not exist for this actor, and a call naming `project_id=atlas` is `denied` |
 | `guest` | No entitlements | atlas | — | nothing: every tool denied, every document refused | — |
 
-Switching actor = the `<select>` in the sidebar. No login. The approver of a
-pause is whoever is selected when Approve/Deny is clicked; the turn itself
-resumes as the actor who asked.
+Switching actor = the actor selector (the Radix `Select` in the sidebar). No
+login. The approver of a pause is whoever is selected when Approve/Deny is
+clicked; the turn itself resumes as the actor who asked.
 
 The **project** column is enforced on both read paths (ADR 0008/0017): documents
 through the manifest's `project_code`, ERP records through `MockErp.for_project`
@@ -163,9 +163,9 @@ are ERP record ids from `Sources:`.
 | `memory_written` / `memory_rejected` | orchestrator, after the run | what consolidation stored, and what it refused and why |
 | `history_promoted` | orchestrator, after the run | turns leaving the window were folded into the session summary |
 
-Italic rows have no `seq`: they come from the tool gateway's hook and are live
-only; the persisted trace holds the node-level rows (the code plan lists this as
-known gap #3).
+Italic, muted rows marked ↳ have no `seq`: they come from the tool gateway's
+hook and are live only (the row's own tooltip says so); the persisted trace
+holds the node-level rows (the code plan lists this as known gap #3).
 
 **Decisions** sub-list: every route change with the tool and its arguments.
 **Summary** line after `turn_finished`: steps, model calls, tokens, cost,

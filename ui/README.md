@@ -1,32 +1,23 @@
-# React + TypeScript + Vite
+# ui/ — the Agentic ERP Assistant's web client
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React 19 + TypeScript + Vite 7, built with Tailwind v4 and hand-written shadcn
+components (see `components.json`; primitives under `src/components/ui/`, project
+components under `src/components/shared/`). One page, three columns: sidebar
+(actor, sessions, pending approvals) · chat · trace, served by FastAPI from
+`web/static/` (`npm run build`, git-ignored).
 
-Currently, two official plugins are available:
+Scripts: `npm run dev` (Vite dev server proxying `/api` to :8000) ·
+`npm test` (vitest, jsdom) · `npm run typecheck` · `npm run lint` (oxlint) ·
+`npm run build`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Structure:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
-```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+- `src/protocol.ts` mirrors `web/protocol.py` field for field —
+  `tests/web/test_protocol_drift.py` fails the Python suite when they drift.
+- `src/turnReducer.ts` is the pure, tested core: one function turns the SSE
+  stream into a `TurnView`; every rendered turn reads one.
+- `src/{appState,useTurnStream,sse,api}.ts`: state, the stream hook, the SSE
+  parser, fetch wrappers — none of it changes with presentation.
+- `src/lib/{routeBadge,traceTone,format}.ts` are the pure presentation maps;
+  badge labels are quoted verbatim in `docs/manual-test.md` §3.
+- Dark mode follows the OS; tokens live in `src/index.css`.
