@@ -221,6 +221,7 @@ def build_turn(
         PostgresPauseStore(connection),
         memory=memory,
         conversation=conversation,
+        declarer=planner,
     )
 
     return TurnPorts(

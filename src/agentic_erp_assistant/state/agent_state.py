@@ -58,6 +58,7 @@ from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
@@ -230,6 +231,23 @@ class AgentState(BaseModel):
     Empty on a turn with no session, and on the first turn of one. Unlike
     :attr:`memories`, nothing here is judged by a policy: it is this actor's
     own words, kept verbatim within the window rather than accepted or refused.
+    """
+
+    contract: ReplyContract | None = None
+    """What the planner declared a complete reply to this turn must rest on
+    (ADR 0021), or ``None``.
+
+    Filled by the orchestrator before the graph runs, never by a node -- the
+    same rule :attr:`memories` and :attr:`history` follow, and for the same
+    reason: what the reply is being held to must not change mid-turn because
+    a re-plan happened to run. ``None`` means "this turn was never checked" --
+    a replay, a hand-built test state, a state paused before this field
+    existed, or a declaration call that raised outright (as opposed to one
+    that merely answered unreadably, which is
+    :data:`~agentic_erp_assistant.state.reply_contract.EMPTY_CONTRACT`, a real
+    declaration of nothing needed) -- and every completeness check in
+    :mod:`agentic_erp_assistant.reasoning.completeness` treats it exactly
+    like a contract with no needs at all: nothing to hold the turn to.
     """
 
     observations: tuple[ToolOutcome, ...] = ()

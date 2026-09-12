@@ -65,6 +65,7 @@ from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.trace.ports import PauseStore, TraceStore
 from agentic_erp_assistant.trace.records import RunOutcome, RunRecord
 
@@ -73,6 +74,7 @@ if TYPE_CHECKING:  # pragma: no cover - a name in a signature, not a dependency
 
 __all__ = [
     "ApprovalAlreadySettled",
+    "ContractDeclarerPort",
     "RunOrchestrator",
     "SessionHistoryPort",
     "TurnMemoryPort",
@@ -175,6 +177,39 @@ class SessionHistoryPort(Protocol):
         ...
 
 
+@runtime_checkable
+class ContractDeclarerPort(Protocol):
+    """What the orchestrator assumes about whatever declares a reply contract.
+
+    Declared here rather than in :mod:`agentic_erp_assistant.engine.ports`,
+    for the same reason :class:`TurnMemoryPort` is: the graph does not
+    depend on a reply contract at all -- ``engine/nodes.py::think`` reads
+    :attr:`~agentic_erp_assistant.state.agent_state.AgentState.contract`
+    directly off the state, the same way it reads ``evidence`` or
+    ``observations``, never through a port. That module's promise is that
+    the workflow's entire external surface is four protocols on one screen,
+    and adding a fifth would break it for a collaborator only the
+    composition point has.
+
+    Satisfied by
+    :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare`
+    structurally, without importing it.
+    """
+
+    def declare(self, state: AgentState) -> ReplyContract:
+        """Say what a complete reply to ``state.request`` must rest on.
+
+        Never raises for an unreadable declaration -- see
+        :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare` for
+        what "unreadable" absorbs and what it does not. A raised exception
+        here means the call itself never produced a reply (network, auth,
+        retries exhausted, budget), and :meth:`RunOrchestrator._declared` is
+        where that is turned into "this turn continues unchecked" rather
+        than a failed request.
+        """
+        ...
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -206,21 +241,35 @@ class RunOrchestrator:
             are shown nothing either. The two ports are independent -- the
             window can be present while durable memory is absent, and then
             turns are shown and recorded but nothing is promoted.
+        declarer: What declares this turn's reply contract (ADR 0021).
+            ``None`` is a complete configuration, the same as ``memory`` and
+            ``conversation``: a turn with no declarer runs exactly as every
+            turn did before this port existed --
+            :attr:`~agentic_erp_assistant.state.agent_state.AgentState.contract`
+            stays ``None``, and every completeness check in
+            :mod:`agentic_erp_assistant.reasoning.completeness` reads that as
+            "nothing to hold this turn to".
         now: The clock, injected so a test can make time deterministic and
             so the orchestrator itself never calls ``datetime.now`` at a
             distance.
 
     The ordering inside both methods is the load-bearing part and reads the
     same in both: short-term recall first, long-term recall second, the
-    engine third, consolidation -- and the promotion of evicted turns --
-    fourth, the run record fifth, only then a pause, and only then the
-    finished turn joins the window. A pause therefore never exists without
-    its run record beside it -- an approver opening the queue always has the
-    trace to read -- and consolidation happens before the record is filed, so
-    the events it produces are in the trace rather than in the next one. The
-    window record goes last for the matching reason: the trace store's
-    contract is that an unsaved run "did not happen", so a history row is
-    only ever written about a run the trace already holds.
+    reply contract declared third, the engine fourth, consolidation -- and
+    the promotion of evicted turns -- fifth, the run record sixth, only then
+    a pause, and only then the finished turn joins the window. A pause
+    therefore never exists without its run record beside it -- an approver
+    opening the queue always has the trace to read -- and consolidation
+    happens before the record is filed, so the events it produces are in the
+    trace rather than in the next one. The window record goes last for the
+    matching reason: the trace store's contract is that an unsaved run "did
+    not happen", so a history row is only ever written about a run the
+    trace already holds. The contract is declared after both recalls and
+    before the engine for the same reason recall runs before the engine at
+    all: it is background the turn is shown (or, here, held to) once, not a
+    re-plan's business to revisit mid-turn -- and after recall specifically
+    because it costs a model call of its own and gains nothing from running
+    first.
     """
 
     runtime: WorkflowRuntime
@@ -228,6 +277,7 @@ class RunOrchestrator:
     pauses: PauseStore
     memory: TurnMemoryPort | None = None
     conversation: SessionHistoryPort | None = None
+    declarer: ContractDeclarerPort | None = None
     now: Callable[[], datetime] = _utc_now
 
     def handle(self, state: AgentState) -> AgentState:
@@ -235,19 +285,20 @@ class RunOrchestrator:
 
         Args:
             state: Where the turn starts. Usually unrouted; the engine takes
-                it from there. Its ``history`` and ``memories`` are filled
-                here rather than by the caller -- recall is this class's job,
-                and a caller that supplied either would be a second place
-                recall could happen.
+                it from there. Its ``history``, ``memories`` and ``contract``
+                are filled here rather than by the caller -- recall and
+                declaration are this class's job, and a caller that supplied
+                any of them would be a second place that could happen.
 
         Returns:
             The final state, exactly as ``runtime.run`` produced it: terminal,
-            or paused on an approval, with the memory and history events
-            appended.
+            or paused on an approval, with the memory, history and
+            declaration events appended.
         """
         started = self.now()
         state = self._with_history(state)
-        final = self.runtime.run(self._recalled(state))
+        state = self._recalled(state)
+        final = self.runtime.run(self._declared(state))
         final = self._consolidated(final)
         self.traces.save_run(self._record(started, final))
         if is_paused(final):
@@ -384,6 +435,46 @@ class RunOrchestrator:
                     "memory", "memory_recalled", f"{len(recalled)} memor(y|ies) recalled"
                 ),
             ),
+        )
+
+    def _declared(self, state: AgentState) -> AgentState:
+        """The starting state with its reply contract attached (ADR 0021).
+
+        Never raises. A declarer that is down, or whose call never returned
+        (network, auth, retries exhausted, budget), leaves
+        :attr:`~agentic_erp_assistant.state.agent_state.AgentState.contract`
+        at ``None`` -- "this turn was never checked", exactly the value a
+        replay or a hand-built state already carries. An *unreadable answer*
+        from a call that did succeed is not this method's concern:
+        :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare`
+        already turns that into
+        :data:`~agentic_erp_assistant.state.reply_contract.EMPTY_CONTRACT`,
+        a real declaration of nothing needed, before it ever gets here.
+        """
+        if self.declarer is None:
+            return state
+
+        try:
+            contract = self.declarer.declare(state)
+        except Exception as error:  # noqa: BLE001 - a worse answer, not no answer
+            logger.warning(
+                "reply-contract declaration failed for run %s (%s: %s); the "
+                "turn continues unchecked",
+                state.trace_id,
+                type(error).__name__,
+                error,
+            )
+            return state
+
+        detail = (
+            f"needs={','.join(sorted(contract.needs))} "
+            f"query={contract.document_query!r}"
+            if contract.needs
+            else "needs=(none)"
+        )
+        return state.evolve(
+            contract=contract,
+            events=state.events + (_event("contract", "contract_declared", detail),),
         )
 
     def _consolidated(self, final: AgentState) -> AgentState:

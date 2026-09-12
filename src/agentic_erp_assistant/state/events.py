@@ -50,6 +50,7 @@ EventKind = Literal[
     "memory_rejected",    # something proposed was refused, and by which rule
     "history_recalled",   # the session's recent turns entered the prompt
     "history_promoted",   # turns leaving the window were folded into the summary
+    "contract_declared",  # the planner said what a complete reply needs to rest on
     "failed",             # a FailureMode was assigned
     "run_failed",         # the loop guard ended a run that would not end
 ]
@@ -88,6 +89,14 @@ window -- into the session summary, where it is paraphrased and bounded -- are
 different facts about one mechanism, and the second is the one a reviewer of
 the promotion path counts. It is the watermark's receipt: everything named in
 its detail has a summary row beside it or nothing was promoted.
+
+``contract_declared`` joins them on the same grounds, for the reason ADR 0021
+gives: what a complete reply to this turn must rest on is decided once,
+before the graph runs, the same way recall is -- not a re-plan's business to
+revisit mid-turn. Its detail names the declared needs, or says a declaration
+was unreadable and this turn continues unchecked; the check itself, and what
+it does when a declared need goes unmet, is a later event this kind does not
+carry.
 
 None of them is emitted by a node. Recall happens before the graph runs and
 consolidation after it ends, both in the orchestrator, so these events describe

@@ -14,6 +14,7 @@ from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 
@@ -549,5 +550,48 @@ def test_evolve_carries_history() -> None:
 
 def test_a_state_carrying_history_round_trips_through_plain_data() -> None:
     state = initial().evolve(session_id="sess-1", history=(turn(),))
+
+    assert AgentState.model_validate(state.model_dump()) == state
+
+
+# --------------------------------------------------------------------------
+# The declared reply contract (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_a_turn_starts_unchecked() -> None:
+    """None, not EMPTY_CONTRACT: no declaration was ever attempted -- see
+    the field's own docstring for why the two are kept apart."""
+    state = initial()
+
+    assert state.contract is None
+
+
+def test_a_stored_state_without_a_contract_loads_as_unchecked() -> None:
+    """Why adding this field needed no STATE_VERSION bump: the stored
+    document predates it and None is the truthful reading of it."""
+    stored = initial().model_dump()
+    del stored["contract"]
+
+    loaded = AgentState.model_validate(stored)
+
+    assert loaded.contract is None
+    assert loaded.state_version == STATE_VERSION
+
+
+def test_evolve_carries_the_contract() -> None:
+    declared = ReplyContract(
+        needs=frozenset({"document_passage", "erp_field"}), document_query="why is M2 late"
+    )
+    state = initial().evolve(contract=declared)
+
+    carried = state.evolve(step_count=1)
+
+    assert carried.contract == declared
+
+
+def test_a_state_carrying_a_contract_round_trips_through_plain_data() -> None:
+    declared = ReplyContract(needs=frozenset({"erp_field"}))
+    state = initial().evolve(contract=declared)
 
     assert AgentState.model_validate(state.model_dump()) == state

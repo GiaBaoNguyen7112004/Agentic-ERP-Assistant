@@ -37,6 +37,7 @@ from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.tools.gateway import ToolGateway
 from agentic_erp_assistant.tools.registry import build_default_registry
 from agentic_erp_assistant.trace import InMemoryPauseStore, InMemoryTraceStore
@@ -761,3 +762,121 @@ def test_the_memory_layer_can_be_absent_while_history_is_present() -> None:
     kinds = [event.kind for event in traces.runs["run-1"].state.events]
     assert "history_recalled" in kinds
     assert "history_promoted" not in kinds
+
+
+# --------------------------------------------------------------------------
+# The reply contract, declared before the engine sees the state (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+class RecordingDeclarer:
+    """A ContractDeclarerPort that hands back what it was built with, and
+    counts."""
+
+    def __init__(self, contract: ReplyContract) -> None:
+        self.contract = contract
+        self.declares: list[AgentState] = []
+
+    def declare(self, state):
+        self.declares.append(state)
+        return self.contract
+
+
+class BrokenDeclarer:
+    def declare(self, state):
+        raise RuntimeError("the declaration call is unreachable")
+
+
+def with_declarer(declarer, *decisions, erp: MockErp | None = None):
+    orchestrator, traces, pauses, model, store = an_orchestrator(*decisions, erp=erp)
+    orchestrator.declarer = declarer
+    return orchestrator, traces, pauses, model, store
+
+
+def test_no_declarer_is_a_complete_configuration() -> None:
+    """A replay, an evaluation case and a one-shot script run exactly as
+    every turn did before this port existed."""
+    orchestrator, _, _, _, _ = an_orchestrator(answered("Nothing to do."))
+
+    assert orchestrator.declarer is None
+    final = orchestrator.handle(start())
+
+    assert final.terminal is True
+    assert final.contract is None
+
+
+def test_declaration_fills_the_state_before_the_engine_sees_it() -> None:
+    """Not the caller's job: a caller that supplied a contract would be a
+    second place declaration could happen."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset({"erp_field"})))
+    orchestrator, _, _, _, _ = with_declarer(declarer, answered("On track."))
+
+    final = orchestrator.handle(start())
+
+    assert final.contract == ReplyContract(needs=frozenset({"erp_field"}))
+    assert declarer.declares[0].contract is None
+
+
+def test_a_declared_turn_says_so_in_its_trace() -> None:
+    declarer = RecordingDeclarer(
+        ReplyContract(needs=frozenset({"document_passage"}), document_query="why")
+    )
+    orchestrator, traces, _, _, _ = with_declarer(declarer, answered("On track."))
+
+    orchestrator.handle(start())
+
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "contract_declared" in kinds
+
+
+def test_a_contract_with_no_needs_still_declares() -> None:
+    """Empty needs is a real answer -- a write, a refusal, a clarification --
+    and the trace records that it was checked, not skipped."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset()))
+    orchestrator, traces, _, _, _ = with_declarer(declarer, a_write())
+
+    final = orchestrator.handle(start())
+
+    assert final.contract == ReplyContract(needs=frozenset())
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "contract_declared" in kinds
+
+
+def test_a_broken_declarer_cannot_fail_a_turn() -> None:
+    """The same never-fail rule recall follows: a declarer that is down costs
+    the turn its check, never its answer."""
+    orchestrator, _, _, _, _ = with_declarer(BrokenDeclarer(), answered("Fine."))
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal is True
+    assert final.contract is None
+    assert final.failure == "none"
+
+
+def test_declaration_runs_after_both_recalls() -> None:
+    """So a declaration call can read what recall filled in, and a re-plan
+    mid-turn cannot change what it is held to."""
+    memory = RecordingMemory(recalled=(remembered(),))
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset({"erp_field"})))
+    orchestrator, _, _, _, _ = with_declarer(declarer, answered("On track."))
+    orchestrator.memory = memory
+
+    orchestrator.handle(start())
+
+    assert declarer.declares[0].memories == (remembered(),)
+
+
+def test_resume_does_not_declare_again() -> None:
+    """The paused state already carries what it had -- an approver's
+    decision must be judged against the same contract the pause was shown,
+    not a fresh one."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset()))
+    orchestrator, traces, pauses, _, _ = with_declarer(declarer, a_write())
+
+    paused = orchestrator.handle(start())
+    assert len(declarer.declares) == 1
+
+    orchestrator.resume(paused.trace_id, approved=True, decided_by="sponsor")
+
+    assert len(declarer.declares) == 1
