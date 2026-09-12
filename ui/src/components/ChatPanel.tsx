@@ -22,7 +22,7 @@ export function ChatPanel({
   onDecide: (id: string, approved: boolean) => void
 }) {
   return (
-    <main className="chat-panel">
+    <main className="flex h-full min-h-0 min-w-0 flex-col">
       <MessageList
         messages={messages}
         actor={actor}

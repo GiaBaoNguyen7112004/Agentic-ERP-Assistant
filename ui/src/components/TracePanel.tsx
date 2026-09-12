@@ -7,13 +7,15 @@ export function TracePanel({ messages }: { messages: Message[] }) {
     | undefined
 
   return (
-    <aside className="trace-panel">
-      <h2>Trace</h2>
+    <section className="space-y-5">
+      <h2 className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+        Trace
+      </h2>
       {latestAssistant ? (
         <TurnTrace message={latestAssistant} />
       ) : (
-        <p>Ask something to see its trace here.</p>
+        <p className="text-sm text-muted-foreground">Ask something to see its trace here.</p>
       )}
-    </aside>
+    </section>
   )
 }

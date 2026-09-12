@@ -11,6 +11,7 @@ import { ApprovalQueue } from './components/ApprovalQueue'
 import { ChatPanel } from './components/ChatPanel'
 import { SessionList } from './components/SessionList'
 import { TracePanel } from './components/TracePanel'
+import { AppShell } from './components/layout/AppShell'
 import { initialTurn } from './turnReducer'
 import { useTurnStream } from './useTurnStream'
 
@@ -163,38 +164,41 @@ export default function App() {
   const canApprove = currentUser?.can_approve ?? false
 
   if (!state.actor) {
-    return <p style={{ padding: 16 }}>Loading…</p>
+    return <AppShell loading />
   }
 
   return (
-    <div className="app-layout">
-      <nav className="sidebar">
-        <h1>Agentic ERP Assistant</h1>
-        <ActorSwitcher users={state.users} actor={state.actor} onSelect={selectActor} />
-        <SessionList
-          sessions={state.sessions}
-          activeSessionId={state.sessionId}
-          onSelect={selectSession}
-          onNewChat={() => dispatch({ type: 'new_chat' })}
-        />
-        <ApprovalQueue
-          approvals={state.approvals}
+    <AppShell
+      sidebar={
+        <>
+          <ActorSwitcher users={state.users} actor={state.actor} onSelect={selectActor} />
+          <SessionList
+            sessions={state.sessions}
+            activeSessionId={state.sessionId}
+            onSelect={selectSession}
+            onNewChat={() => dispatch({ type: 'new_chat' })}
+          />
+          <ApprovalQueue
+            approvals={state.approvals}
+            canApprove={canApprove}
+            decidingTraceId={traceIdOfMessage(state.messages, decidingId)}
+            onDecide={decideFromQueue}
+          />
+        </>
+      }
+      main={
+        <ChatPanel
+          messages={state.messages}
+          actor={state.actor}
           canApprove={canApprove}
-          decidingTraceId={traceIdOfMessage(state.messages, decidingId)}
-          onDecide={decideFromQueue}
+          running={running}
+          decidingId={decidingId}
+          onSend={(message) => void sendMessage(message)}
+          onStop={stop}
+          onDecide={(id, approved) => void decideFromMessage(id, approved)}
         />
-      </nav>
-      <ChatPanel
-        messages={state.messages}
-        actor={state.actor}
-        canApprove={canApprove}
-        running={running}
-        decidingId={decidingId}
-        onSend={(message) => void sendMessage(message)}
-        onStop={stop}
-        onDecide={(id, approved) => void decideFromMessage(id, approved)}
-      />
-      <TracePanel messages={state.messages} />
-    </div>
+      }
+      aside={<TracePanel messages={state.messages} />}
+    />
   )
 }

@@ -1,3 +1,15 @@
+import { ShieldCheck } from 'lucide-react'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
+import { ToneBadge } from '@/components/shared/ToneBadge'
+import { ScopeChip } from '@/components/shared/ScopeChip'
+import { SectionHeading } from '@/components/shared/SectionHeading'
 import type { UserSummary } from '../protocol'
 
 export function ActorSwitcher({
@@ -12,26 +24,33 @@ export function ActorSwitcher({
   const current = users.find((user) => user.actor === actor)
 
   return (
-    <section>
-      <h2>Acting as</h2>
-      <select
-        aria-label="Actor"
-        value={actor ?? ''}
-        onChange={(event) => onSelect(event.target.value)}
-      >
-        {users.map((user) => (
-          <option key={user.actor} value={user.actor}>
-            {user.display_name} — {user.role}
-          </option>
-        ))}
-      </select>
+    <section className="space-y-2">
+      <SectionHeading>Acting as</SectionHeading>
+      <Select value={actor ?? ''} onValueChange={onSelect}>
+        <SelectTrigger className="w-full" aria-label="Actor">
+          <SelectValue placeholder="Choose an actor" />
+        </SelectTrigger>
+        <SelectContent>
+          {users.map((user) => (
+            <SelectItem key={user.actor} value={user.actor}>
+              {user.display_name} — {user.role}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
       {current && (
-        <div style={{ marginTop: 8 }}>
-          {current.can_approve && <span className="scope-chip">can approve</span>}
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline" className="font-mono text-xs">
+            {current.project_code}
+          </Badge>
+          {current.can_approve && (
+            <ToneBadge tone="success">
+              <ShieldCheck aria-hidden />
+              can approve
+            </ToneBadge>
+          )}
           {current.scopes.map((scope) => (
-            <span key={scope} className="scope-chip">
-              {scope}
-            </span>
+            <ScopeChip key={scope} scope={scope} />
           ))}
         </div>
       )}
