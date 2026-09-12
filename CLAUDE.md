@@ -48,12 +48,14 @@ docker compose up -d qdrant                          # the vector store
 uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
 uv run python scripts/ingest_documents.py            # embed and store, for real
 uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
+uv run python scripts/run_routing_comparison.py      # three planner contracts vs six cases (ADR 0020)
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 
 docker compose up -d postgres                        # the evidence store
 uv run python scripts/init_postgres.py               # create the nine tables (the dev database)
 uv run python scripts/init_postgres.py --test        # a second, _test database -- ADR 0018
 uv run pytest -m postgres                            # the SQL adapters, against the _test one only
+uv run pytest -m live                                # a real OpenAI call; skipped without OPENAI_API_KEY
 uv run python scripts/demo_memory_session.py         # two turns, the window, and what was kept
 uv run python scripts/demo_pause_across_restart.py   # a pause survives a restart, for real
 
@@ -256,4 +258,20 @@ Not yet chosen; ask before assuming, and update this file once settled.
   ports — a listing query is a screen's need, and widening a port to serve it
   would give every fake standing in for it in an engine test a method the engine
   never calls.
-- Eval report format: still open.
+- ~~Eval report format~~ — settled: a JSON report under `evidence/`, one
+  subdirectory per harness. `evidence/rag/retrieval-report.json` (hit rate,
+  latency, the similarity gap) and `evidence/routing/routing-comparison-
+  <date>.json` (ADR 0020: match rate, hallucination count, cost, and every
+  row, per planner contract) are both produced by a script under `scripts/`
+  that never hand-writes a number into the file. The planner contract itself
+  is whichever ADR 0020 names — currently the unedited production
+  `PLANNER_CONTRACT`; no candidate in that comparison beat it.
+- Test database isolation (ADR 0018) and the `live` marker (ADR-adjacent,
+  `tests/live/`): settled as of the gap-plan.md walkthrough.
+  `POSTGRES_TEST_URL` points `uv run pytest -m postgres` at a `_test`-suffixed
+  database, refused otherwise before a connection opens. `uv run pytest -m
+  live` makes a real OpenAI call and is skipped without `OPENAI_API_KEY` --
+  like `postgres`, its tests also run as part of a bare `uv run pytest -q`
+  whenever the resource they need happens to be present (a real key, a
+  reachable container); neither marker excludes itself from the default run,
+  it just skips itself gracefully when the thing it needs is not there.
