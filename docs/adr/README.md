@@ -29,6 +29,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0015](0015-the-web-layer-is-a-thin-shell-and-the-filed-trace-is-the-record.md) | The web layer is a thin async shell, streamed text is a preview, and the filed trace is the record | Accepted |
 | [0016](0016-a-write-is-put-to-a-human-only-after-the-gateway-agrees-it-could-run.md) | A write is put to a human only after the gateway agrees it could run | Accepted |
 | [0017](0017-tools-are-bound-to-the-actors-project-at-the-store-and-at-the-gateway.md) | Tools are bound to the actor's project, at the store and at the gateway | Accepted |
+| [0018](0018-the-evidence-store-is-never-a-test-fixture.md) | The evidence store is never a test fixture | Accepted |
 
 ## Format
 
