@@ -48,7 +48,7 @@ docker compose up -d qdrant                          # the vector store
 uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
 uv run python scripts/ingest_documents.py            # embed and store, for real
 uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
-uv run python scripts/run_routing_comparison.py      # three planner contracts vs six cases (ADR 0020)
+uv run python scripts/run_routing_comparison.py      # three planner contracts vs six cases (ADR 0020), plus a declaration row per case (ADR 0021)
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 
 docker compose up -d postgres                        # the evidence store
@@ -248,9 +248,13 @@ Not yet chosen; ask before assuming, and update this file once settled.
   the two configuration points.
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
-  are driven by the caller — and the `think -> answer` route has no structural
-  grounding check, so a planner answering from the history block remains
-  model-dependent (ADR 0014's stated residual risk).
+  are driven by the caller. The `think -> answer` route is held to the reply
+  contract the planner declared before the graph ran (ADR 0021): a missing
+  need is redirected once, and a reply still short after that is delivered
+  marked `failure=incomplete_reply`, never silently. A turn with no
+  declaration (`contract=None` — a replay, a hand-built state, a declarer
+  that raised) is unchecked, and its trace says so plainly rather than
+  looking indistinguishable from one that passed.
 - ~~Trace persistence~~ — settled: Postgres (`persistence/schema.py`, nine tables,
   `docker compose up -d postgres && uv run python scripts/init_postgres.py`).
   `web/`'s read model (`persistence/postgres_queries.py::EvidenceQueries`) is
@@ -262,10 +266,13 @@ Not yet chosen; ask before assuming, and update this file once settled.
   subdirectory per harness. `evidence/rag/retrieval-report.json` (hit rate,
   latency, the similarity gap) and `evidence/routing/routing-comparison-
   <date>.json` (ADR 0020: match rate, hallucination count, cost, and every
-  row, per planner contract) are both produced by a script under `scripts/`
-  that never hand-writes a number into the file. The planner contract itself
-  is whichever ADR 0020 names — currently the unedited production
-  `PLANNER_CONTRACT`; no candidate in that comparison beat it.
+  row, per planner contract — joined by ADR 0021's declaration match rate,
+  one row per case×repeat rather than per prompt, since the declaration
+  call does not vary by which routing contract is under comparison) are
+  both produced by a script under `scripts/` that never hand-writes a
+  number into the file. The planner contract itself is whichever ADR 0020
+  names — currently the unedited production `PLANNER_CONTRACT`; no
+  candidate in that comparison beat it.
 - Test database isolation (ADR 0018) and the `live` marker (ADR-adjacent,
   `tests/live/`): settled as of the gap-plan.md walkthrough.
   `POSTGRES_TEST_URL` points `uv run pytest -m postgres` at a `_test`-suffixed

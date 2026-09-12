@@ -592,33 +592,48 @@ closed by 0021".
 
 ## 4. Definition of done
 
-- [ ] `session_turns` accepts every current `FailureMode` and `DecisionRoute`
+- [x] `session_turns` accepts every current `FailureMode` and `DecisionRoute`
       on both databases after `init_postgres.py`, and would after the next
-      vocabulary change too (Phase N, the `pg_constraint` query in the commit).
-- [ ] `uv run python scripts/run_turn.py --actor priya "Why is milestone M2
+      vocabulary change too (Phase N, the `pg_constraint` query in the commit
+      `5a0369c` -- caught live twice more afterward, when P2 and Q2 each added
+      a new `EventKind` member and `trace_events_kind_check` needed
+      re-applying again before the first live run would file; both times
+      confirmed and fixed the same way).
+- [x] `uv run python scripts/run_turn.py --actor priya "Why is milestone M2
       late and by how much?"` three times: every run declares
       `{document_passage, erp_field}`, calls the tool, is redirected to
       retrieval, and replies with both halves, citing at least one
       `status-report-2026-09` locator and `milestone-m2`; `failure=none`,
-      `step_count=4` (Phase Q; the three trace ids in ADR 0021).
-- [ ] T1, T9/1, R10 unchanged in route and reply; A1, A9, A11 unchanged in
+      `step_count=4` (Phase Q; the three trace ids -- run-dd74c3b4…,
+      run-d57783be…, run-a5fb23ce… -- in ADR 0021, `step_count`/`failure`
+      confirmed by direct SQL query against `runs.state`).
+- [x] T1, T9/1, R10 unchanged in route and reply; A1, A9, A11 unchanged in
       route, pause shape and step count (D7; Phase Q's rows in
       `docs/manual-test.md` §6).
-- [ ] A scripted planner that answers a `{erp_field}` question at once is
+- [x] A scripted planner that answers a `{erp_field}` question at once is
       re-asked with `tool_choice="required"` and no search, exactly once; one
       that answers a `{document_passage}` question is redirected to retrieval
       exactly once; a redirected search that finds nothing delivers the draft
       marked `incomplete_reply`, never `max_steps_exceeded` and never a bare
-      refusal of a question the ERP half-answered (Phase Q's tests).
-- [ ] Every existing engine test passes unchanged in behavior -- a state with
-      no contract is the same graph as before (Phase Q test (f), and the suite).
-- [ ] `evidence/routing/` holds a report with a `declarations` section, R1's
-      declaration rate is 5/5 and T1's is 5/5 (Phase R1); ADR 0021 is in the
+      refusal of a question the ERP half-answered (`tests/engine/
+      test_completeness.py`).
+- [x] Every existing engine test passes unchanged in behavior -- a state with
+      no contract is the same graph as before (`test_no_contract_redirects_nothing`,
+      and the full suite: 1765 passing, none of the pre-existing tests'
+      assertions altered beyond the mechanical signature threading Phase O/Q3
+      needed -- `tool_choice=`/`observations=` parameters with defaults).
+- [x] `evidence/routing/` holds a report with a `declarations` section, R1's
+      declaration rate is 5/5 and T1's is 5/5 (Phase R1,
+      `evidence/routing/routing-comparison-2026-09-12-adr0021.json` -- filed
+      under its own name, not the date-stamped default, because today's date
+      collided with ADR 0020's already-committed file of the same name;
+      confirmed byte-identical before and after this run). ADR 0021 is in the
       index; `docs/e2e-code-plan.md` §5 lists 1, 13 and 15 as closed with the
       reference; `docs/manual-test.md` §6 has the re-walk rows.
-- [ ] `engine/transitions.py`'s edges, `tools/gateway.py`, and `rag/access.py`
-      are untouched by this plan (`git diff --stat` against the commit before
-      Phase N is empty for all three, checked directly, and stated in ADR 0021).
+- [x] `engine/transitions.py`'s edges, `tools/gateway.py`, and `rag/access.py`
+      are untouched by this plan (`git diff --stat 4ed77a6 HEAD` -- the commit
+      immediately before Phase N -- is empty for all three, checked directly,
+      and stated in ADR 0021).
 
 ## 5. Order and cost
 

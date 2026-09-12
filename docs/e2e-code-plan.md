@@ -1095,9 +1095,15 @@ confirm `/api/runs/{trace_id}` matches. Development loop: `npm --prefix ui run d
 
 ## 5. Known gaps after v1 (list them in the defence; do not fix here)
 
-1. **`think -> answer` has no structural grounding check** (ADR 0014 residual
-   risk). The `Sources:` trailer of observed ids is evidence of what was read,
-   not a check that the text follows from it.
+1. ~~`think -> answer` has no structural grounding check~~ (ADR 0014 residual
+   risk) — closed for every turn whose declared contract names a need. ADR
+   0021: the planner declares what a complete reply must rest on before the
+   graph runs, and `engine/nodes.py::think` holds an "answer" decision to it,
+   redirecting a missing need once rather than trusting the `Sources:`
+   trailer to imply the text follows from what it lists. Residual: a turn
+   whose declaration itself under-states what the reply needs (`needs=()`
+   for a question that actually needed something) is still model-dependent
+   -- see `docs/completeness-plan.md` §6 item 16.
 2. **Cancellation is not cooperative**; a stopped stream still spends the
    remaining model calls (D11).
 3. **Gateway-internal retry events reach the live stream but not the DB**; the
@@ -1134,18 +1140,25 @@ more, closed or measured in `docs/gap-plan.md`:
     and 6.9% (answering calls, gated at 10% — an undocumented, provider-side
     structured-output overhead no request byte explains, per
     `tests/live/test_estimate_drift.py`'s own measurement).
-13. **Compound-question routing is model-dependent, and measured, not
-    guessed.** A recorded three-contract comparison (ADR 0020,
-    `evidence/routing/routing-comparison-2026-09-12.json`) found "why ... and
-    by how much"-shaped questions routing to the ERP tool **deterministically**
-    (0/15 across two rule-wording candidates and five repeats each,
-    `temperature=0.0`) rather than the "1 in 4" the walkthrough's live session
-    suggested — the session's own variance almost certainly came from state
-    (memory, history) the isolated comparison excludes, not from anything a
-    developer-block wording can reach. Neither candidate was promoted; the
-    named follow-up is structural (a `documents_then_tool` route, or a
-    post-hoc completeness check against the question's own clauses), not a
-    third prompt attempt.
+13. ~~Compound-question routing is model-dependent~~ — closed by the
+    structural fix ADR 0020's Consequences section named as the follow-up,
+    shipped in ADR 0021 (`docs/completeness-plan.md`). ADR 0020 first
+    measured the gap precisely (a recorded three-contract comparison,
+    `evidence/routing/routing-comparison-2026-09-12.json`: "why ... and by
+    how much"-shaped questions routing to the ERP tool deterministically,
+    0/15, `temperature=0.0`) and found no prompt wording moved it. ADR 0021
+    does not touch routing at all -- the model still routes however it
+    routes -- it adds a second, independent check: the planner declares what
+    a complete reply needs (a document passage, a live field, both) before
+    anything runs, and `think` holds every attempt to answer to that
+    declaration, redirecting a still-missing need once. Routing stays
+    model-dependent; completeness no longer does.
 14. ~~The postgres-marked test suite truncated the dev database~~ — closed.
     `tests/persistence/` connects only to a `_test`-suffixed database,
     refused otherwise before a connection is even opened (ADR 0018).
+15. ~~`session_turns`' CHECK constraints were never re-applied~~ — closed.
+    `trace_events.kind`'s constraint was named and re-applied on every
+    `init_postgres.py` run; `session_turns.route` and `.failure` were not,
+    so the dev database still rejected `planner_loop` (added by ADR 0019)
+    until this was caught and fixed -- confirmed live with `pg_constraint`
+    before and after, on both databases.
