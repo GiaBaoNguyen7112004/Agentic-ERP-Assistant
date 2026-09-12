@@ -16,7 +16,10 @@ gateway port's signature, so the runtime has to be able to name them without
 importing this package; the third is carried in the turn's state long after the
 tool layer is done with it. A second definition would
 be a second thing to keep in step, and the copy that drifts is always the one
-nobody is reading.
+nobody is reading. ``ARGUMENTS_SUMMARY_MAX_CHARS`` -- and the renderer it
+bounds, ``summarize_tool_call`` -- live there for the same reason: both
+``ToolRequest`` and ``ToolOutcome`` need the cap, and neither may import this
+package to get it.
 
 ``ValidationError`` is deliberately not defined here either. Arguments are
 checked by :meth:`~agentic_erp_assistant.llm.tools.ToolSpec.validate_arguments`
@@ -43,7 +46,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome, ToolStatus
-from agentic_erp_assistant.state.tool_request import ToolRequest
+from agentic_erp_assistant.state.tool_request import (
+    ARGUMENTS_SUMMARY_MAX_CHARS,
+    ToolRequest,
+)
 
 __all__ = [
     "ApprovalDecision",
@@ -76,16 +82,6 @@ class ExecutionContext:
     trace_id: str
     actor: str
     project_code: str
-
-
-ARGUMENTS_SUMMARY_MAX_CHARS = 200
-"""How long the human-readable description of a call may be.
-
-A cap, because this is the line an approver reads and an auditor reads back.
-The moment it can hold a full argument payload, it will, and then credentials
-and customer data are rendered to a screen and written to a record that outlives
-the run. The same decision ``ApprovalRequest.arguments_summary`` already makes.
-"""
 
 
 class _Envelope(BaseModel):

@@ -131,18 +131,33 @@ FailureMode = Literal[
     "insufficient_evidence",
     "tool_failure",
     "max_steps_exceeded",
+    "planner_loop",
     "none",
 ]
 """Why a turn could not produce a grounded answer -- including "it could".
 
-The last two are not produced by :func:`classify_failure`, and cannot be: that
-function reads three signals from one attempted answer, while ``tool_failure``
-is assigned by the node that watched a call come back unusable and
-``max_steps_exceeded`` by the loop guard, which is not answering anything at
-all. Both are still :data:`FailureMode` members rather than free text in
-``error_detail`` -- a reviewer counting how runs end has to be counting typed
-values, and the loop guard firing is exactly the outcome nobody wants to
-discover by grepping prose.
+None of the last three are produced by :func:`classify_failure`, and cannot
+be: that function reads three signals from one attempted answer, while
+``tool_failure`` is assigned by the node that watched a call come back
+unusable, ``max_steps_exceeded`` by the loop guard (not answering anything at
+all), and ``planner_loop`` by ``engine/nodes.py::think`` itself, the one time
+it forces a planner call with every tool withheld (ADR 0019) and the model
+still names one -- which the real provider's ``tool_choice: "none"`` cannot
+produce, so seeing it at all means the guard caught something a fake or a
+future provider actually did wrong. All three are still :data:`FailureMode`
+members rather than free text in ``error_detail`` -- a reviewer counting how
+runs end has to be counting typed values, and the loop guard firing is
+exactly the outcome nobody wants to discover by grepping prose.
+
+``planner_loop`` is deliberately its own member rather than folded into
+``max_steps_exceeded``: the latter means the budget ran out with the turn
+still undecided, and the former means the turn was refused a repeat before
+the budget ever had to. A trace that reads ``max_steps_exceeded`` after an
+approved write is a different, worse story than one that reads
+``planner_loop`` after the same write -- the first looks like the runtime
+gave the model room to answer and it never did; the second says plainly that
+the model tried to act again after a write had already succeeded, and the
+guard stopped it in one extra call rather than eight.
 
 ``"none"`` is the string, not ``None``. A ``None`` return invites callers to
 write ``if failure:`` and quietly collapse four outcomes into two; a Literal

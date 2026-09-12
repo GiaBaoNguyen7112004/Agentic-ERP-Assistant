@@ -396,6 +396,7 @@ class OpenAIChatClient:
         tools: Sequence[ToolSpec] = DEFAULT_TOOLS,
         temperature: float = 0.0,
         on_delta: Callable[[str], None] | None = None,
+        allow_tools: bool = True,
     ) -> ToolCallResult:
         """Offer the model a set of tools and report what it decided.
 
@@ -420,6 +421,9 @@ class OpenAIChatClient:
                 *content* fragments only -- a model choosing a tool typically
                 sends no content, so this is often simply never called on
                 that path.
+            allow_tools: ``False`` sends ``tool_choice: "none"`` instead of
+                ``"auto"``, forcing content back regardless of what ``tools``
+                offers.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: either a
@@ -442,7 +446,7 @@ class OpenAIChatClient:
             "messages": [self._to_wire(message) for message in messages],
             "temperature": temperature,
             "tools": [self._tool_payload(spec) for spec in tools],
-            "tool_choice": "auto",
+            "tool_choice": "auto" if allow_tools else "none",
             "parallel_tool_calls": False,
         }
         body, _ = (

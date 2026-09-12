@@ -78,11 +78,10 @@ from pydantic import BaseModel, ValidationError
 from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEvent
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
-from agentic_erp_assistant.state.tool_request import ToolRequest
+from agentic_erp_assistant.state.tool_request import ToolRequest, summarize_tool_call
 from agentic_erp_assistant.tools.audit import AuditSink, InMemoryAuditLog
 from agentic_erp_assistant.tools.limits import InMemoryRateLimiter, RateLimiter
 from agentic_erp_assistant.tools.models import (
-    ARGUMENTS_SUMMARY_MAX_CHARS,
     AuditRow,
     ExecutionContext,
     ToolError,
@@ -102,9 +101,6 @@ A name, not a class reference, so the trace stays readable after a refactor
 renames the class.
 """
 
-_VALUE_MAX_CHARS = 40
-"""How much of one argument value reaches the audit line before it is elided."""
-
 _REFUSAL_EVENT: dict[ToolStatus, str] = {
     "approval_required": "approval_requested",
     "rate_limited": "rate_limited",
@@ -118,28 +114,6 @@ them -- the same distinction
 :data:`~agentic_erp_assistant.state.tool_outcome.ToolStatus` draws between
 ``denied`` and ``failed``.
 """
-
-
-def _summarize(request: ToolRequest) -> str:
-    """Render a call as one line an approver and an auditor can both read.
-
-    Values are included, not just keys: "create_risk(project_id, title,
-    severity)" tells an auditor nothing about what changed, which is the only
-    thing they came to find out. The protection is the cap, both per value and
-    on the whole line -- a tool that takes a credential as an argument is the
-    thing to fix, and no renderer can make that safe.
-    """
-    parts = []
-    for key, value in request.arguments.items():
-        rendered = str(value)
-        if len(rendered) > _VALUE_MAX_CHARS:
-            rendered = rendered[: _VALUE_MAX_CHARS - 1] + "…"
-        parts.append(f"{key}={rendered}")
-
-    line = f"{request.tool_name}({', '.join(parts)})"
-    if len(line) > ARGUMENTS_SUMMARY_MAX_CHARS:
-        line = line[: ARGUMENTS_SUMMARY_MAX_CHARS - 1] + "…"
-    return line
 
 
 @dataclass
@@ -370,6 +344,7 @@ class ToolGateway:
         self.limiter.record(
             request.actor, definition.name, definition.rate_limit, self.now()
         )
+        arguments_summary = summarize_tool_call(request.tool_name, request.arguments)
         attempts = 0
         context = ExecutionContext(
             trace_id=request.trace_id,
@@ -415,6 +390,7 @@ class ToolGateway:
         except TransientToolError as error:
             return ToolOutcome(
                 tool_name=definition.name,
+                arguments_summary=arguments_summary,
                 status="transient_failure",
                 error=str(error),
                 attempts=attempts,
@@ -424,6 +400,7 @@ class ToolGateway:
             # same way next time, so the budget is not spent proving it.
             return ToolOutcome(
                 tool_name=definition.name,
+                arguments_summary=arguments_summary,
                 status="failed",
                 error=str(error),
                 attempts=attempts,
@@ -431,6 +408,7 @@ class ToolGateway:
 
         return ToolOutcome(
             tool_name=definition.name,
+            arguments_summary=arguments_summary,
             status="ok",
             summary=result.summary,
             source_ids=result.source_ids,
@@ -468,7 +446,7 @@ class ToolGateway:
                 occurred_at=self.now(),
                 actor=request.actor,
                 tool_name=definition.name,
-                arguments_summary=_summarize(request),
+                arguments_summary=outcome.arguments_summary,
                 approval=request.approval,
                 status=outcome.status,
                 source_ids=outcome.source_ids,
@@ -497,6 +475,7 @@ class ToolGateway:
         """
         outcome = ToolOutcome(
             tool_name=request.tool_name,
+            arguments_summary=summarize_tool_call(request.tool_name, request.arguments),
             status=status,
             error=error,
             attempts=1,

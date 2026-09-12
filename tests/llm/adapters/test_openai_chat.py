@@ -663,6 +663,17 @@ def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:
     assert recorder.body["tool_choice"] == "auto"
 
 
+def test_allow_tools_false_forces_tool_choice_none(messages) -> None:
+    """ADR 0019: the mechanism ``engine/nodes.py`` uses to end a turn's
+    planning loop after a mutating tool has already succeeded."""
+    recorder = Recorder(httpx.Response(200, json=success_body(content="Done.")))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages, allow_tools=False)
+
+    assert recorder.body["tool_choice"] == "none"
+    assert "tools" in recorder.body  # still offered -- see the port's docstring
+
+
 def test_call_with_tools_forbids_parallel_calls(messages) -> None:
     """Reading tool_calls[0] is only honest if a second one cannot arrive."""
     recorder = Recorder(httpx.Response(200, json=tool_call_body()))

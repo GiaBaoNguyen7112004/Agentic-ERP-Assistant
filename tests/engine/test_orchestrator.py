@@ -74,7 +74,15 @@ class ScriptedModel:
         self.shown_history: tuple = ()
 
     def decide(
-        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+        allow_tools=True,
     ):
         self.calls += 1
         self.shown_history = tuple(history)

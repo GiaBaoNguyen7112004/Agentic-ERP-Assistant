@@ -107,8 +107,16 @@ class DecisionModel(Protocol):
         history: Sequence[ConversationTurn] = (),
         *,
         tools: Sequence[ToolSpec] = ...,
+        allow_tools: bool = True,
     ) -> ToolCallResult:
-        """Offer ``tools`` for this turn's state and return the one choice made."""
+        """Offer ``tools`` for this turn's state and return the one choice made.
+
+        ``allow_tools=False`` still offers ``tools`` but forces the wire's
+        ``tool_choice`` to ``"none"`` (see
+        :meth:`~agentic_erp_assistant.llm.ports.ToolCallingClient.call_with_tools`),
+        so the result is guaranteed content -- the mechanism
+        :meth:`Planner.plan`'s ``offer_tools`` parameter drives.
+        """
         ...
 
 
@@ -133,7 +141,9 @@ class Planner:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_by_name", {spec.name: spec for spec in self.tools})
 
-    def plan(self, state: AgentState) -> ReasoningDecision:
+    def plan(
+        self, state: AgentState, *, offer_tools: bool = True
+    ) -> ReasoningDecision:
         """Decide the next action for ``state``.
 
         Args:
@@ -142,12 +152,23 @@ class Planner:
                 shown -- all five read off the one object, so a routing
                 decision can never be made against a view somebody assembled
                 inconsistently.
+            offer_tools: ``False`` still shows the model every tool's
+                definition (so it can still make sense of what its own prior
+                calls in ``observations`` returned) but forces
+                ``allow_tools=False`` on the call, guaranteeing content back.
+                Used by ``engine/nodes.py::think`` (ADR 0019) to end a turn's
+                planning loop after a mutating tool has already succeeded, or
+                after a call has already been repeated once -- by taking the
+                option to call another tool away, not by asking in prose.
 
         Returns:
             A :class:`ReasoningDecision`. Every path returns one -- a choice
             that cannot be acted on becomes a ``fail`` decision rather than an
             exception, because "the model named a tool that does not exist" is a
-            turn that has to be reported, not a crash.
+            turn that has to be reported, not a crash. A tool call surviving
+            ``offer_tools=False`` is exactly as unreadable: the real provider's
+            ``tool_choice: "none"`` cannot produce one, so seeing one here
+            means whatever is standing in for it did not honor the request.
         """
         if not state.request.strip():
             # Short-circuited before the model is called. A blank question
@@ -167,6 +188,7 @@ class Planner:
             state.memories,
             state.history,
             tools=self.tools,
+            allow_tools=offer_tools,
         )
 
         if result.tool_name is None:
@@ -177,6 +199,12 @@ class Planner:
                 confidence=UNSCORED_CONFIDENCE,
                 message=result.content,
                 rationale="answered without calling a tool",
+            )
+
+        if not offer_tools:
+            return self._unreadable(
+                f"the model called {result.tool_name!r} after tools were "
+                f"withheld for this call"
             )
 
         spec = self._by_name.get(result.tool_name)

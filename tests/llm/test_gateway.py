@@ -558,6 +558,22 @@ def test_the_planner_request_carries_the_offered_functions() -> None:
     assert body["parallel_tool_calls"] is False
 
 
+def test_allow_tools_false_forces_the_wire_choice_and_says_so_in_telemetry() -> None:
+    """ADR 0019: how ``engine/nodes.py`` ends a turn's planning loop after a
+    mutating tool has already succeeded -- by withholding the option, not by
+    asking in prose."""
+    recorder = Recorder(httpx.Response(200, json=reply("Recorded R-6 against orion.")))
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    decision = gateway.decide("What could go wrong on atlas?", allow_tools=False)
+
+    assert decision.tool_name is None
+    body = json.loads(recorder.requests[0].content)
+    assert body["tool_choice"] == "none"
+    assert "tools" in body  # still offered -- see the port's docstring
+    assert "tool_choice=none" in telemetry.records[0].detail
+
+
 def test_observations_reach_the_model_in_their_own_block() -> None:
     """The reason a second decision can differ from the first."""
     from agentic_erp_assistant.state.tool_outcome import ToolOutcome

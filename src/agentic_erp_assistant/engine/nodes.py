@@ -36,7 +36,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
-from agentic_erp_assistant.reasoning.decision import DecisionRoute
+from agentic_erp_assistant.reasoning.decision import DecisionRoute, ReasoningDecision
 from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
     DocumentRetrieverPort,
@@ -55,7 +55,7 @@ from agentic_erp_assistant.state.events import (
 )
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
-from agentic_erp_assistant.state.tool_request import ToolRequest
+from agentic_erp_assistant.state.tool_request import ToolRequest, summarize_tool_call
 
 __all__ = [
     "EVIDENCE_LIMIT",
@@ -200,9 +200,26 @@ class GraphNodes:
         A planner that raises is a provider that failed, which is a turn that
         ends rather than an exception the caller has to catch: the run is
         already half-recorded, and the trace has to say why it stopped.
+
+        ADR 0019: after the normal call, :func:`_repeats_a_success` asks
+        whether the decision just made names a call already sitting in
+        ``observations`` as ``ok``. If so, the planner is re-asked once with
+        tools withheld -- which can only come back ``answer`` or ``fail``
+        (the real provider's ``tool_choice: "none"`` cannot produce a tool
+        call) -- and ``forced_note`` is what the trace says about *why*:
+        carried through to the ``route_selected`` event on success, and to a
+        ``planner_loop`` failure, never ``provider_failure``, if the forced
+        call still named one.
         """
+        forced_note: str | None = None
         try:
             decision = self.planner.plan(state)
+            if _repeats_a_success(state, decision):
+                forced_note = (
+                    f"{decision.required_tool} repeated with the same "
+                    f"arguments; tools withheld"
+                )
+                decision = self.planner.plan(state, offer_tools=False)
         except Exception as error:  # noqa: BLE001 - deliberately broad; see above
             logger.warning("planner failed on %s: %s", state.trace_id, error)
             return advance(
@@ -223,9 +240,27 @@ class GraphNodes:
             _event(
                 "think",
                 "route_selected",
-                f"{decision.route}: {decision.rationale}",
+                f"{decision.route}: {forced_note}"
+                if forced_note is not None
+                else f"{decision.route}: {decision.rationale}",
             ),
         )
+
+        if forced_note is not None and decision.route not in ("answer", "fail"):
+            # Belt and suspenders beside Planner._unreadable's own guarantee
+            # (offer_tools=False -> only "answer" or "fail" comes back): this
+            # is the boundary the graph itself enforces, so a PlannerPort
+            # implementation that does not honor the contract as strictly
+            # still cannot act on a call that should have been impossible --
+            # the real provider's tool_choice: "none" cannot produce one.
+            detail = f"{forced_note}; the forced call named {decision.route!r} anyway"
+            return advance(
+                state,
+                "fail",
+                failure="planner_loop",
+                error_detail=_clip(detail, ERROR_DETAIL_MAX_CHARS),
+                events=events + (_event("think", "failed", detail),),
+            )
 
         if decision.route == "retrieve_project_documents":
             return advance(
@@ -327,13 +362,23 @@ class GraphNodes:
         if decision.route in ("clarify", "refuse"):
             return advance(state, decision.route, response=decision.message, events=events)
 
+        # Only reachable normally as "the model named a tool that does not
+        # exist" (Planner._unreadable). With forced_note set, it means the
+        # forced (offer_tools=False) call still named a tool -- something the
+        # real provider's tool_choice: "none" cannot do -- and the failure
+        # says so by name rather than reading as an ordinary provider hiccup.
+        failure_detail = (
+            f"{forced_note}; {decision.rationale}"
+            if forced_note is not None
+            else decision.rationale
+        )
         return advance(
             state,
             "fail",
-            failure="provider_failure",
-            error_detail=_clip(decision.rationale, ERROR_DETAIL_MAX_CHARS)
+            failure="planner_loop" if forced_note is not None else "provider_failure",
+            error_detail=_clip(failure_detail, ERROR_DETAIL_MAX_CHARS)
             or "the planner could not produce an actionable decision",
-            events=events + (_event("think", "failed", decision.rationale),),
+            events=events + (_event("think", "failed", failure_detail),),
         )
 
     # -- act: documents ----------------------------------------------------
@@ -581,6 +626,44 @@ def _observed_sources(observations: Sequence[ToolOutcome]) -> list[str]:
             if source_id not in seen:
                 seen.append(source_id)
     return seen
+
+
+def _repeats_a_success(state: AgentState, decision: ReasoningDecision) -> bool:
+    """Does ``decision`` name a call already sitting in ``observations`` as
+    ``ok``, arguments and all?
+
+    ADR 0019's guard: a decision that repeats a call already known to have
+    succeeded is refused a re-run and the planner is re-asked once with tools
+    withheld instead, ending the turn in an answer rather than a repeat that
+    can only tell it what it already knows. This is A11's actual shape --
+    ``list_risks`` had already succeeded once (the contract's own "check
+    first" step, before the write it was checking for) and came back after
+    the write succeeded, not because the model needed a second, *different*
+    action.
+
+    Deliberately **not** "any tool call right after a successful write":
+    that reading was tried first and rejected, live, against
+    ``test_a_resumed_turn_can_pause_again_and_waits_anew`` -- a turn that
+    writes two different things in sequence routes a second, genuinely new
+    ``request_approval`` right after the first write succeeds, and blocking
+    every tool call post-write would have blocked that legitimate one along
+    with A11's unproductive one. Only a call *identical* to one already
+    known to have succeeded is refused.
+
+    Compared by
+    :func:`~agentic_erp_assistant.state.tool_request.summarize_tool_call`'s
+    rendering rather than the raw arguments, so this is the same notion of
+    "the same call" an approver or an auditor reading the trace would use.
+    """
+    if decision.required_tool is None:
+        return False
+    summary = summarize_tool_call(decision.required_tool, decision.tool_arguments or {})
+    return any(
+        observation.tool_name == decision.required_tool
+        and observation.status == "ok"
+        and observation.arguments_summary == summary
+        for observation in state.observations
+    )
 
 
 def _ungrounded(answer, snippets: Sequence[EvidenceSnippet]) -> str | None:

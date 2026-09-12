@@ -371,6 +371,15 @@ def test_a_permitted_read_runs_without_anyone_being_asked(
     assert outcome.summary and outcome.source_ids
 
 
+def test_a_read_outcome_carries_its_own_call(gateway: ToolGateway) -> None:
+    """What ``engine/nodes.py``'s repeated-call guard reads (ADR 0019): a
+    tool_name and an arguments_summary an identical later decision can be
+    compared against, without the caller keeping its own copy."""
+    outcome = gateway.execute(call("list_risks", {"project_id": "atlas"}))
+
+    assert outcome.arguments_summary == "list_risks(project_id=atlas)"
+
+
 def test_a_read_produces_no_audit_row(gateway: ToolGateway) -> None:
     """An audit trail with one row per read is one where the writes are buried,
     and the writes are the reason it exists."""
@@ -497,6 +506,17 @@ def test_the_audit_line_says_what_the_call_would_do(gateway: ToolGateway) -> Non
     (row,) = gateway.audit.rows  # type: ignore[union-attr]
     assert "project_id=atlas" in row.arguments_summary
     assert row.arguments_summary.startswith("create_risk(")
+
+
+def test_an_approved_writes_outcome_shares_its_call_with_the_audit_row(
+    gateway: ToolGateway,
+) -> None:
+    """The repeated-call guard (ADR 0019) and the audit row read the same
+    field -- one rendering of a call, not two that could quietly drift."""
+    outcome = gateway.execute(new_risk(approval="approved"))
+
+    (row,) = gateway.audit.rows  # type: ignore[union-attr]
+    assert outcome.arguments_summary == row.arguments_summary
 
 
 def test_a_long_argument_cannot_stretch_the_audit_line(gateway: ToolGateway) -> None:

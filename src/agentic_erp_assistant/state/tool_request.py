@@ -28,7 +28,54 @@ from pydantic import (
 
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 
-__all__ = ["ToolRequest"]
+__all__ = ["ARGUMENTS_SUMMARY_MAX_CHARS", "ToolRequest", "summarize_tool_call"]
+
+
+ARGUMENTS_SUMMARY_MAX_CHARS = 200
+"""How long the human-readable description of a call may be.
+
+A cap, because this is the line an approver reads and an auditor reads back.
+The moment it can hold a full argument payload, it will, and then credentials
+and customer data are rendered to a screen and written to a record that
+outlives the run. Lives here, next to :class:`ToolRequest`, rather than in
+``tools/models.py`` (which re-exports it): a tool call's two halves --
+:class:`ToolRequest` and :class:`~agentic_erp_assistant.state.tool_outcome.
+ToolOutcome` -- both need it, and neither may import ``tools/``."""
+
+_VALUE_MAX_CHARS = 40
+"""Per-value cap inside the summary line. Smaller than the whole line's cap
+so no single long value can crowd out the rest of the call's shape."""
+
+
+def summarize_tool_call(tool_name: str, arguments: Mapping[str, Any]) -> str:
+    """Render a call as one line an approver, an auditor, or a replay guard
+    can all read: ``"create_risk(project_id=orion, title=…, severity=high)"``.
+
+    Values are included, not just keys: ``"create_risk(project_id, title,
+    severity)"`` tells nobody what changed, which is the only thing an
+    approver or an auditor came to find out. The protection is the cap, both
+    per value and on the whole line -- a tool that takes a credential as an
+    argument is the thing to fix, and no renderer can make that safe.
+
+    The same rendering ``tools/gateway.py`` uses for
+    :attr:`~agentic_erp_assistant.tools.models.AuditRow.arguments_summary` and
+    stamps onto every :class:`~agentic_erp_assistant.state.tool_outcome.
+    ToolOutcome`, and the one ``engine/nodes.py`` recomputes from a fresh
+    decision to ask "does this call match one already in the observations" --
+    three callers that must never quietly drift into three renderings of
+    the same call.
+    """
+    parts = []
+    for key, value in arguments.items():
+        rendered = str(value)
+        if len(rendered) > _VALUE_MAX_CHARS:
+            rendered = rendered[: _VALUE_MAX_CHARS - 1] + "…"
+        parts.append(f"{key}={rendered}")
+
+    line = f"{tool_name}({', '.join(parts)})"
+    if len(line) > ARGUMENTS_SUMMARY_MAX_CHARS:
+        line = line[: ARGUMENTS_SUMMARY_MAX_CHARS - 1] + "…"
+    return line
 
 
 class ToolRequest(BaseModel):

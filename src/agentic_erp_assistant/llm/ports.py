@@ -192,6 +192,7 @@ class ToolCallingClient(Protocol):
         tools: Sequence[ToolSpec],
         temperature: float,
         on_delta: Callable[[str], None] | None = None,
+        allow_tools: bool = True,
     ) -> ToolCallResult:
         """Offer ``tools`` and report the single choice that came back.
 
@@ -206,6 +207,14 @@ class ToolCallingClient(Protocol):
         exactly what is about to run, so several is a provider contract
         violation and belongs in the transient-failure path.
 
+        ``allow_tools=False`` still passes ``tools`` -- the model may need the
+        definitions to understand what its own prior calls in ``observations``
+        were -- but forces the wire's ``tool_choice`` to ``"none"``, so the
+        result is guaranteed content. This is how a planner call is made after
+        a mutating tool has already succeeded (ADR 0019): the engine ends the
+        turn by taking the option to call another tool away, rather than by
+        asking the model in prose not to.
+
         Args:
             messages: The same port-role messages ``complete`` takes.
             tools: What to offer. Never empty -- offering nothing while asking
@@ -217,6 +226,8 @@ class ToolCallingClient(Protocol):
                 choosing a tool typically streams no content at all, so
                 ``on_delta`` may simply never be called on that path; a model
                 answering directly (no tool chosen) may stream normally.
+            allow_tools: ``False`` sends ``tool_choice: "none"`` on the wire,
+                so the result is always content -- see above.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: a tool
