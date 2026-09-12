@@ -26,9 +26,15 @@ itself when no container is up.
 """
 
 from agentic_erp_assistant.persistence.connection import (
+    DEFAULT_POSTGRES_TEST_URL,
     DEFAULT_POSTGRES_URL,
+    TEST_DATABASE_SUFFIX,
+    StoreConfigurationError,
     StoreConnectionError,
+    assert_test_database,
     connect,
+    database_name_in,
+    test_url_from_environment,
     url_from_environment,
 )
 from agentic_erp_assistant.persistence.postgres_audit import PostgresAuditLog
@@ -48,7 +54,9 @@ from agentic_erp_assistant.persistence.schema import (
 )
 
 __all__ = [
+    "DEFAULT_POSTGRES_TEST_URL",
     "DEFAULT_POSTGRES_URL",
+    "TEST_DATABASE_SUFFIX",
     "PostgresAuditLog",
     "PostgresConversationStore",
     "PostgresMemoryAudit",
@@ -56,9 +64,13 @@ __all__ = [
     "PostgresPauseStore",
     "PostgresTraceStore",
     "SCHEMA_STATEMENTS",
+    "StoreConfigurationError",
     "StoreConnectionError",
     "apply_schema",
+    "assert_test_database",
     "connect",
+    "database_name_in",
     "tables_in",
+    "test_url_from_environment",
     "url_from_environment",
 ]

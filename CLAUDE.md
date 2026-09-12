@@ -51,8 +51,9 @@ uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 
 docker compose up -d postgres                        # the evidence store
-uv run python scripts/init_postgres.py               # create the nine tables
-uv run pytest -m postgres                            # the SQL adapters, for real
+uv run python scripts/init_postgres.py               # create the nine tables (the dev database)
+uv run python scripts/init_postgres.py --test        # a second, _test database -- ADR 0018
+uv run pytest -m postgres                            # the SQL adapters, against the _test one only
 uv run python scripts/demo_memory_session.py         # two turns, the window, and what was kept
 uv run python scripts/demo_pause_across_restart.py   # a pause survives a restart, for real
 

@@ -14,9 +14,7 @@ import pytest
 
 from agentic_erp_assistant.persistence import (
     SCHEMA_STATEMENTS,
-    StoreConnectionError,
     apply_schema,
-    connect,
     tables_in,
 )
 
@@ -36,16 +34,8 @@ def test_the_schema_declares_nine_tables() -> None:
 # --------------------------------------------------------------------------
 # The constraint re-application survives a database that already exists
 # --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def database():
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    yield connection
-    connection.close()
+# `database` (module-scoped, already applies the schema once) comes from
+# tests/persistence/conftest.py.
 
 
 @pytest.mark.postgres

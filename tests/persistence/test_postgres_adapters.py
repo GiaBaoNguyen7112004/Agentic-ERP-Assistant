@@ -41,9 +41,7 @@ from agentic_erp_assistant.persistence import (
     PostgresAuditLog,
     PostgresPauseStore,
     PostgresTraceStore,
-    StoreConnectionError,
     apply_schema,
-    connect,
 )
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.state.agent_state import AgentState
@@ -77,27 +75,8 @@ EVENTS = (
 
 
 # --------------------------------------------------------------------------
-# The database, once per module; a clean one per test
+# The database (tests/persistence/conftest.py); a clean one per test
 # --------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def database():
-    """One connection for the module, skipped entirely without the database.
-
-    The schema is applied rather than assumed: ``IF NOT EXISTS`` makes that a
-    no-op on an initialized store, and it keeps these tests runnable on a
-    fresh container without pretending the init script ran.
-    """
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    with connection.cursor() as cursor:
-        with connection.transaction():
-            apply_schema(cursor)
-    yield connection
-    connection.close()
 
 
 @pytest.fixture

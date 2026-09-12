@@ -17,27 +17,9 @@ import pytest
 from tests.memory.builders import RECORDED, make_turn
 
 from agentic_erp_assistant.memory.conversation import ConversationStorePort
-from agentic_erp_assistant.persistence import (
-    PostgresConversationStore,
-    StoreConnectionError,
-    apply_schema,
-    connect,
-)
+from agentic_erp_assistant.persistence import PostgresConversationStore
 
 pytestmark = pytest.mark.postgres
-
-
-@pytest.fixture(scope="module")
-def database():
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    with connection.cursor() as cursor:
-        with connection.transaction():
-            apply_schema(cursor)
-    yield connection
-    connection.close()
 
 
 @pytest.fixture

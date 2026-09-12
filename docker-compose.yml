@@ -12,7 +12,8 @@
 #   uv run python scripts/ingest_documents.py
 #
 #   docker compose up -d postgres
-#   uv run python scripts/init_postgres.py
+#   uv run python scripts/init_postgres.py         # the dev database the server writes to
+#   uv run python scripts/init_postgres.py --test  # a second, _test database -- see ADR 0018
 #   uv run pytest -m postgres
 #
 # The application is run with uv against both, because during development the

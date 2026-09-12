@@ -17,10 +17,6 @@ import pytest
 
 from agentic_erp_assistant.llm.telemetry import ModelCallRecord
 from agentic_erp_assistant.memory.audit import MemoryAuditRow
-from agentic_erp_assistant.persistence.connection import (
-    StoreConnectionError,
-    connect,
-)
 from agentic_erp_assistant.persistence.postgres_audit import PostgresAuditLog
 from agentic_erp_assistant.persistence.postgres_conversation import (
     PostgresConversationStore,
@@ -32,7 +28,6 @@ from agentic_erp_assistant.persistence.postgres_memory import (
 from agentic_erp_assistant.persistence.postgres_pause import PostgresPauseStore
 from agentic_erp_assistant.persistence.postgres_queries import EvidenceQueries
 from agentic_erp_assistant.persistence.postgres_trace import PostgresTraceStore
-from agentic_erp_assistant.persistence.schema import apply_schema
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.events import TraceEvent
@@ -46,19 +41,6 @@ WHEN = datetime(2026, 9, 10, 9, 0, tzinfo=UTC)
 LATER = datetime(2026, 9, 10, 9, 0, 5, tzinfo=UTC)
 
 SCOPES = frozenset({"project.status.read", "project.risk.write"})
-
-
-@pytest.fixture(scope="module")
-def database():
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    with connection.cursor() as cursor:
-        with connection.transaction():
-            apply_schema(cursor)
-    yield connection
-    connection.close()
 
 
 @pytest.fixture
