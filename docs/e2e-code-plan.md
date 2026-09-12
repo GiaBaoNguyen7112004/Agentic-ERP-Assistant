@@ -1121,3 +1121,31 @@ confirm `/api/runs/{trace_id}` matches. Development loop: `npm --prefix ui run d
 10. **A revoked entitlement between pause and approval** is caught by `execute`
     at resume time (every check runs again), but the approver is not warned in
     advance; the queue shows the call as it was preflighted.
+
+The manual walkthrough (`docs/manual-test.md` §6, commit `638adbc`) found four
+more, closed or measured in `docs/gap-plan.md`:
+
+11. ~~Planner loop after a completed write~~ — closed. `engine/nodes.py`
+    refuses to re-run a call already sitting in `observations` as `ok`,
+    forcing the planner to answer with tools withheld instead (ADR 0019).
+12. ~~Budget estimate omitted the tools array and the answering schema~~ —
+    closed. `llm/adapters/openai_chat.py::estimate_extra_tokens` renders both
+    exactly as sent; live drift went from ~50% under to 1.3% (planner calls)
+    and 6.9% (answering calls, gated at 10% — an undocumented, provider-side
+    structured-output overhead no request byte explains, per
+    `tests/live/test_estimate_drift.py`'s own measurement).
+13. **Compound-question routing is model-dependent, and measured, not
+    guessed.** A recorded three-contract comparison (ADR 0020,
+    `evidence/routing/routing-comparison-2026-09-12.json`) found "why ... and
+    by how much"-shaped questions routing to the ERP tool **deterministically**
+    (0/15 across two rule-wording candidates and five repeats each,
+    `temperature=0.0`) rather than the "1 in 4" the walkthrough's live session
+    suggested — the session's own variance almost certainly came from state
+    (memory, history) the isolated comparison excludes, not from anything a
+    developer-block wording can reach. Neither candidate was promoted; the
+    named follow-up is structural (a `documents_then_tool` route, or a
+    post-hoc completeness check against the question's own clauses), not a
+    third prompt attempt.
+14. ~~The postgres-marked test suite truncated the dev database~~ — closed.
+    `tests/persistence/` connects only to a `_test`-suffixed database,
+    refused otherwise before a connection is even opened (ADR 0018).
