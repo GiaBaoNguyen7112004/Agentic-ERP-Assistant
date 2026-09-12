@@ -30,6 +30,7 @@ decision process and is not, and putting that in the trace would make the audit
 worse while making it look better.
 """
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -38,6 +39,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.ports import ToolChoice
 from agentic_erp_assistant.llm.tools import (
+    DECLARE_REPLY_CONTRACT_TOOL,
     PLANNING_TOOLS,
     ToolCallResult,
     ToolSpec,
@@ -47,6 +49,7 @@ from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import EMPTY_CONTRACT, ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
@@ -56,6 +59,8 @@ __all__ = [
     "Planner",
     "UNSCORED_CONFIDENCE",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 CONTROL_ROUTES: Mapping[str, DecisionRoute] = {
@@ -118,6 +123,21 @@ class DecisionModel(Protocol):
         so the result is guaranteed content; ``"required"`` forces a call
         back. Both are the mechanism :meth:`Planner.plan`'s ``tool_choice``
         parameter drives.
+        """
+        ...
+
+    def declare(
+        self, question: str, history: Sequence[ConversationTurn] = ()
+    ) -> ToolCallResult:
+        """Ask what a complete reply to ``question`` must rest on (ADR 0021).
+
+        Satisfied by
+        :meth:`~agentic_erp_assistant.llm.gateway.LLMGateway.declare`. A
+        result naming anything but ``declare_reply_contract``, or carrying
+        content instead of a call, is exactly as unreadable as a routing
+        call the real provider's ``tool_choice: "required"`` cannot produce
+        -- :meth:`Planner.declare` is what turns a readable one into a
+        :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`.
         """
         ...
 
@@ -246,6 +266,80 @@ class Planner:
         if spec.name in CONTROL_ROUTES:
             return self._control(spec, result.arguments or {})
         return self._tool_call(spec, result.arguments or {})
+
+    def declare(self, state: AgentState) -> ReplyContract:
+        """Ask what a complete reply to ``state.request`` must rest on (ADR
+        0021), and read the answer.
+
+        Every way the answer can be unusable ends in
+        :data:`~agentic_erp_assistant.state.reply_contract.EMPTY_CONTRACT`
+        and a logged warning rather than an exception -- the same
+        never-fail severity
+        :meth:`~agentic_erp_assistant.memory.extractor.LLMMemoryProposer.propose`
+        applies to an unreadable memory proposal. A garbled declaration
+        means this turn goes unchecked, exactly as if it had declared
+        nothing needed; it must not cost the turn its answer.
+
+        Args:
+            state: The turn as it stands. Only ``request`` and ``history``
+                are shown -- nothing has run yet, so there is nothing else to
+                show (see :func:`~agentic_erp_assistant.llm.prompts.build_declaration_messages`).
+
+        Returns:
+            A :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`.
+            Always one, never ``None`` -- the caller
+            (``engine/orchestrator.py``, ADR 0021) is what decides a raised
+            exception means "unchecked"
+            (:attr:`~agentic_erp_assistant.state.agent_state.AgentState.contract`
+            stays ``None``); this method's job is only to make an unreadable
+            *answer* harmless.
+
+        Raises:
+            Exception: Whatever the underlying model call raises -- network,
+                auth, retries exhausted, budget. Not absorbed here; a call
+                that never produced a reply is not "the reply was garbled",
+                it is "there is no reply to read", and the caller is where
+                that distinction is decided.
+        """
+        result = self.model.declare(state.request, state.history)
+
+        if result.tool_name != DECLARE_REPLY_CONTRACT_TOOL.name:
+            logger.warning(
+                "run %s: the declaration answered in prose or called %r "
+                "instead of %s; treating this turn as unchecked",
+                state.trace_id,
+                result.tool_name,
+                DECLARE_REPLY_CONTRACT_TOOL.name,
+            )
+            return EMPTY_CONTRACT
+
+        try:
+            validated = DECLARE_REPLY_CONTRACT_TOOL.validate_arguments(
+                result.arguments or {}
+            )
+        except ValidationError as error:
+            logger.warning(
+                "run %s: %s was called with arguments it does not accept "
+                "(%d problem(s)); treating this turn as unchecked",
+                state.trace_id,
+                DECLARE_REPLY_CONTRACT_TOOL.name,
+                error.error_count(),
+            )
+            return EMPTY_CONTRACT
+
+        try:
+            return ReplyContract(
+                needs=frozenset(validated.needs),  # type: ignore[attr-defined]
+                document_query=validated.document_query,  # type: ignore[attr-defined]
+            )
+        except ValidationError as error:
+            logger.warning(
+                "run %s: declared needs and document_query disagreed with "
+                "each other (%d problem(s)); treating this turn as unchecked",
+                state.trace_id,
+                error.error_count(),
+            )
+            return EMPTY_CONTRACT
 
     # -- the three shapes a choice can take --------------------------------
 

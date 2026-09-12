@@ -17,6 +17,7 @@ from pydantic import Field, ValidationError
 
 from agentic_erp_assistant.llm.tools import (
     CONTROL_TOOLS,
+    DECLARE_REPLY_CONTRACT_TOOL,
     DEFAULT_TOOLS,
     GET_PROJECT_STATUS_TOOL,
     PLANNING_TOOLS,
@@ -279,3 +280,48 @@ def test_the_offered_names_are_unique() -> None:
 
 def test_only_one_offered_tool_changes_anything() -> None:
     assert [spec.name for spec in PLANNING_TOOLS if spec.mutating] == ["create_risk"]
+
+
+# --------------------------------------------------------------------------
+# declare_reply_contract: offered alone, never to the planner (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_declare_reply_contract_is_strict_compatible() -> None:
+    """Not covered by the PLANNING_TOOLS parametrization above -- it is
+    deliberately not a member of that tuple."""
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert schema.get("additionalProperties") is False
+    assert sorted(schema.get("properties") or {}) == sorted(schema.get("required") or [])
+
+
+def test_declare_reply_contract_is_read_only() -> None:
+    assert DECLARE_REPLY_CONTRACT_TOOL.mutating is False
+
+
+def test_declare_reply_contract_is_not_offered_to_the_planner() -> None:
+    """The planner offers what a turn may do during it; a declaration is
+    asked before any of that, in its own call -- see PROPOSE_MEMORIES_TOOL
+    for the same split on the consolidation side."""
+    assert "declare_reply_contract" not in {spec.name for spec in PLANNING_TOOLS}
+    assert "declare_reply_contract" not in {spec.name for spec in DEFAULT_TOOLS}
+    assert "declare_reply_contract" not in {spec.name for spec in CONTROL_TOOLS}
+
+
+def test_declare_reply_contract_needs_takes_only_the_two_declared_kinds() -> None:
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert schema["properties"]["needs"]["items"]["enum"] == [
+        "document_passage",
+        "erp_field",
+    ]
+
+
+def test_declare_reply_contract_document_query_is_required_and_nullable() -> None:
+    """Strict mode's shape for an argument that only sometimes applies."""
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert "document_query" in schema["required"]
+    types = {branch["type"] for branch in schema["properties"]["document_query"]["anyOf"]}
+    assert types == {"string", "null"}

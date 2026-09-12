@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.ports import Role
 from agentic_erp_assistant.llm.prompts import (
+    DECLARATION_CONTRACT,
     DEVELOPER_CONTRACT,
     MEMORY_CONTRACT,
     NO_EVIDENCE,
@@ -25,6 +26,7 @@ from agentic_erp_assistant.llm.prompts import (
     PLANNER_CONTRACT,
     PROMOTION_CONTRACT,
     SYSTEM_POLICY,
+    build_declaration_messages,
     build_memory_messages,
     build_messages,
     build_planner_messages,
@@ -413,3 +415,60 @@ def test_promotion_messages_show_the_previous_summary_in_memory() -> None:
 def test_promotion_messages_refuse_an_empty_batch() -> None:
     with pytest.raises(ValueError, match="turns"):
         build_promotion_messages(())
+
+
+# --------------------------------------------------------------------------
+# build_declaration_messages: four blocks, before anything has run (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_the_declaration_roles_appear_in_order() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert [message["role"] for message in messages] == [
+        "system",
+        "developer",
+        "user",
+        "history",
+    ]
+
+
+def test_the_declaration_developer_block_is_its_own_contract() -> None:
+    """Not PLANNER_CONTRACT -- a declaration asks what the reply needs,
+    before any routing preference applies."""
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[1] == {"role": "developer", "content": DECLARATION_CONTRACT}
+    assert DECLARATION_CONTRACT != PLANNER_CONTRACT
+
+
+def test_the_question_is_carried_verbatim() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[2] == {"role": "user", "content": QUESTION}
+
+
+def test_no_history_still_produces_the_history_block() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[3] == {"role": "history", "content": NO_HISTORY}
+
+
+def test_history_reaches_the_declaration_block() -> None:
+    entry = turn(request="How is M2 tracking?", response="On track.")
+
+    messages = build_declaration_messages(QUESTION, (entry,))
+
+    assert "How is M2 tracking?" in messages[3]["content"]
+
+
+@pytest.mark.parametrize("question", ["", "   ", "\n"])
+def test_a_blank_question_is_a_caller_bug(question: str) -> None:
+    with pytest.raises(ValueError, match="question"):
+        build_declaration_messages(question)
+
+
+def test_every_role_a_declaration_prompt_uses_is_one_the_port_declares() -> None:
+    roles = {message["role"] for message in build_declaration_messages(QUESTION)}
+
+    assert roles <= set(get_args(Role))

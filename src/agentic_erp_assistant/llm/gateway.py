@@ -40,6 +40,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import (
     PLANNER_CONTRACT,
+    build_declaration_messages,
     build_messages,
     build_planner_messages,
 )
@@ -55,7 +56,12 @@ from agentic_erp_assistant.llm.telemetry import (
     price,
 )
 from agentic_erp_assistant.llm.tokenizer import TiktokenCounter, TokenCounter
-from agentic_erp_assistant.llm.tools import PLANNING_TOOLS, ToolCallResult, ToolSpec
+from agentic_erp_assistant.llm.tools import (
+    DECLARE_REPLY_CONTRACT_TOOL,
+    PLANNING_TOOLS,
+    ToolCallResult,
+    ToolSpec,
+)
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
@@ -405,6 +411,48 @@ class LLMGateway:
             tools=tools,
             temperature=temperature,
             tool_choice=tool_choice,
+        )
+
+    def declare(
+        self, question: str, history: Sequence[ConversationTurn] = ()
+    ) -> ToolCallResult:
+        """Ask what a complete reply to ``question`` must rest on (ADR 0021).
+
+        The sibling of :meth:`decide`, offering exactly one function
+        (:data:`~agentic_erp_assistant.llm.tools.DECLARE_REPLY_CONTRACT_TOOL`)
+        with ``tool_choice="required"``, so the result is always a call, never
+        the prose a declaration call exists to prevent. Goes through
+        :meth:`call_tools` like every other function-calling path in this
+        class, so it is budgeted, retried and recorded exactly like a routing
+        decision -- a declaration call costs real tokens and can fail exactly
+        like one.
+
+        Args:
+            question: The user's words, verbatim.
+            history: The session's recent turns, already clipped and
+                budgeted -- so a reference like "that milestone" can be
+                resolved the same way a routing decision resolves it.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`
+            naming ``declare_reply_contract`` with parsed arguments.
+            :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare`
+            is what turns this into a
+            :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`,
+            never-fail.
+
+        Raises:
+            ContextWindowExceeded: The estimate does not leave room for a
+                reply.
+            TransientProviderError: Retries were exhausted.
+            ProviderAuthError: A definitive rejection from the provider.
+            ValueError: ``question`` is blank.
+        """
+        return self.call_tools(
+            build_declaration_messages(question, history),
+            tools=(DECLARE_REPLY_CONTRACT_TOOL,),
+            temperature=0.0,
+            tool_choice="required",
         )
 
     def call_tools(

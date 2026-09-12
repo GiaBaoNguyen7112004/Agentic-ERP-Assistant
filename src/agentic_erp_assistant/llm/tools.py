@@ -30,6 +30,8 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentic_erp_assistant.state.reply_contract import ReplyNeed
+
 __all__ = [
     "ASK_CLARIFICATION_TOOL",
     "AskClarificationArguments",
@@ -37,6 +39,8 @@ __all__ = [
     "CONTROL_TOOLS",
     "CREATE_RISK_TOOL",
     "CreateRiskArguments",
+    "DECLARE_REPLY_CONTRACT_TOOL",
+    "DeclareReplyContractArguments",
     "DEFAULT_TOOLS",
     "GET_BUDGET_SUMMARY_TOOL",
     "GET_PROJECT_STATUS_FLAKY_TOOL",
@@ -415,6 +419,64 @@ REFUSE_TOOL = ToolSpec(
     arguments=RefuseArguments,
     mutating=False,
 )
+
+
+class DeclareReplyContractArguments(StrictArguments):
+    """Arguments for ``declare_reply_contract`` (ADR 0021).
+
+    ``document_query`` is required-and-nullable rather than optional, for the
+    reason ``BudgetSummaryArguments.include_forecast`` already states: strict
+    function calling requires every property to appear in ``required``, so an
+    argument that only sometimes applies has to be modelled as present-and-
+    possibly-null rather than absent. Whether the two fields actually agree
+    with each other (a query only when ``document_passage`` is among
+    ``needs``) is not checked here -- that is
+    :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`'s own
+    rule, applied once, by
+    :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare` when it
+    builds one from these.
+    """
+
+    needs: list[ReplyNeed] = Field(
+        description=(
+            "What kinds of fact the reply must rest on. 'document_passage' "
+            "for anything that has to be quoted from a project document -- an "
+            "explanation, a decision, a commitment. 'erp_field' for a live "
+            "value the ERP holds -- a status, a burn-down, a budget, the open "
+            "risks. Both, if the question asks for both. Neither (an empty "
+            "list) for a request to record something, a question outside the "
+            "project, or one too vague to act on yet."
+        ),
+    )
+    document_query: str | None = Field(
+        description=(
+            "The words a project document would have to contain to answer "
+            "this, in the user's own terms -- resolve a reference like 'that "
+            "milestone' from the history role first. Required exactly when "
+            "'document_passage' is in needs; null otherwise."
+        ),
+    )
+
+
+DECLARE_REPLY_CONTRACT_TOOL = ToolSpec(
+    name="declare_reply_contract",
+    description=(
+        "Before anything is looked up, say what a complete reply to this "
+        "question must rest on. Call it exactly once, first, for every turn."
+    ),
+    arguments=DeclareReplyContractArguments,
+    mutating=False,
+)
+"""The one function a declaration call offers, sent with ``tool_choice:
+'required'`` (ADR 0021) so the result is always a call, never prose.
+
+Deliberately absent from ``DEFAULT_TOOLS``, ``CONTROL_TOOLS`` and
+``PLANNING_TOOLS`` -- offered alone, the same way
+:data:`~agentic_erp_assistant.memory.extractor.PROPOSE_MEMORIES_TOOL` is. The
+planner offers the model what it may *do* during a turn; this is asked
+*before* any of that, in its own call, and a model shown it alongside the
+other nine would sometimes declare instead of acting.
+"""
 
 
 DEFAULT_TOOLS: tuple[ToolSpec, ...] = (

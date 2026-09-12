@@ -47,6 +47,7 @@ from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
+    "DECLARATION_CONTRACT",
     "DEVELOPER_CONTRACT",
     "MEMORY_CONTRACT",
     "NO_EVIDENCE",
@@ -58,6 +59,7 @@ __all__ = [
     "PROMOTION_CONTRACT",
     "PROMOTION_QUESTION",
     "SYSTEM_POLICY",
+    "build_declaration_messages",
     "build_memory_messages",
     "build_messages",
     "build_planner_messages",
@@ -371,6 +373,72 @@ def build_planner_messages(
         {"role": "observation", "content": _render_observations(observations)},
         {"role": "history", "content": _render_history(history)},
         {"role": "memory", "content": _render_memory(memories)},
+    ]
+
+
+DECLARATION_CONTRACT = """\
+Before anything is looked up, decide what a complete reply to this question \
+must rest on, and say so by calling declare_reply_contract exactly once.
+
+A reply may need:
+
+* a passage from a project document -- an explanation, a decision, a \
+commitment, anything that has to be quoted rather than looked up as a field;
+* a live ERP value -- a status, a burn-down, a budget, the open risks;
+* both, when the question asks for a field and the reason behind it in the \
+same breath ("why ... and by how much", "what changed, and why");
+* neither -- a request to record something, a question outside the project, \
+or one too vague to act on yet all declare an empty list.
+
+A question that asks why something happened, what was decided, or what was \
+agreed needs a document passage: the ERP holds the number, never the \
+explanation. A question that asks for a current value alone needs an ERP \
+field. When document_passage is one of the needs, document_query is the \
+words a document would have to contain to answer it, in the user's own \
+terms -- resolve a reference like "that milestone" or "the second risk" \
+from the history role before writing the query, the same way a routing \
+decision would. When document_passage is not needed, document_query is null.\
+"""
+"""What a declaration call is asked, in the role that instructs.
+
+Deliberately separate from :data:`PLANNER_CONTRACT`: that prompt is what the
+planner is *told* about routing preference; this one asks the model to
+*declare*, once, per turn, before any routing has happened, what its own
+eventual answer will need to point to. Confusing the two would put a
+declaration a call ahead of what it is meant to check.
+"""
+
+
+def build_declaration_messages(
+    question: str, history: Sequence[ConversationTurn] = ()
+) -> list[Message]:
+    """Build the four role blocks for one reply-contract declaration.
+
+    No evidence, observation or memory block. Nothing has run yet -- a
+    declaration happens before the graph does anything -- and memory is not a
+    reason to declare less: what earlier turns established has no bearing on
+    what *this* reply needs to rest on.
+
+    Args:
+        question: The user's words, verbatim.
+        history: The session's recent turns, already clipped and budgeted --
+            so "that milestone" can be resolved the same way a routing
+            decision resolves it. Empty on the first turn of a session.
+
+    Returns:
+        Four messages: system, developer, user, history.
+
+    Raises:
+        ValueError: ``question`` is blank.
+    """
+    if not question.strip():
+        raise ValueError("question must not be blank")
+
+    return [
+        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "developer", "content": DECLARATION_CONTRACT},
+        {"role": "user", "content": question},
+        {"role": "history", "content": _render_history(history)},
     ]
 
 

@@ -52,6 +52,9 @@ class ScriptedModel:
         self.tool_choice_calls.append(tool_choice)
         return self.results[min(len(self.calls) - 1, len(self.results) - 1)]
 
+    def declare(self, question, history=()):  # pragma: no cover - unused here
+        raise AssertionError("declare() is exercised in test_planner_declare.py")
+
 
 def called(name: str, **arguments) -> ToolCallResult:
     return ToolCallResult.from_tool_call(tool_name=name, arguments=arguments)

@@ -643,6 +643,67 @@ def test_tool_choice_required_forces_the_wire_choice_and_says_so_in_telemetry() 
     assert "tool_choice=required" in telemetry.records[0].detail
 
 
+# --------------------------------------------------------------------------
+# declare(): a reply-contract declaration call (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_declare_offers_only_the_declaration_function() -> None:
+    recorder = Recorder(
+        httpx.Response(
+            200,
+            json=tool_call_reply(
+                "declare_reply_contract",
+                {"needs": ["document_passage", "erp_field"], "document_query": "why is M2 late"},
+            ),
+        )
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    result = gateway.declare("Why is milestone M2 late and by how much?")
+
+    assert result.tool_name == "declare_reply_contract"
+    assert result.arguments == {
+        "needs": ["document_passage", "erp_field"],
+        "document_query": "why is M2 late",
+    }
+    body = json.loads(recorder.requests[0].content)
+    assert [tool["function"]["name"] for tool in body["tools"]] == ["declare_reply_contract"]
+    assert body["tool_choice"] == "required"
+    assert "tool_choice=required" in telemetry.records[0].detail
+
+
+def test_declare_sends_only_four_blocks() -> None:
+    """Nothing has run yet -- system, developer, user, history, and no
+    evidence, observation or memory block at all."""
+    recorder = Recorder(
+        httpx.Response(
+            200,
+            json=tool_call_reply(
+                "declare_reply_contract", {"needs": [], "document_query": None}
+            ),
+        )
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.declare("What is the status of milestone M2?")
+
+    body = json.loads(recorder.requests[0].content)
+    assert len(body["messages"]) == 4
+
+
+def test_declare_is_budgeted_like_any_other_call() -> None:
+    recorder = Recorder()
+    gateway, telemetry, client = make_gateway(recorder, context_window=64)
+
+    with pytest.raises(ContextWindowExceeded):
+        gateway.declare("Why is milestone M2 late and by how much?")
+    client.close()
+
+    assert recorder.requests == []
+    assert [record.outcome for record in telemetry.records] == ["budget_exceeded"]
+
+
 def test_observations_reach_the_model_in_their_own_block() -> None:
     """The reason a second decision can differ from the first."""
     from agentic_erp_assistant.state.tool_outcome import ToolOutcome
