@@ -579,6 +579,38 @@ def test_the_planner_request_carries_the_offered_functions() -> None:
     assert body["parallel_tool_calls"] is False
 
 
+def test_decide_sends_the_production_contract_by_default() -> None:
+    """The default sends PLANNER_CONTRACT byte-for-byte -- eval/routing.py's
+    baseline (ADR 0020) imports it rather than copying it precisely so this
+    stays true."""
+    from agentic_erp_assistant.llm.prompts import PLANNER_CONTRACT
+
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    body = json.loads(recorder.requests[0].content)
+    developer_block = next(m["content"] for m in body["messages"] if m["role"] == "developer")
+    assert developer_block == PLANNER_CONTRACT
+
+
+def test_decide_sends_a_different_contract_when_the_gateway_carries_one() -> None:
+    candidate = "a candidate contract, not the production one"
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder, planner_contract=candidate)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    body = json.loads(recorder.requests[0].content)
+    developer_block = next(m["content"] for m in body["messages"] if m["role"] == "developer")
+    assert developer_block == candidate
+
+
 def test_allow_tools_false_forces_the_wire_choice_and_says_so_in_telemetry() -> None:
     """ADR 0019: how ``engine/nodes.py`` ends a turn's planning loop after a
     mutating tool has already succeeded -- by withholding the option, not by

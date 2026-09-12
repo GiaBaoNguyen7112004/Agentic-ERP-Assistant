@@ -37,7 +37,11 @@ from agentic_erp_assistant.llm.ports import (
     Usage,
     UsageReporting,
 )
-from agentic_erp_assistant.llm.prompts import build_messages, build_planner_messages
+from agentic_erp_assistant.llm.prompts import (
+    PLANNER_CONTRACT,
+    build_messages,
+    build_planner_messages,
+)
 from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.llm.streaming import AnswerStreamSink, JsonStringFieldExtractor
@@ -203,6 +207,16 @@ class LLMGateway:
     attempt gets ``reset()`` called on it before its first delta -- a stream
     that died partway is replayed from the top on the next attempt, and a
     sink that was not told would show the reply twice.
+    """
+
+    planner_contract: str = PLANNER_CONTRACT
+    """The developer block :meth:`decide` builds its prompt with.
+
+    Defaults to the production constant; nothing in ``composition/`` sets it
+    to anything else. The one caller that does is ``eval/routing.py``'s
+    comparison (ADR 0020) -- one gateway per candidate contract, so a
+    three-way comparison is three constructor calls, not three copies of
+    :meth:`decide`.
     """
 
     def answer(
@@ -379,7 +393,12 @@ class LLMGateway:
         """
         return self.call_tools(
             build_planner_messages(
-                question, _as_snippets(evidence), observations, memories, history
+                question,
+                _as_snippets(evidence),
+                observations,
+                memories,
+                history,
+                contract=self.planner_contract,
             ),
             tools=tools,
             temperature=temperature,

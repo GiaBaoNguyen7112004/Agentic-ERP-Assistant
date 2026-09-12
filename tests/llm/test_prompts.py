@@ -22,6 +22,7 @@ from agentic_erp_assistant.llm.prompts import (
     NO_HISTORY,
     NO_MEMORY,
     NO_REPLY,
+    PLANNER_CONTRACT,
     PROMOTION_CONTRACT,
     SYSTEM_POLICY,
     build_memory_messages,
@@ -293,6 +294,22 @@ def test_no_history_still_produces_every_planner_block() -> None:
     messages = build_planner_messages(QUESTION)
 
     assert messages[5] == {"role": "history", "content": NO_HISTORY}
+
+
+def test_the_developer_block_defaults_to_the_production_contract() -> None:
+    messages = build_planner_messages(QUESTION)
+
+    assert messages[1] == {"role": "developer", "content": PLANNER_CONTRACT}
+
+
+def test_the_developer_block_carries_a_given_contract_instead() -> None:
+    """ADR 0020: the comparison sends a candidate through this exact
+    builder, never a second one that could drift from it."""
+    candidate = "a candidate contract, not the production one"
+
+    messages = build_planner_messages(QUESTION, contract=candidate)
+
+    assert messages[1] == {"role": "developer", "content": candidate}
 
 
 # --------------------------------------------------------------------------

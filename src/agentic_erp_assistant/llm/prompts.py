@@ -321,6 +321,8 @@ def build_planner_messages(
     observations: Sequence[ToolOutcome] = (),
     memories: Sequence[MemoryRecord] = (),
     history: Sequence[ConversationTurn] = (),
+    *,
+    contract: str = PLANNER_CONTRACT,
 ) -> list[Message]:
     """Build the seven role blocks for one routing decision.
 
@@ -345,6 +347,11 @@ def build_planner_messages(
         history: The session's recent turns, already clipped and budgeted --
             see :mod:`agentic_erp_assistant.context.history_injection`. Empty
             on the first turn of a session, and always on a turn with none.
+        contract: The developer block's content. Defaults to the production
+            :data:`PLANNER_CONTRACT`; a parameter only so
+            ``eval/routing.py``'s comparison (ADR 0020) can send a candidate
+            through the exact same builder rather than a second one that
+            could drift from it. Nothing in ``composition/`` overrides it.
 
     Returns:
         Seven messages: system, developer, user, evidence, observation,
@@ -358,7 +365,7 @@ def build_planner_messages(
 
     return [
         {"role": "system", "content": SYSTEM_POLICY},
-        {"role": "developer", "content": PLANNER_CONTRACT},
+        {"role": "developer", "content": contract},
         {"role": "user", "content": question},
         {"role": "evidence", "content": _render_evidence(evidence)},
         {"role": "observation", "content": _render_observations(observations)},
