@@ -4,17 +4,20 @@ import { EventRow } from '../components/EventRow'
 
 describe('EventRow', () => {
   it('renders an engine row with its seq', () => {
-    const { container } = render(
+    render(
       <EventRow
         event={{ type: 'trace', seq: 3, node: 'think', kind: 'route_selected', detail: 'answer', source: 'engine' }}
       />,
     )
     expect(screen.getByText('3')).toBeInTheDocument()
-    expect(container.querySelector('.trace-row')).not.toHaveClass('gateway')
+    expect(
+      document.querySelector('[data-source="tool_gateway"]'),
+    ).not.toBeInTheDocument()
+    expect(document.querySelector('[data-source="engine"]')).toBeInTheDocument()
   })
 
-  it('renders a gateway row in italics with no seq', () => {
-    const { container } = render(
+  it('renders a gateway row marked live-only with no seq', () => {
+    render(
       <EventRow
         event={{
           type: 'trace',
@@ -26,7 +29,11 @@ describe('EventRow', () => {
         }}
       />,
     )
-    expect(container.querySelector('.trace-row')).toHaveClass('gateway')
+    // The gateway marker moved from a CSS class to data-source; the
+    // behaviour asserted (a distinguishable live-only row) is the same.
+    const row = document.querySelector('[data-source="tool_gateway"]')
+    expect(row).not.toBeNull()
+    expect(row).toHaveAttribute('title', 'live only — tool gateway hook, not persisted')
     expect(screen.queryByText('3')).not.toBeInTheDocument()
     // seq renders as the placeholder, not a number
     expect(screen.getByText('·')).toBeInTheDocument()

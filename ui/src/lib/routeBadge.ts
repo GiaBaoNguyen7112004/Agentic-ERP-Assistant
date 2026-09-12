@@ -28,3 +28,11 @@ export function routeBadge(turn: TurnView): RouteBadgeView {
   }
   return { label: route ?? 'unknown', tone: 'neutral' }
 }
+
+/** The tone of a planner decision's route, for the decision list's badge. */
+export function routeTone(route: string | null): Tone {
+  if (route === 'refuse') return 'warning'
+  if (route === 'fail') return 'destructive'
+  if (route === 'answer') return 'info'
+  return 'neutral'
+}
