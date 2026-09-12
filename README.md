@@ -62,8 +62,7 @@ npm --prefix ui run typecheck && npm --prefix ui test && npm --prefix ui run bui
 
 `docs/manual-test.md` is the scenario handbook: every case names the request,
 the expected route and trace shape, and how to verify it in the database or
-the UI. `docs/e2e-code-plan.md` is the phase-by-phase build log this codebase
-was implemented from.
+the UI.
 
 ## Layout
 
