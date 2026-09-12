@@ -74,13 +74,24 @@ Two things were **not** verified and are carried, not fixed:
   endpoint is rejected: it costs a round trip per call to save a local
   computation, and the whole point of the budget check is that it runs before
   anything is sent.
-- **D5 — Routing is measured before it is tuned.** `eval/` gains a routing
-  harness: a small labelled set (question, actor, expected first route),
-  each case run *N* times against the real planner, the report recording the
-  route distribution and cost. `PLANNER_CONTRACT` is edited only against that
-  number, and the number is committed as evidence the way
-  `evidence/rag/retrieval-report.json` already is. The fix for R1 is not "add
-  a rule"; it is "add a rule, show the rate moved, keep the harness".
+- **D5 — The planner contract is chosen by a recorded comparison, not edited
+  in place.** Three contracts — the production one as the baseline and two
+  candidates — are run against the *same* six fixed cases through the *same*
+  client, `N` repeats each, in one run, so the only variable is the prompt and
+  the model's day-to-day variance is shared. The result is typed rows (chosen
+  route, accepted routes, match flag, hallucinated-tool flag, cost), not a
+  paragraph; an ADR applies a selection rule written *before* the run and
+  promotes the winner into `PLANNER_CONTRACT`. Two of the six cases are writes,
+  so a candidate that fixes R1 by pushing everything to documents is caught on
+  the approval path. Rejected: editing the contract and comparing two separate
+  runs (prompt change and run-to-run noise are confounded — the R1 finding *is*
+  a variance finding, 1 of 4); one sample per prompt-by-case pair (would have
+  shown R1 as pass or fail by luck); a "policy-first" candidate that asks the
+  planner to apply authorization before routing (that is the gateway's job,
+  ADR 0016 — a planner refusing on the actor's behalf would be measured on a
+  job it must not have). The shape follows the reference project's router
+  comparison (`run_comparison(prompts, cases, client)` → `RouterResult` rows);
+  what is adapted is stated in Phase L.
 - **D6 — Nothing in this plan touches the approval flow, the gateway order, or
   the access rules.** They passed; their scope is closed.
 
@@ -99,18 +110,21 @@ src/agentic_erp_assistant/
   llm/adapters/openai_chat.py  tool_choice "none" when tools are withheld; estimate_payload
   llm/gateway.py             estimates the payload, not the messages
   llm/tokenizer.py           count_request_tokens(payload_text, message_count)
-  llm/prompts.py             PLANNER_CONTRACT: the compound-question rule (after D5's number)
-  eval/routing_cases.py      the labelled routing set
-  eval/routing.py            evaluate_routing(): N runs per case, distribution, cost
+  llm/prompts.py             build_planner_messages(..., contract=PLANNER_CONTRACT);
+                             PLANNER_CONTRACT <- the winner ADR 0020 names
+  eval/routing_prompts.py    V1_DIRECT (= PLANNER_CONTRACT, imported), V2_COMPOUND, V3_EVIDENCE_FIRST
+  eval/routing_cases.py      six fixed cases, two of them writes
+  eval/routing.py            run_comparison(prompts, cases, gateway_factory, repeats) -> RouterResult rows
   persistence/connection.py  test_url_from_environment() + the _test name check
 tests/
   persistence/conftest.py    ONE database fixture, shared by the five modules
 scripts/
-  run_routing_evaluation.py  -> evidence/routing/routing-report.json
+  run_routing_comparison.py  -> evidence/routing/routing-comparison-<date>.json
   init_postgres.py           --test flag: creates agentic_erp_test and applies the schema
 docs/adr/0018-…              tests own a database, the dev store is the record
 docs/adr/0019-…              a completed write ends the loop by withholding tools
-evidence/routing/            the routing report(s), committed
+docs/adr/0020-…              the planner contract is chosen by a recorded comparison
+evidence/routing/            the comparison report(s), committed
 ```
 
 ---
@@ -270,64 +284,135 @@ structurally`.
   its own criterion. Record both deltas in the commit message.
 - Commit: `llm: measure estimate drift live and gate it at five percent`.
 
-### Phase L — Routing is measured, then tuned (gap 13)
+### Phase L — The planner contract is chosen by a recorded comparison (gap 13)
 
-**L1. The routing harness.**
+The shape is the reference project's router comparison: three prompt versions,
+six cases held fixed across all three, every prompt-by-case pair actually sent
+through the client, one typed result row per pair. Four things are adapted to
+this repo and each is a decision, not a convenience: the contracts are Python
+constants and the baseline *is* the production one (prompts are diffable code
+here, and the winner has to become `PLANNER_CONTRACT` — two copies would
+drift); the third variant is not "policy-first" (D5); each pair is run `N`
+times, not once; and the write cases accept two first routes, because the
+contract itself asks for `list_risks` before `create_risk`.
 
-- `eval/routing_cases.py`: `RoutingCase(id, actor, request, expected_first_route,
-  expected_tool | None, note)`. Eight cases, all from `docs/manual-test.md`
-  so they are already reviewed: R1 (documents), R4, R5 (documents), T1, T4
-  (tool), T5 (tool, then a second tool), R10 (refuse), T9-turn-1 (clarify).
-  R1 is the case this phase exists for; the others stop a fix for R1 from
-  costing a different route.
-- `eval/routing.py::evaluate_routing(planner_factory, cases, *, repeats)`:
-  builds a fresh `AgentState` per run, calls `Planner.plan` *only* (one model
-  call, no tool execution — the question is what the planner chooses first),
-  records the route/tool distribution per case, the hit rate against
-  `expected_first_route`, tokens and cost. A raised provider error is a
-  recorded case failure, not an aborted report (same rule as
-  `eval/retrieval.py`).
-- `scripts/run_routing_evaluation.py --repeats 5` → `evidence/routing/
-  routing-report.json` plus a one-line-per-case summary on stdout. Cost is
-  printed first (eight cases × five repeats × one call ≈ forty planner calls).
-- Tests: `tests/eval/test_routing.py` with a scripted planner — distribution
-  arithmetic, a case that raises is reported not raised, the report is
-  JSON-serialisable.
-- Verify: run it once against gpt-4o *before* touching the prompt; commit the
-  report. This is the baseline: the walkthrough's 1-of-4 for R1 becomes a
-  measured rate.
-- Commit: `eval: a routing harness, and the baseline it measured`.
+**L1. The contract is a parameter, defaulting to the production one.**
 
-**L2. The compound-question rule, against the number.**
+- `llm/prompts.py::build_planner_messages(..., contract: str = PLANNER_CONTRACT)`;
+  the developer block carries `contract`.
+- `llm/gateway.py::LLMGateway.planner_contract: str = PLANNER_CONTRACT`, a
+  constructor field `decide()` passes through. Nothing in `composition/` sets
+  it — production always runs the constant; only the harness builds gateways
+  with a candidate.
+- Tests: `tests/llm/test_prompts.py` — the developer block is the contract
+  given; `tests/llm/test_gateway.py` — a gateway built with another contract
+  sends it, and the default sends `PLANNER_CONTRACT` byte-for-byte.
+- Commit: `llm: the planner contract is a gateway parameter, defaulting to the
+  production one`.
 
-- `llm/prompts.py::PLANNER_CONTRACT`, rule 1 gains one sentence: *"A question
-  that asks both for a field and for the reason behind it ('why … and by how
-  much') is a document question first: the ERP holds the number, never the
-  explanation, and an answer that gives only the number is incomplete."*
-  Rule 5 unchanged.
-- Re-run L1's script; the report is committed beside the baseline
-  (`routing-report-<date>.json`, both kept). The commit message quotes the
-  R1 rate before and after and confirms no other case moved down. If R1 does
-  not move, the sentence is reverted in the same commit and the ADR-less
-  finding stays in §5 — a prompt change with no measured effect is not kept.
-- Verify live: R1 through `scripts/run_turn.py` three times; note the route
-  each time in `docs/manual-test.md` §6.
-- Commit: `llm: compound questions go to documents first (R1 route rate
-  <before> -> <after>)`.
+**L2. Three contracts, six cases, eighteen-times-N recorded decisions.**
+
+- `eval/routing_prompts.py`: `RouterPrompt(name, contract)` and three of them.
+  `V1_DIRECT = RouterPrompt("v1-direct", PLANNER_CONTRACT)` — imported, never
+  copied, so the baseline cannot drift from what production sends.
+  `V2_COMPOUND` — v1 plus one sentence in rule 1: *"A question that asks both
+  for a field and for the reason behind it ('why … and by how much') is a
+  document question: the ERP holds the number, never the explanation, and an
+  answer that gives only the number is incomplete."* `V3_EVIDENCE_FIRST` —
+  rules 1–2 restructured: first name what kind of fact the reply needs (a
+  quoted explanation, a live field, or both), then route — documents whenever
+  an explanation is needed, the tool only when nothing has to be quoted. Rules
+  3–5 and the three non-negotiables are identical across all three, so the
+  diff of v2 and v3 against v1 is a few lines a reviewer can read in the ADR.
+- `eval/routing_cases.py`: `RoutingCase(id, actor, request,
+  accepted_first_routes: frozenset[tuple[DecisionRoute, str | None]], note)`.
+  Six, all from `docs/manual-test.md`, fixed across the three prompts:
+
+  | Case | Actor | Request | Accepted first route(s) | Why it is in the set |
+  |---|---|---|---|---|
+  | R1 | priya | Why is milestone M2 late and by how much? | `retrieve_project_documents` | the finding. Documents-first is unambiguous in *this* graph: `retrieve_project_documents` is terminal and the composer never sees observations, so tool-then-documents would drop nothing only by luck — and the status report holds both the delay and its cause |
+  | T1 | priya | What is the status of milestone M2? | `call_tool:get_project_status` | the live-field control: a candidate that sends everything to documents loses here |
+  | R10 | priya | What is the weather forecast in Hanoi next week? | `refuse`, or `retrieve_project_documents` | out of scope; the handbook accepts either the planner's refusal or the similarity gate's |
+  | T9/1 | priya | How is the sprint going? | `clarify` | under-specified; no candidate may start guessing |
+  | A1 | priya | Record a high severity risk on atlas: hypercare staffing is not confirmed for the M2 cutover. | `request_approval:create_risk`, or `call_tool:list_risks` | the approval path; `list_risks` first is what the contract asks for |
+  | A9 | tomas | Record a medium risk on atlas: warehouse depot hardware refresh is unfunded. | same as A1 | tomas cannot write, and the planner must not be the one to say so — preflight refuses it (ADR 0016). A candidate that refuses on the actor's behalf scores a miss, which is the point |
+
+  Two of six are writes, the reference project's proportion, and the reason
+  a fix for R1 cannot quietly cost the approval route.
+- `eval/routing.py`: `RouterResult(prompt, case_id, repeat, chosen_route,
+  chosen_tool, accepted, matched, hallucinated_tool, input_tokens,
+  output_tokens, cost_usd, error)` and `run_comparison(prompts, cases,
+  gateway_factory, *, repeats) -> ComparisonReport`. Per prompt: one
+  `LLMGateway` from `gateway_factory(prompt.contract)`, one `Planner` over it
+  with the same offered tools production uses; per (case, repeat): a fresh
+  `AgentState`, `Planner.plan` *only* — one model call, nothing executed, the
+  question is what the planner chooses first. `matched` is whether
+  `(route, tool)` is in the accepted set. `hallucinated_tool` is
+  `decision.route == "fail"` with the planner's own "was not offered"
+  rationale — `Planner._unreadable` already detects a call to a tool that
+  does not exist; the harness records it rather than detecting it a second
+  time. A provider error is a row with `error` set, not an aborted report
+  (the same rule `eval/retrieval.py` follows). `ComparisonReport.summary()`:
+  per prompt, match rate, hallucination count, cost; per (prompt, case), the
+  route distribution. Three prompts × six cases × `N` repeats rows.
+- `scripts/run_routing_comparison.py --repeats 5 [--prompts v1-direct,v2-compound]`
+  → `evidence/routing/routing-comparison-<date>.json` plus a per-prompt table
+  on stdout. The call count and the estimated cost print first (3 × 6 × 5 =
+  90 planner calls ≈ 2.7k input tokens each).
+- Tests: `tests/eval/test_routing.py`, with the scripted tool-calling client
+  from `tests/llm/conftest.py` — 3 prompts × 6 cases × 1 repeat produce
+  exactly 18 rows, each carrying chosen, accepted, `matched` and
+  `hallucinated_tool`; the contract the client received differs per prompt
+  (the parameter is wired, not ignored); `call_tool:list_risks` matches the
+  write cases and `retrieve_project_documents` does not; a client that raises
+  on one pair yields one row with `error` and seventeen without; a call to a
+  tool that was not offered sets `hallucinated_tool` and not `matched`; the
+  report round-trips through JSON.
+- Verify: `uv run pytest tests/eval/test_routing.py -q`; then the script
+  against gpt-4o, and the report committed. This is the number the
+  walkthrough's 1-of-4 becomes.
+- Commit: `eval: three planner contracts, six fixed cases, a recorded
+  comparison`.
+
+**L3. ADR 0020 applies the rule and promotes the winner.**
+
+- The selection rule, written *before* the run so the ADR cannot be fitted
+  to the numbers: highest overall match rate wins; a tie goes to the fewer
+  hallucinated tools, then to the shorter contract; and v1 keeps its place
+  unless a candidate beats it on R1 **and** loses on no other case. The rule
+  goes into `eval/routing_prompts.py`'s module docstring in L2, i.e. it is in
+  the commit *before* the report.
+- `docs/adr/0020-the-planner-contract-is-chosen-by-a-recorded-comparison.md`:
+  the three contracts by name with v2/v3's diff against v1 quoted; the table
+  (match rate, hallucinations, cost per prompt; the route distribution for
+  R1, A1 and A9); the rule; the outcome; and what was rejected (D5's list,
+  plus "policy-first", by name, with the ADR 0016 reason).
+- `llm/prompts.py::PLANNER_CONTRACT` ← the winner's text, if it is not v1.
+  `V1_DIRECT` then resolves to the winner automatically, the losers stay in
+  `eval/routing_prompts.py` as the record, and re-running the script later is
+  the regression gate. If no candidate beats v1, nothing is promoted, the ADR
+  records that, and gap 13 stays open with its measured rate — a prompt
+  change with no measured effect is not kept (D5).
+- Verify live: R1 three times through `scripts/run_turn.py`; the route each
+  time goes into `docs/manual-test.md` §6.
+- Commit: `llm: promote <winner> as the planner contract (R1 <v1 rate> ->
+  <winner rate>, writes unchanged)` — or `docs: ADR 0020 -- no candidate beat
+  the baseline`.
 
 ### Phase M — Re-walk what changed, and close the log
 
-- Re-run A11 (J2's live check), E4 (K2's), R1 ×3 (L2's), and the fifteen
+- Re-run A11 (J2's live check), E4 (K2's), R1 ×3 (L3's), and the fifteen
   §4.7 cells recorded as "reused" — with Phase I in place their traces now
   survive the finishing check. Append rows to `docs/manual-test.md` §6 with
   the new commit hash; the original `638adbc` rows are not edited (the log is
   a record).
 - `docs/e2e-code-plan.md` §5: add gaps 11–14 with a one-line "closed by
-  gap-plan Phase …" for 11, 12 and 14; 13 stays listed with its measured rate
-  and the harness that watches it.
+  gap-plan Phase …" for 11, 12 and 14; 13 is closed or stays listed according
+  to ADR 0020's outcome, with the measured rate either way.
 - `CLAUDE.md`: Commands block gets `init_postgres.py --test`,
-  `run_routing_evaluation.py`; Open decisions gains one line under "Eval
-  report format": routing joins retrieval as a JSON report under `evidence/`.
+  `run_routing_comparison.py`; Open decisions gains one line under "Eval
+  report format": routing joins retrieval as a JSON report under `evidence/`,
+  and the planner contract is whichever ADR 0020 names.
 - Finishing checks (`compileall`, `pytest -q`, frontend typecheck/test only if
   `ui/` was touched — it should not be), then commit:
   `docs: re-walk the four findings, record the results, list what stays open`.
@@ -345,10 +430,11 @@ structurally`.
 - [ ] `estimated_input_tokens` is within 5 % of `input_tokens` on a live planner
       call and a live answering call, and the live test that asserts it is
       marked and skips without a key (Phase K).
-- [ ] `evidence/routing/` holds a baseline and an after report; R1's
-      documents-first rate is quoted in the prompt commit; no other case's rate
-      fell (Phase L).
-- [ ] ADR 0018 and 0019 are in the index; `docs/e2e-code-plan.md` §5 lists gaps
+- [ ] `evidence/routing/` holds a comparison report with 3 × 6 × N rows; ADR
+      0020 applies the rule written before the run; if a contract was promoted,
+      `V1_DIRECT` and `PLANNER_CONTRACT` are the same object and the losers are
+      still in `eval/routing_prompts.py` (Phase L).
+- [ ] ADR 0018, 0019 and 0020 are in the index; `docs/e2e-code-plan.md` §5 lists gaps
       11–14 with their status; `docs/manual-test.md` §6 has the re-walk rows
       (Phase M).
 - [ ] No change to `tools/gateway.py`'s order, `engine/transitions.py`'s
@@ -360,12 +446,12 @@ structurally`.
 I → J → K → L → M. I first because every later phase's live proof depends on
 the evidence surviving the finishing check. J before K because J's live check
 (one approved write) is the cheapest way to confirm the new `model_calls.detail`
-field K reads. L last because it spends the most model calls (two reports ×
-~40 planner calls) and its prompt edit is the only change in this plan whose
-effect is measured rather than proven — it should land on a repo that is
-otherwise done.
+field K reads. L last because it spends the most model calls (one comparison ≈ 90
+planner calls, a second after promotion if the gate is wanted at once) and its
+prompt change is the only change in this plan whose effect is measured rather
+than proven — it should land on a repo that is otherwise done.
 
-Estimated model spend: Phase J ≈ 3 turns, K ≈ 4 calls, L ≈ 80 planner calls,
+Estimated model spend: Phase J ≈ 3 turns, K ≈ 4 calls, L ≈ 90–180 planner calls,
 M ≈ 25 turns — all gpt-4o at the walkthrough's observed ~2.7k input tokens per
 call; well under the walkthrough's own cost.
 
@@ -374,9 +460,9 @@ call; well under the walkthrough's own cost.
 11. ~~Planner loop after a completed write~~ — closed by Phase J.
 12. ~~Budget estimate omits tools and schema~~ — closed by Phase K.
 13. **Compound-question routing is model-dependent.** Measured by
-    `evidence/routing/`; the prompt rule moved the rate, not to certainty. A
-    structural answer — a `documents_then_tool` route the planner can name, or
-    a completeness check on the reply against the question's clauses — is the
-    follow-up, and it is the same residual risk ADR 0014 already records for
-    `think -> answer`.
+    `evidence/routing/`, and ADR 0020 says whether a contract moved the rate;
+    a prompt moves a rate, not to certainty. A structural answer — a
+    `documents_then_tool` route the planner can name, or a completeness check
+    on the reply against the question's clauses — is the follow-up, and it is
+    the same residual risk ADR 0014 already records for `think -> answer`.
 14. ~~The test suite truncates the evidence store~~ — closed by Phase I.
