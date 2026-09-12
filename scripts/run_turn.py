@@ -87,10 +87,15 @@ def _print_model_calls(queries, trace_id: str) -> None:
     records, totals = queries.model_calls(trace_id)
     print("\n--- model calls ---")
     for record in records:
+        delta = ""
+        if record.input_tokens:
+            drift = record.estimated_input_tokens - record.input_tokens
+            pct = drift / record.input_tokens * 100
+            delta = f" est={record.estimated_input_tokens} drift={drift:+d} ({pct:+.1f}%)"
         print(
             f"  {record.model} {record.outcome} attempts={record.attempts} "
             f"in={record.input_tokens} out={record.output_tokens} "
-            f"cost={record.cost_usd}"
+            f"cost={record.cost_usd}{delta}"
         )
     print(
         f"  totals: {totals.count} call(s), {totals.input_tokens} in / "
