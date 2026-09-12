@@ -36,6 +36,7 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from agentic_erp_assistant.reasoning.completeness import Completeness, assess, next_redirect
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, ReasoningDecision
 from agentic_erp_assistant.engine.ports import (
     AnswerComposerPort,
@@ -262,6 +263,98 @@ class GraphNodes:
                 events=events + (_event("think", "failed", detail),),
             )
 
+        # ADR 0021: does this decision satisfy what the planner itself
+        # declared a complete reply needs? Only "answer" and
+        # "retrieve_project_documents" are worth asking -- every other route
+        # either executes something that will feed a later think() (call_tool,
+        # request_approval) or ends the turn on its own terms (clarify,
+        # refuse, fail), neither of which a reply contract has anything to say
+        # about. `gap` stays available for the "answer" branch below, which is
+        # the one place a still-missing need, after its one redirect, has to
+        # be delivered rather than silently dropped.
+        gap: Completeness | None = None
+        if decision.route in ("answer", "retrieve_project_documents"):
+            gap = assess(state.contract, state)
+            need = next_redirect(gap, state.redirected_needs)
+
+            if need == "erp_field":
+                # D5: fields before passages. Whether the model wanted to
+                # answer or already chose to search, an unmet ERP field is
+                # fetched first -- retrieval is withheld, not the tools that
+                # could supply it, so the model must pick one of those, ask
+                # back, or refuse.
+                events = events + (
+                    _event(
+                        "think",
+                        "contract_enforced",
+                        "erp_field: a call was required, search withheld",
+                    ),
+                )
+                state = state.evolve(
+                    redirected_needs=state.redirected_needs | {"erp_field"}
+                )
+                try:
+                    decision = self.planner.plan(
+                        state, tool_choice="required", withhold={RETRIEVAL_TOOL}
+                    )
+                except Exception as error:  # noqa: BLE001 - see the first call's handler above
+                    logger.warning(
+                        "planner failed on %s: %s", state.trace_id, error
+                    )
+                    return advance(
+                        state,
+                        "fail",
+                        failure="provider_failure",
+                        error_detail=_clip(
+                            f"{type(error).__name__}: {error}", ERROR_DETAIL_MAX_CHARS
+                        ),
+                        events=events
+                        + (
+                            _event(
+                                "think",
+                                "failed",
+                                f"planner raised {type(error).__name__}",
+                            ),
+                        ),
+                    )
+                events = events + (
+                    _event(
+                        "think", "route_selected", f"{decision.route}: {decision.rationale}"
+                    ),
+                )
+
+            elif need == "document_passage" and decision.route == "answer":
+                # Only reachable with route == "answer": a decision that
+                # already chose retrieve_project_documents is already doing
+                # this, with its own query, and is left alone -- forcing the
+                # contract's query over the model's own would discard a
+                # choice that was already correct.
+                assert state.contract is not None  # need only exists if it is
+                events = events + (
+                    _event(
+                        "think",
+                        "route_selected",
+                        "retrieve_project_documents: contract needs a document "
+                        "passage; answer withheld",
+                    ),
+                    _event(
+                        "think",
+                        "contract_enforced",
+                        f"document_passage: answer withheld, searching "
+                        f"{state.contract.document_query!r}",
+                    ),
+                )
+                return advance(
+                    state,
+                    "retrieve_project_documents",
+                    tool_name=RETRIEVAL_TOOL,
+                    tool_arguments={"query": state.contract.document_query},
+                    tool_mutating=False,
+                    draft=decision.message,
+                    redirected_needs=state.redirected_needs | {"document_passage"},
+                    events=events,
+                )
+
         if decision.route == "retrieve_project_documents":
             return advance(
                 state,
@@ -349,15 +442,41 @@ class GraphNodes:
             )
 
         if decision.route == "answer":
-            return advance(
-                state,
-                "answer",
-                response=_with_sources(
-                    decision.message or "",
-                    _observed_sources(state.observations),
-                ),
-                events=events,
+            response = _with_sources(
+                decision.message or "", _observed_sources(state.observations)
             )
+            if gap is not None and gap.missing:
+                # Every need named here has already been redirected once
+                # (the block above spends the one redirect a need gets) and
+                # is still missing -- on the real provider this is
+                # unreachable (a redirected call cannot come back "answer"
+                # with the need still unmet; see reasoning/completeness.py's
+                # module docstring), reachable only against a PlannerPort
+                # that does not honor tool_choice or withhold as strictly as
+                # this graph assumes. Delivered anyway, exactly as it would
+                # have been without this check -- a reply the check cannot
+                # complete is still worth more to the user than none -- but
+                # marked, never silently.
+                missing = ", ".join(sorted(gap.missing))
+                return advance(
+                    state,
+                    "answer",
+                    response=response,
+                    failure="incomplete_reply",
+                    error_detail=_clip(
+                        f"contract not met after redirect: {missing}",
+                        ERROR_DETAIL_MAX_CHARS,
+                    ),
+                    events=events
+                    + (
+                        _event(
+                            "think",
+                            "contract_enforced",
+                            f"unmet after redirect: {missing}",
+                        ),
+                    ),
+                )
+            return advance(state, "answer", response=response, events=events)
 
         if decision.route in ("clarify", "refuse"):
             return advance(state, decision.route, response=decision.message, events=events)

@@ -8,6 +8,15 @@ A routing decision is a fact about the run, not about who served it.
 here. It has to name what a tool is, so importing it reaches into
 ``llm.tools``; keeping it out of this file means the light import stays
 light and the cost is paid only by whoever actually builds a planner.
+
+``reasoning.completeness`` is a second exception, for a sharper reason than
+weight: it imports :mod:`agentic_erp_assistant.state.agent_state`, which
+imports :mod:`agentic_erp_assistant.reasoning.decision` -- and *that* import
+is what actually loads this package's own ``__init__``. Re-exporting
+``completeness`` here would make finishing this file's own import depend on
+this file having already finished importing, which Python quite reasonably
+refuses. Import it directly:
+``from agentic_erp_assistant.reasoning.completeness import assess``.
 """
 
 from agentic_erp_assistant.reasoning.decision import (

@@ -58,7 +58,7 @@ from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
-from agentic_erp_assistant.state.reply_contract import ReplyContract
+from agentic_erp_assistant.state.reply_contract import ReplyContract, ReplyNeed
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
@@ -248,6 +248,33 @@ class AgentState(BaseModel):
     declaration of nothing needed) -- and every completeness check in
     :mod:`agentic_erp_assistant.reasoning.completeness` treats it exactly
     like a contract with no needs at all: nothing to hold the turn to.
+    """
+
+    redirected_needs: frozenset[ReplyNeed] = frozenset()
+    """Which of :attr:`contract`'s needs ``engine/nodes.py::think`` has
+    already spent its one redirect on (ADR 0021).
+
+    Set by ``think`` the moment it redirects a need, never read back by
+    anyone but :func:`~agentic_erp_assistant.reasoning.completeness.next_redirect`
+    -- which is the whole point of carrying it: a need is redirected *once*
+    per turn, and without this field on the state, a resumed or replayed
+    turn would have no way to know a redirect had already been spent and
+    could spend it again.
+    """
+
+    draft: str | None = Field(default=None, min_length=1)
+    """The reply the planner offered, and the completeness check withheld,
+    on its way to redirecting a missing ``document_passage`` to a search
+    (ADR 0021).
+
+    Set once, by ``think``, at the same transition that routes to
+    ``retrieve_project_documents`` for that redirect -- never by any other
+    node, and never read by anyone but ``retrieve_and_answer``, which
+    delivers it, marked ``incomplete_reply``, if the redirected search finds
+    nothing to compose from. A retrieval the *model* chose on its own never
+    sets this: only the check's own redirect does, which is exactly how
+    ``retrieve_and_answer`` tells "the model wanted to search anyway" apart
+    from "the check made it search instead of answering".
     """
 
     observations: tuple[ToolOutcome, ...] = ()

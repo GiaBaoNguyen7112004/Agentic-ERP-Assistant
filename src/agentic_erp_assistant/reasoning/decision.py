@@ -132,22 +132,32 @@ FailureMode = Literal[
     "tool_failure",
     "max_steps_exceeded",
     "planner_loop",
+    "incomplete_reply",
     "none",
 ]
 """Why a turn could not produce a grounded answer -- including "it could".
 
-None of the last three are produced by :func:`classify_failure`, and cannot
+None of the last four are produced by :func:`classify_failure`, and cannot
 be: that function reads three signals from one attempted answer, while
 ``tool_failure`` is assigned by the node that watched a call come back
 unusable, ``max_steps_exceeded`` by the loop guard (not answering anything at
-all), and ``planner_loop`` by ``engine/nodes.py::think`` itself, the one time
+all), ``planner_loop`` by ``engine/nodes.py::think`` itself, the one time
 it forces a planner call with every tool withheld (ADR 0019) and the model
 still names one -- which the real provider's ``tool_choice: "none"`` cannot
 produce, so seeing it at all means the guard caught something a fake or a
-future provider actually did wrong. All three are still :data:`FailureMode`
-members rather than free text in ``error_detail`` -- a reviewer counting how
-runs end has to be counting typed values, and the loop guard firing is
-exactly the outcome nobody wants to discover by grepping prose.
+future provider actually did wrong -- and ``incomplete_reply`` by ``think``
+and ``retrieve_and_answer``, never each other's business: a reply the
+planner's own declared contract (ADR 0021) says needs a document passage or
+an ERP field that this turn never produced, delivered anyway, once the one
+redirect a missing need gets has already been spent. Deliberately not
+``insufficient_evidence``: that mode means retrieval came back empty for
+what the composer was trying to say; this one means the planner itself
+declared, before anything ran, that the reply needed something this turn
+never fetched -- evidence was not lacking for what was said, something the
+model itself called necessary was never called for. All four are still
+:data:`FailureMode` members rather than free text in ``error_detail`` -- a
+reviewer counting how runs end has to be counting typed values, and a guard
+firing is exactly the outcome nobody wants to discover by grepping prose.
 
 ``planner_loop`` is deliberately its own member rather than folded into
 ``max_steps_exceeded``: the latter means the budget ran out with the turn

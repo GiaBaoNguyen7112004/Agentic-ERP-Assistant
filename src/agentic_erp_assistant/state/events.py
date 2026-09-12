@@ -51,6 +51,7 @@ EventKind = Literal[
     "history_recalled",   # the session's recent turns entered the prompt
     "history_promoted",   # turns leaving the window were folded into the summary
     "contract_declared",  # the planner said what a complete reply needs to rest on
+    "contract_enforced",  # a declared need was redirected, or stayed unmet after one
     "failed",             # a FailureMode was assigned
     "run_failed",         # the loop guard ended a run that would not end
 ]
@@ -94,14 +95,30 @@ its detail has a summary row beside it or nothing was promoted.
 gives: what a complete reply to this turn must rest on is decided once,
 before the graph runs, the same way recall is -- not a re-plan's business to
 revisit mid-turn. Its detail names the declared needs, or says a declaration
-was unreadable and this turn continues unchecked; the check itself, and what
-it does when a declared need goes unmet, is a later event this kind does not
-carry.
+was unreadable and this turn continues unchecked.
 
-None of them is emitted by a node. Recall happens before the graph runs and
-consolidation after it ends, both in the orchestrator, so these events describe
-work the step budget deliberately does not pay for -- see ADR 0011 for memory
-and ADR 0014 for the short-term window.
+``contract_enforced`` is the check the declaration exists for, and is
+deliberately its own kind rather than folded into ``route_selected``: a
+reviewer counting how often the check actually changed what a turn did must
+not be counting every ordinary routing decision to find them. Emitted by
+``engine/nodes.py::think`` each time a missing need is redirected (its
+detail names the need and what happened -- a call forced, or a search
+substituted for an answer) and once more, by either ``think`` or
+``retrieve_and_answer``, if a need is still unmet once its one redirect is
+spent -- the same event kind either way, because both describe the same
+fact: the contract asked for something this turn still does not have.
+
+None of the other kinds above ``contract_enforced`` is emitted by a node.
+Recall happens before the graph runs and consolidation after it ends, both
+in the orchestrator, so those events describe work the step budget
+deliberately does not pay for -- see ADR 0011 for memory and ADR 0014 for
+the short-term window. ``contract_declared`` joins them there, declared once
+before the graph runs. ``contract_enforced`` is the one exception in this
+whole group: the check it reports on has to run inside the reason-act cycle,
+against whatever the planner just decided, so it is charged to the step
+budget like any other part of ``think`` -- unlike a declaration, a redirect
+is genuinely more work this turn is doing, not background filled in around
+it.
 """
 
 
