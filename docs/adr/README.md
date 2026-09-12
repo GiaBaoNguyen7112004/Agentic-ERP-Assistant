@@ -30,6 +30,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0016](0016-a-write-is-put-to-a-human-only-after-the-gateway-agrees-it-could-run.md) | A write is put to a human only after the gateway agrees it could run | Accepted |
 | [0017](0017-tools-are-bound-to-the-actors-project-at-the-store-and-at-the-gateway.md) | Tools are bound to the actor's project, at the store and at the gateway | Accepted |
 | [0018](0018-the-evidence-store-is-never-a-test-fixture.md) | The evidence store is never a test fixture | Accepted |
+| [0019](0019-a-repeated-call-is-refused-a-re-run-and-forced-to-answer.md) | A repeated call is refused a re-run, and the planner is forced to answer instead | Accepted |
 
 ## Format
 
