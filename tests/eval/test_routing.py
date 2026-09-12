@@ -23,23 +23,55 @@ def answered(text: str) -> ToolCallResult:
     return ToolCallResult.from_content(text)
 
 
+def declared(needs: list[str], document_query: str | None = None) -> ToolCallResult:
+    return ToolCallResult.from_tool_call(
+        tool_name="declare_reply_contract",
+        arguments={"needs": needs, "document_query": document_query},
+    )
+
+
+EMPTY_DECLARATION = declared([])
+"""What a case with no scripted declaration gets -- a real, readable answer
+of "nothing needed", never an unreadable one that would silently fall back
+to EMPTY_CONTRACT and mask a test that forgot to script one."""
+
+
 class ScriptedRoutingClient:
     """Keys its answer off the question text -- the same request reaches
-    the client under every prompt, so one response map serves all three."""
+    the client under every prompt, so one response map serves all three.
+
+    Declaration calls (``tool_choice="required"``, offering only
+    ``declare_reply_contract``) are answered from a *separate* map and
+    tracked in their own ``declaration_calls`` list -- ``run_comparison``
+    makes one declaration call per (case, repeat), independent of the
+    routing prompt, so ``calls`` (routing only) keeps its one-entry-per-
+    prompt shape existing tests already assert on.
+    """
 
     model_name = "fake-model-1"
 
-    def __init__(self, responses: dict[str, ToolCallResult], *, raise_for: str | None = None):
+    def __init__(
+        self,
+        responses: dict[str, ToolCallResult],
+        *,
+        declarations: dict[str, ToolCallResult] | None = None,
+        raise_for: str | None = None,
+    ):
         self.responses = responses
+        self.declarations = declarations or {}
         self.raise_for = raise_for
         self.calls: list[tuple[str, str]] = []  # (question, developer block)
+        self.declaration_calls: list[tuple[str, str]] = []
 
     def call_with_tools(self, messages, *, tools, temperature, on_delta=None, tool_choice="auto"):
         question = next(m["content"] for m in messages if m["role"] == "user")
         developer = next(m["content"] for m in messages if m["role"] == "developer")
-        self.calls.append((question, developer))
         if self.raise_for is not None and question == self.raise_for:
             raise TransientProviderError("scripted transport failure")
+        if len(tools) == 1 and tools[0].name == "declare_reply_contract":
+            self.declaration_calls.append((question, developer))
+            return self.declarations.get(question, EMPTY_DECLARATION)
+        self.calls.append((question, developer))
         return self.responses[question]
 
 
@@ -194,3 +226,121 @@ def test_summary_reports_match_rate_and_cost_per_prompt() -> None:
     assert summary.total == 6
     assert 0.0 <= summary.match_rate <= 1.0
     assert summary.contract_length == len("contract one")
+
+
+# --------------------------------------------------------------------------
+# Declarations: one per (case, repeat), independent of the routing prompt
+# --------------------------------------------------------------------------
+
+WELL_BEHAVED_DECLARATIONS = {
+    "Why is milestone M2 late and by how much?": declared(
+        ["document_passage", "erp_field"], "M2 delay"
+    ),
+    "What is the status of milestone M2?": declared(["erp_field"]),
+    "How is the sprint going?": declared(["erp_field"]),
+}
+
+
+def test_six_cases_one_repeat_produce_six_declaration_rows_beside_eighteen_routing_rows() -> None:
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
+    prompts = (
+        RouterPrompt("p1", "contract one"),
+        RouterPrompt("p2", "contract two"),
+        RouterPrompt("p3", "contract three"),
+    )
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    assert len(report.results) == 18
+    assert len(report.declarations) == 6
+
+
+def test_a_declaration_is_not_repeated_per_prompt() -> None:
+    """The contract does not enter the declaration call at all -- one
+    declaration serves every prompt's routing pass for the same case."""
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
+    prompts = (
+        RouterPrompt("p1", "contract one"),
+        RouterPrompt("p2", "contract two"),
+        RouterPrompt("p3", "contract three"),
+    )
+
+    run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    assert len(client.declaration_calls) == 6
+
+
+def test_a_matching_declaration_is_scored_by_set_equality() -> None:
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
+    prompts = (RouterPrompt("p1", "contract one"),)
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    by_case = {row.case_id: row for row in report.declarations}
+    assert by_case["R1"].matched is True
+    assert by_case["R1"].declared_needs == ("document_passage", "erp_field")
+    assert by_case["R1"].document_query == "M2 delay"
+    assert by_case["T1"].matched is True
+
+
+def test_an_over_declaration_does_not_match_even_as_a_superset() -> None:
+    """Set equality, not superset: a contract that asks for a passage a
+    field question does not need fails exactly as T1 already catches on
+    the routing side."""
+    over_declaring = dict(WELL_BEHAVED_DECLARATIONS)
+    over_declaring["What is the status of milestone M2?"] = declared(
+        ["erp_field", "document_passage"], "milestone M2"
+    )
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=over_declaring)
+    prompts = (RouterPrompt("p1", "contract one"),)
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    (row,) = [r for r in report.declarations if r.case_id == "T1"]
+    assert row.matched is False
+
+
+def test_unscored_cases_are_excluded_from_the_declaration_match_rate() -> None:
+    """R10, A1 and A9 declare expected_needs=None -- any declaration is a
+    legitimate answer, so they are neither matched nor unmatched."""
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
+    prompts = (RouterPrompt("p1", "contract one"),)
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    unscored = {row.case_id for row in report.declarations if row.expected_needs is None}
+    assert unscored == {"R10", "A1", "A9"}
+    assert all(
+        row.matched is None for row in report.declarations if row.case_id in unscored
+    )
+    # Three scored cases (R1, T1, T9/1), all matching the well-behaved map.
+    assert report.declaration_match_rate() == 1.0
+
+
+def test_a_declaration_that_raises_yields_an_error_row() -> None:
+    client = ScriptedRoutingClient(
+        WELL_BEHAVED_RESPONSES,
+        declarations=WELL_BEHAVED_DECLARATIONS,
+        raise_for="How is the sprint going?",
+    )
+    prompts = (RouterPrompt("p1", "contract one"),)
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    (row,) = [r for r in report.declarations if r.case_id == "T9/1"]
+    assert row.declared_needs is None
+    assert row.matched is None
+    assert "scripted transport failure" in row.error
+
+
+def test_the_report_round_trips_through_json_with_declarations() -> None:
+    import json
+
+    client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
+    prompts = (RouterPrompt("p1", "contract one"),)
+
+    report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
+
+    reloaded = json.loads(json.dumps(report.to_dict()))
+    assert len(reloaded["declarations"]) == 6
+    assert reloaded["declaration_match_rate"] == 1.0

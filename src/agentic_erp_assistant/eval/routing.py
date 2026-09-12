@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from agentic_erp_assistant.eval.routing_cases import RoutingCase
-from agentic_erp_assistant.eval.routing_prompts import RouterPrompt
+from agentic_erp_assistant.eval.routing_prompts import RouterPrompt, V1_DIRECT
 from agentic_erp_assistant.llm.gateway import LLMGateway
 from agentic_erp_assistant.llm.tools import PLANNING_TOOLS
 from agentic_erp_assistant.reasoning.planner import Planner
@@ -25,7 +25,13 @@ from agentic_erp_assistant.state.agent_state import AgentState
 if TYPE_CHECKING:
     from agentic_erp_assistant.composition.users import UserDirectory
 
-__all__ = ["ComparisonReport", "PromptSummary", "RouterResult", "run_comparison"]
+__all__ = [
+    "ComparisonReport",
+    "DeclarationResult",
+    "PromptSummary",
+    "RouterResult",
+    "run_comparison",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +90,60 @@ class RouterResult:
 
 
 @dataclass(frozen=True)
+class DeclarationResult:
+    """One (case, repeat) declaration, self-contained and typed.
+
+    Not per-prompt: the declaration prompt (ADR 0021's ``DECLARATION_CONTRACT``)
+    is independent of which planner contract is being compared, so declaring
+    once per ``(case, repeat)`` and reusing it across every prompt in the
+    comparison is not an approximation -- it is the same declaration a
+    routing decision under any of the three contracts would have been made
+    against, because the routing prompt never enters this call at all.
+    """
+
+    case_id: str
+    repeat: int
+
+    declared_needs: tuple[str, ...] | None
+    """``None`` only when the row failed before a declaration came back."""
+
+    document_query: str | None
+
+    expected_needs: tuple[str, ...] | None
+    """A copy of the case's own expectation, or ``None`` for a case not
+    scored on declaration -- see :attr:`RoutingCase.expected_needs`."""
+
+    matched: bool | None
+    """Set equality against ``expected_needs`` -- not superset, since a
+    contract that over-declares (asking for a passage a field question does
+    not need) is exactly the failure T1 exists to catch on the routing side,
+    and would be if this compared loosely too. ``None`` when
+    ``expected_needs`` is ``None``: an unscored case has no verdict, not a
+    false one."""
+
+    cost_usd: float | None
+
+    error: str | None = None
+    """Why the row has no declaration, when it does not."""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "case_id": self.case_id,
+            "repeat": self.repeat,
+            "declared_needs": list(self.declared_needs)
+            if self.declared_needs is not None
+            else None,
+            "document_query": self.document_query,
+            "expected_needs": list(self.expected_needs)
+            if self.expected_needs is not None
+            else None,
+            "matched": self.matched,
+            "cost_usd": self.cost_usd,
+            "error": self.error,
+        }
+
+
+@dataclass(frozen=True)
 class PromptSummary:
     """One prompt's numbers, across every case and repeat."""
 
@@ -117,6 +177,9 @@ class ComparisonReport:
 
     results: tuple[RouterResult, ...]
     prompts: tuple[RouterPrompt, ...]
+    declarations: tuple[DeclarationResult, ...] = ()
+    """One row per ``(case, repeat)`` -- not per prompt; see
+    :class:`DeclarationResult`'s own docstring for why."""
 
     def summary(self) -> tuple[PromptSummary, ...]:
         by_name = {prompt.name: prompt for prompt in self.prompts}
@@ -134,6 +197,16 @@ class ComparisonReport:
                 )
             )
         return tuple(summaries)
+
+    def declaration_match_rate(self) -> float:
+        """The fraction of *scored* declaration rows -- ``expected_needs``
+        given -- that matched exactly. ``0.0`` if none were scored, the
+        same convention :attr:`PromptSummary.match_rate` uses for an empty
+        set rather than raising or returning ``None``."""
+        scored = [row for row in self.declarations if row.expected_needs is not None]
+        if not scored:
+            return 0.0
+        return sum(1 for row in scored if row.matched) / len(scored)
 
     def route_distribution(self, prompt: str, case_id: str) -> dict[str, int]:
         """How often each ``route`` or ``route:tool`` was chosen, for one
@@ -154,6 +227,8 @@ class ComparisonReport:
         return {
             "summary": [s.to_dict() for s in self.summary()],
             "results": [r.to_dict() for r in self.results],
+            "declarations": [d.to_dict() for d in self.declarations],
+            "declaration_match_rate": round(self.declaration_match_rate(), 4),
         }
 
 
@@ -177,7 +252,8 @@ def run_comparison(
     pause_seconds: float = 0.0,
     sleep: Callable[[float], object] = time.sleep,
 ) -> ComparisonReport:
-    """Run every (prompt, case) pair ``repeats`` times through the real planner.
+    """Run every (prompt, case) pair ``repeats`` times through the real planner,
+    plus one declaration per ``(case, repeat)`` (ADR 0021).
 
     One :class:`~agentic_erp_assistant.llm.gateway.LLMGateway` per prompt (so
     each contract's telemetry, cost and budget are its own), one
@@ -185,6 +261,11 @@ def run_comparison(
     the same :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS` production
     offers. Nothing executes: ``Planner.plan`` only, so a two-of-six write case
     costs one model call, never a real change to ERP data.
+
+    Declarations run first, through their own gateway built from
+    ``V1_DIRECT.contract`` -- the production contract, since the declaration
+    call does not vary by which routing prompt is under comparison and does
+    not need three copies of the same measurement.
 
     Args:
         prompts: The contracts to compare.
@@ -195,22 +276,76 @@ def run_comparison(
         users: Resolves each case's actor to a project and scopes, the same
             directory the web layer reads (``composition.users``).
         repeats: How many times each pair is run.
-        pause_seconds: Waited before every call after the first. ``0.0`` --
-            the default, and what every offline test uses -- runs back to
-            back. A live comparison against an account with a tokens-per-
-            minute limit sets this to stay under it: 90 calls at ~2.7k
-            tokens each is well past a 30k TPM budget run back to back,
-            observed live the first time this ran (ADR 0020's report notes
-            the pause it was produced with).
+        pause_seconds: Waited before every call after the first -- shared
+            across the declaration pass and every prompt's routing pass, so
+            the very first call of the whole comparison is the only one
+            that never waits. ``0.0`` -- the default, and what every offline
+            test uses -- runs back to back. A live comparison against an
+            account with a tokens-per-minute limit sets this to stay under
+            it: 90 calls at ~2.7k tokens each is well past a 30k TPM budget
+            run back to back, observed live the first time this ran (ADR
+            0020's report notes the pause it was produced with).
         sleep: How to wait. Injectable so a test asserting on pacing does
             not have to.
 
     Returns:
         A :class:`ComparisonReport` with ``len(prompts) * len(cases) *
-        repeats`` rows.
+        repeats`` routing rows and ``len(cases) * repeats`` declaration rows.
     """
-    results: list[RouterResult] = []
     started_any_call = False
+
+    declaration_gateway = gateway_factory(V1_DIRECT.contract)
+    declaration_planner = Planner(declaration_gateway, tools=PLANNING_TOOLS)
+    declarations: list[DeclarationResult] = []
+    for case in cases:
+        user = users.get(case.actor)
+        expected = (
+            tuple(sorted(case.expected_needs)) if case.expected_needs is not None else None
+        )
+        for repeat in range(repeats):
+            if pause_seconds and started_any_call:
+                sleep(pause_seconds)
+            started_any_call = True
+            state = _build_state(case, user)
+            try:
+                contract = declaration_planner.declare(state)
+            except Exception as error:  # noqa: BLE001 - a failed row, not a failed report
+                logger.warning(
+                    "declaration case %s repeat %d failed: %s", case.case_id, repeat, error
+                )
+                declarations.append(
+                    DeclarationResult(
+                        case_id=case.case_id,
+                        repeat=repeat,
+                        declared_needs=None,
+                        document_query=None,
+                        expected_needs=expected,
+                        matched=None,
+                        cost_usd=None,
+                        error=f"{type(error).__name__}: {error}",
+                    )
+                )
+                continue
+
+            needs = tuple(sorted(contract.needs))
+            record = (
+                declaration_gateway.telemetry.records[-1]
+                if declaration_gateway.telemetry.records
+                else None
+            )
+            declarations.append(
+                DeclarationResult(
+                    case_id=case.case_id,
+                    repeat=repeat,
+                    declared_needs=needs,
+                    document_query=contract.document_query,
+                    expected_needs=expected,
+                    matched=(set(needs) == set(expected)) if expected is not None else None,
+                    cost_usd=record.cost_usd if record else None,
+                )
+            )
+
+    results: list[RouterResult] = []
     for prompt in prompts:
         gateway = gateway_factory(prompt.contract)
         planner = Planner(gateway, tools=PLANNING_TOOLS)
@@ -270,4 +405,8 @@ def run_comparison(
                         cost_usd=record.cost_usd if record else None,
                     )
                 )
-    return ComparisonReport(results=tuple(results), prompts=tuple(prompts))
+    return ComparisonReport(
+        results=tuple(results),
+        prompts=tuple(prompts),
+        declarations=tuple(declarations),
+    )

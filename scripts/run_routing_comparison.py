@@ -102,6 +102,23 @@ def summarize(report: ComparisonReport) -> None:
             distribution = report.route_distribution(prompt_name, case_id)
             logger.info("  %-16s %-6s %s", prompt_name, case_id, distribution)
 
+    logger.info("")
+    logger.info(
+        "declarations: %d row(s), %.1f%% matched (scored cases only)",
+        len(report.declarations),
+        report.declaration_match_rate() * 100,
+    )
+    logger.info("%-8s %-8s %-30s %-30s %s", "case", "repeat", "declared", "expected", "matched")
+    for row in report.declarations:
+        logger.info(
+            "%-8s %-8d %-30s %-30s %s",
+            row.case_id,
+            row.repeat,
+            ",".join(row.declared_needs) if row.declared_needs else "(error)" if row.error else "(none)",
+            ",".join(row.expected_needs) if row.expected_needs else "(unscored)",
+            row.matched,
+        )
+
 
 def main(argv: list[str] | None = None) -> int:
     arguments = parse_arguments(argv)
@@ -119,14 +136,18 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("unknown prompt name(s): %s", ", ".join(sorted(missing)))
             return 2
 
-    call_count = len(prompts) * len(DEFAULT_CASES) * arguments.repeats
+    routing_calls = len(prompts) * len(DEFAULT_CASES) * arguments.repeats
+    declaration_calls = len(DEFAULT_CASES) * arguments.repeats
     logger.info(
-        "%d prompt(s) x %d case(s) x %d repeat(s) = %d planner call(s), "
-        "~%d input tokens each",
+        "%d prompt(s) x %d case(s) x %d repeat(s) = %d routing call(s) + "
+        "%d declaration call(s) (one per case x repeat, not per prompt) = "
+        "%d call(s) total, ~%d input tokens each",
         len(prompts),
         len(DEFAULT_CASES),
         arguments.repeats,
-        call_count,
+        routing_calls,
+        declaration_calls,
+        routing_calls + declaration_calls,
         APPROX_INPUT_TOKENS_PER_CALL,
     )
 
