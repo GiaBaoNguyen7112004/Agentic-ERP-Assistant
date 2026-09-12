@@ -29,6 +29,7 @@ __all__ = [
     "Message",
     "ProviderAuthError",
     "Role",
+    "TokenEstimating",
     "ToolCallingClient",
     "TransientProviderError",
     "Usage",
@@ -258,6 +259,53 @@ class UsageReporting(Protocol):
     last_usage: dict[str, object] | None
     """The provider's own usage object from the most recent call that reported
     one, in the provider's own key names. ``None`` before the first call."""
+
+
+@runtime_checkable
+class TokenEstimating(Protocol):
+    """A client that knows what its own wire request spends beyond the
+    messages.
+
+    ``llm/tokenizer.py::count_message_tokens`` counts exactly what its name
+    says: the role and content of each port-role message, plus the
+    documented per-message chat-format overhead. It was, for a while, the
+    whole of the budget check's estimate -- and a request offering nine
+    tools, or carrying a structured-output schema, spends real tokens on
+    neither of those things, which is why the estimate ran roughly 50% under
+    the invoice on a tool-bearing call (ADR 0001's residual gap, closed
+    here).
+
+    This protocol is the other half: :meth:`estimate_extra_tokens` renders
+    exactly what the adapter's own request-builder would put on the wire for
+    ``tools`` and/or the structured-output schema -- the same code path, not
+    a second copy of it -- and counts it with the same encoding
+    ``count_message_tokens`` uses. ``LLMGateway`` adds the two together when
+    the client satisfies this protocol, and adds nothing when it does not:
+    optional, the same way :class:`UsageReporting` is, so a client written
+    before this protocol existed is still a valid one, merely estimated a
+    little low exactly as before.
+    """
+
+    def estimate_extra_tokens(
+        self,
+        *,
+        tools: Sequence[ToolSpec] | None = None,
+        structured: bool = False,
+    ) -> int:
+        """Tokens the wire request spends beyond the messages themselves.
+
+        Args:
+            tools: The tools that would be offered, if any -- the same
+                sequence a ``call_with_tools`` call would pass.
+            structured: Whether the call carries a structured-output schema
+                (``complete``'s ``response_format``).
+
+        Returns:
+            The token count of whichever of the two applies, rendered and
+            encoded the same way the real request is. ``0`` when neither
+            applies -- an untouched request costs nothing extra to estimate.
+        """
+        ...
 
 
 class LLMClientError(Exception):

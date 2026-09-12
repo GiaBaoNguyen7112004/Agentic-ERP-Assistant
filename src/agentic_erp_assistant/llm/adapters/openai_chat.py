@@ -50,6 +50,7 @@ from agentic_erp_assistant.llm.ports import (
     Usage,
 )
 from agentic_erp_assistant.llm.schemas import GroundedAnswer
+from agentic_erp_assistant.llm.tokenizer import count_tokens
 from agentic_erp_assistant.llm.tools import DEFAULT_TOOLS, ToolCallResult, ToolSpec
 
 __all__ = [
@@ -475,6 +476,36 @@ class OpenAIChatClient:
                 "strict": True,
             },
         }
+
+    def estimate_extra_tokens(
+        self,
+        *,
+        tools: Sequence[ToolSpec] | None = None,
+        structured: bool = False,
+    ) -> int:
+        """Satisfies :class:`~agentic_erp_assistant.llm.ports.TokenEstimating`.
+
+        Renders exactly what :meth:`call_with_tools` and :meth:`_build_payload`
+        would put on the wire -- :meth:`_tool_payload` for each tool, the same
+        ``GroundedAnswer.model_json_schema()`` -- so the estimate and the
+        request can never drift into disagreement about what either one means
+        by "the schema". Counted compactly (no incidental whitespace) with the
+        same encoding :func:`~agentic_erp_assistant.llm.tokenizer.count_tokens`
+        uses elsewhere, since the real request is sent compactly too.
+        """
+        extra = 0
+        if tools:
+            tools_json = json.dumps(
+                [self._tool_payload(spec) for spec in tools],
+                separators=(",", ":"),
+            )
+            extra += count_tokens(tools_json, model=self.model_name)
+        if structured:
+            schema_json = json.dumps(
+                GroundedAnswer.model_json_schema(), separators=(",", ":")
+            )
+            extra += count_tokens(schema_json, model=self.model_name)
+        return extra
 
     def _read_decision(self, choice: Mapping[str, Any]) -> ToolCallResult:
         """Read one choice as either a tool call or a direct answer."""

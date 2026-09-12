@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
     Message,
+    TokenEstimating,
     ToolCallingClient,
     Usage,
     UsageReporting,
@@ -93,6 +94,23 @@ def _on_delta_kwarg(on_delta: Callable[[str], None] | None) -> dict[str, object]
     sink is actually bound.
     """
     return {"on_delta": on_delta} if on_delta is not None else {}
+
+
+def _extra_tokens(
+    client: object, *, tools: Sequence[ToolSpec] | None = None, structured: bool = False
+) -> int:
+    """What :class:`~agentic_erp_assistant.llm.ports.TokenEstimating` adds to
+    the message count, or ``0`` for a client that does not satisfy it.
+
+    The optional-capability pattern :class:`~agentic_erp_assistant.llm.ports.
+    UsageReporting` already uses in this file: a client written before this
+    protocol existed is still a valid one, merely estimated a little low
+    exactly as before -- never a ``TypeError`` for lacking a method nothing
+    required of it.
+    """
+    if isinstance(client, TokenEstimating):
+        return client.estimate_extra_tokens(tools=tools, structured=structured)
+    return 0
 
 
 def _allow_tools_kwarg(allow_tools: bool) -> dict[str, object]:
@@ -234,7 +252,7 @@ class LLMGateway:
         # 2. Budget, before anything is sent.
         estimated = self.counter.count_message_tokens(
             messages, model=self.client.model_name
-        )
+        ) + _extra_tokens(self.client, structured=True)
         self._check_budget(estimated)
 
         # 3. Call, with retry.
@@ -426,7 +444,7 @@ class LLMGateway:
 
         estimated = self.counter.count_message_tokens(
             messages, model=client.model_name
-        )
+        ) + _extra_tokens(client, tools=tools)
         self._check_budget(estimated)
 
         attempts = 0

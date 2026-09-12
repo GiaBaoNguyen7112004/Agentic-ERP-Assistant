@@ -166,13 +166,14 @@ def test_a_refused_request_is_recorded_with_no_spend() -> None:
     gateway, telemetry, client = make_gateway(
         recorder, context_window=200, counter=FixedCounter(500), output_reserve=10
     )
+    extra = client.estimate_extra_tokens(structured=True)
 
     with pytest.raises(ContextWindowExceeded) as failure:
         gateway.answer(QUESTION, EVIDENCE)
     client.close()
 
     record = telemetry.records[0]
-    assert record.estimated_input_tokens == 500
+    assert record.estimated_input_tokens == 500 + extra
     assert (record.input_tokens, record.output_tokens) == (0, 0)
     assert record.attempts == 0
     assert record.cost_usd == 0.0  # priced model, nothing spent
@@ -183,9 +184,13 @@ def test_a_request_that_fills_the_window_exactly_is_sent() -> None:
     """Strictly greater than: equality fits, and refusing it would be a second
     invisible margin on top of output_reserve."""
     recorder = Recorder()
+    extra = OpenAIChatClient(api_key=API_KEY, model=MODEL).estimate_extra_tokens(
+        structured=True
+    )
+
     gateway, _, client = make_gateway(
         recorder,
-        context_window=110,
+        context_window=110 + extra,
         counter=FixedCounter(100),
         output_reserve=10,
     )
@@ -259,13 +264,14 @@ def test_a_valid_reply_is_returned_as_a_grounded_answer() -> None:
 def test_telemetry_uses_the_providers_counts_not_the_estimate() -> None:
     recorder = Recorder()
     gateway, telemetry, client = make_gateway(recorder, counter=FixedCounter(100))
+    extra = client.estimate_extra_tokens(structured=True)
 
     gateway.answer(QUESTION, EVIDENCE)
     client.close()
 
     record = telemetry.records[0]
     assert record.outcome == "answered"
-    assert record.estimated_input_tokens == 100
+    assert record.estimated_input_tokens == 100 + extra
     assert (record.input_tokens, record.output_tokens) == (812, 57)
     assert record.attempts == 1
     assert record.model == MODEL
@@ -353,6 +359,21 @@ def test_the_gateway_works_with_any_port_conforming_client() -> None:
     assert answer.grounded is True
     assert client.calls == 1
     assert telemetry.records[0].input_tokens == 10
+
+
+def test_a_client_that_does_not_satisfy_token_estimating_still_estimates() -> None:
+    """TokenEstimating is optional, the same way UsageReporting is: a client
+    written before it existed is still a valid one, merely estimated a
+    little low exactly as it always was."""
+    telemetry = InMemoryTelemetry()
+    counter = FixedCounter(100)
+    gateway = LLMGateway(
+        FakePortClient(), context_window=128_000, telemetry=telemetry, counter=counter
+    )
+
+    gateway.answer(QUESTION, EVIDENCE)
+
+    assert telemetry.records[0].estimated_input_tokens == 100
 
 
 # --------------------------------------------------------------------------
