@@ -35,7 +35,7 @@ class ScriptedModel:
         history=(),
         *,
         tools=(),
-        allow_tools=True,
+        tool_choice="auto",
     ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]

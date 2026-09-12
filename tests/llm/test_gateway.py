@@ -611,20 +611,36 @@ def test_decide_sends_a_different_contract_when_the_gateway_carries_one() -> Non
     assert developer_block == candidate
 
 
-def test_allow_tools_false_forces_the_wire_choice_and_says_so_in_telemetry() -> None:
+def test_tool_choice_none_forces_the_wire_choice_and_says_so_in_telemetry() -> None:
     """ADR 0019: how ``engine/nodes.py`` ends a turn's planning loop after a
     mutating tool has already succeeded -- by withholding the option, not by
     asking in prose."""
     recorder = Recorder(httpx.Response(200, json=reply("Recorded R-6 against orion.")))
     gateway, telemetry, _ = make_gateway(recorder)
 
-    decision = gateway.decide("What could go wrong on atlas?", allow_tools=False)
+    decision = gateway.decide("What could go wrong on atlas?", tool_choice="none")
 
     assert decision.tool_name is None
     body = json.loads(recorder.requests[0].content)
     assert body["tool_choice"] == "none"
     assert "tools" in body  # still offered -- see the port's docstring
     assert "tool_choice=none" in telemetry.records[0].detail
+
+
+def test_tool_choice_required_forces_the_wire_choice_and_says_so_in_telemetry() -> None:
+    """ADR 0021: how a reply-contract declaration call, and the erp_field
+    redirect, force a call back rather than accepting prose."""
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, telemetry, _ = make_gateway(recorder)
+
+    decision = gateway.decide("What could go wrong on atlas?", tool_choice="required")
+
+    assert decision.tool_name == "list_risks"
+    body = json.loads(recorder.requests[0].content)
+    assert body["tool_choice"] == "required"
+    assert "tool_choice=required" in telemetry.records[0].detail
 
 
 def test_observations_reach_the_model_in_their_own_block() -> None:

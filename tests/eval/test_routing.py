@@ -34,7 +34,7 @@ class ScriptedRoutingClient:
         self.raise_for = raise_for
         self.calls: list[tuple[str, str]] = []  # (question, developer block)
 
-    def call_with_tools(self, messages, *, tools, temperature, on_delta=None, allow_tools=True):
+    def call_with_tools(self, messages, *, tools, temperature, on_delta=None, tool_choice="auto"):
         question = next(m["content"] for m in messages if m["role"] == "user")
         developer = next(m["content"] for m in messages if m["role"] == "developer")
         self.calls.append((question, developer))

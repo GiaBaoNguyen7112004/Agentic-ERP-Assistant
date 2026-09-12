@@ -31,6 +31,7 @@ __all__ = [
     "Role",
     "TokenEstimating",
     "ToolCallingClient",
+    "ToolChoice",
     "TransientProviderError",
     "Usage",
     "UsageReporting",
@@ -89,6 +90,29 @@ class Message(TypedDict):
 
     role: Role
     content: str
+
+
+ToolChoice = Literal["auto", "none", "required"]
+"""What :meth:`ToolCallingClient.call_with_tools` sends the wire's own
+``tool_choice`` field.
+
+The three values a real provider's function calling actually accepts, used
+here as the port's vocabulary rather than a boolean the adapter then
+translates. ``"auto"`` lets the model pick a tool or answer in content --
+the default, and every call before ADR 0019 sent nothing else. ``"none"``
+forces content back even though ``tools`` is still offered (ADR 0019): the
+model may need the definitions to make sense of what its own prior calls
+returned, but the wire will not let it call one. ``"required"`` forces the
+opposite: the model must call *some* offered function, and content alone
+cannot come back -- the shape a declaration call needs (ADR 0021), where
+answering in prose is exactly the failure the call exists to prevent.
+
+Not a *named* function (OpenAI's `{"type": "function", "function":
+{"name": ...}}`), which is a fourth, stronger value this port deliberately
+does not expose: forcing a specific function would let the caller choose
+which tool answers a question, and that choice belongs to the model being
+asked, not to the engine holding it to a contract it already declared.
+"""
 
 
 class Usage(TypedDict):
@@ -193,7 +217,7 @@ class ToolCallingClient(Protocol):
         tools: Sequence[ToolSpec],
         temperature: float,
         on_delta: Callable[[str], None] | None = None,
-        allow_tools: bool = True,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Offer ``tools`` and report the single choice that came back.
 
@@ -208,13 +232,15 @@ class ToolCallingClient(Protocol):
         exactly what is about to run, so several is a provider contract
         violation and belongs in the transient-failure path.
 
-        ``allow_tools=False`` still passes ``tools`` -- the model may need the
-        definitions to understand what its own prior calls in ``observations``
-        were -- but forces the wire's ``tool_choice`` to ``"none"``, so the
-        result is guaranteed content. This is how a planner call is made after
-        a mutating tool has already succeeded (ADR 0019): the engine ends the
-        turn by taking the option to call another tool away, rather than by
-        asking the model in prose not to.
+        ``tool_choice`` always passes ``tools`` on the wire -- even at
+        ``"none"``, the model may need the definitions to understand what its
+        own prior calls in ``observations`` were -- and only changes what the
+        model is permitted to *do* with them. ``"none"`` forces content back
+        (ADR 0019): this is how a planner call is made after a mutating tool
+        has already succeeded, ending the turn by taking the option to call
+        another tool away rather than asking the model in prose not to.
+        ``"required"`` forces a call back (ADR 0021): a declaration call
+        offers exactly one function and must not accept prose in its place.
 
         Args:
             messages: The same port-role messages ``complete`` takes.
@@ -227,8 +253,11 @@ class ToolCallingClient(Protocol):
                 choosing a tool typically streams no content at all, so
                 ``on_delta`` may simply never be called on that path; a model
                 answering directly (no tool chosen) may stream normally.
-            allow_tools: ``False`` sends ``tool_choice: "none"`` on the wire,
-                so the result is always content -- see above.
+            tool_choice: ``"auto"`` (default) lets the model pick a tool or
+                answer in content. ``"none"`` sends `tool_choice: "none"` on
+                the wire, so the result is always content -- see above.
+                ``"required"`` sends `tool_choice: "required"`, so the result
+                is always a call -- see above.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: a tool

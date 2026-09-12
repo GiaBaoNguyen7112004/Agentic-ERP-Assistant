@@ -36,6 +36,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import ValidationError
 
+from agentic_erp_assistant.llm.ports import ToolChoice
 from agentic_erp_assistant.llm.tools import (
     PLANNING_TOOLS,
     ToolCallResult,
@@ -107,15 +108,16 @@ class DecisionModel(Protocol):
         history: Sequence[ConversationTurn] = (),
         *,
         tools: Sequence[ToolSpec] = ...,
-        allow_tools: bool = True,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Offer ``tools`` for this turn's state and return the one choice made.
 
-        ``allow_tools=False`` still offers ``tools`` but forces the wire's
-        ``tool_choice`` to ``"none"`` (see
+        ``tool_choice="none"`` forces the wire's ``tool_choice`` to ``"none"``
+        (see
         :meth:`~agentic_erp_assistant.llm.ports.ToolCallingClient.call_with_tools`),
-        so the result is guaranteed content -- the mechanism
-        :meth:`Planner.plan`'s ``offer_tools`` parameter drives.
+        so the result is guaranteed content; ``"required"`` forces a call
+        back. Both are the mechanism :meth:`Planner.plan`'s ``tool_choice``
+        parameter drives.
         """
         ...
 
@@ -142,7 +144,11 @@ class Planner:
         object.__setattr__(self, "_by_name", {spec.name: spec for spec in self.tools})
 
     def plan(
-        self, state: AgentState, *, offer_tools: bool = True
+        self,
+        state: AgentState,
+        *,
+        tool_choice: ToolChoice = "auto",
+        withhold: frozenset[str] = frozenset(),
     ) -> ReasoningDecision:
         """Decide the next action for ``state``.
 
@@ -152,23 +158,35 @@ class Planner:
                 shown -- all five read off the one object, so a routing
                 decision can never be made against a view somebody assembled
                 inconsistently.
-            offer_tools: ``False`` still shows the model every tool's
+            tool_choice: ``"auto"`` (default) lets the model pick a tool or
+                answer. ``"none"`` still shows the model every offered tool's
                 definition (so it can still make sense of what its own prior
-                calls in ``observations`` returned) but forces
-                ``allow_tools=False`` on the call, guaranteeing content back.
-                Used by ``engine/nodes.py::think`` (ADR 0019) to end a turn's
-                planning loop after a mutating tool has already succeeded, or
-                after a call has already been repeated once -- by taking the
-                option to call another tool away, not by asking in prose.
+                calls in ``observations`` returned) but forces the call to
+                come back as content. Used by ``engine/nodes.py::think`` (ADR
+                0019) to end a turn's planning loop after a mutating tool has
+                already succeeded, or after a call has already been repeated
+                once -- by taking the option to call another tool away, not
+                by asking in prose. ``"required"`` forces a call back; used
+                by the same node (ADR 0021) to force a choice among what
+                remains offered after ``withhold`` removes a tool the
+                declared reply contract has already been satisfied without.
+            withhold: Tool names to leave out of what is offered this call --
+                distinct from ``tool_choice="none"``, which still offers
+                everything and only changes what the model may *do* with it.
+                A name here is never sent to the model, so a call naming one
+                anyway is a provider contract violation the real API cannot
+                produce.
 
         Returns:
             A :class:`ReasoningDecision`. Every path returns one -- a choice
             that cannot be acted on becomes a ``fail`` decision rather than an
             exception, because "the model named a tool that does not exist" is a
             turn that has to be reported, not a crash. A tool call surviving
-            ``offer_tools=False`` is exactly as unreadable: the real provider's
-            ``tool_choice: "none"`` cannot produce one, so seeing one here
-            means whatever is standing in for it did not honor the request.
+            ``tool_choice="none"``, prose surviving ``tool_choice="required"``,
+            and a call naming a withheld tool are all exactly as unreadable:
+            the real provider cannot produce any of the three, so seeing one
+            here means whatever is standing in for it did not honor the
+            request.
         """
         if not state.request.strip():
             # Short-circuited before the model is called. A blank question
@@ -181,17 +199,23 @@ class Planner:
                 rationale="the request was empty, so nothing was sent",
             )
 
+        offered = tuple(spec for spec in self.tools if spec.name not in withhold)
+
         result = self.model.decide(
             state.request,
             state.evidence,
             state.observations,
             state.memories,
             state.history,
-            tools=self.tools,
-            allow_tools=offer_tools,
+            tools=offered,
+            tool_choice=tool_choice,
         )
 
         if result.tool_name is None:
+            if tool_choice == "required":
+                return self._unreadable(
+                    "the model answered in prose after a call was required"
+                )
             # No call: the model elected to answer. ToolCallResult guarantees
             # content is present in that case, so there is nothing to check.
             return ReasoningDecision(
@@ -201,10 +225,16 @@ class Planner:
                 rationale="answered without calling a tool",
             )
 
-        if not offer_tools:
+        if tool_choice == "none":
             return self._unreadable(
                 f"the model called {result.tool_name!r} after tools were "
                 f"withheld for this call"
+            )
+
+        if result.tool_name in withhold:
+            return self._unreadable(
+                f"the model called {result.tool_name!r}, which was withheld "
+                f"for this call"
             )
 
         spec = self._by_name.get(result.tool_name)

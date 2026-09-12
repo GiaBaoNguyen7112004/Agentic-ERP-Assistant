@@ -34,6 +34,7 @@ from agentic_erp_assistant.llm.ports import (
     Message,
     TokenEstimating,
     ToolCallingClient,
+    ToolChoice,
     Usage,
     UsageReporting,
 )
@@ -117,17 +118,18 @@ def _extra_tokens(
     return 0
 
 
-def _allow_tools_kwarg(allow_tools: bool) -> dict[str, object]:
-    """``{"allow_tools": False}``, or nothing at all.
+def _tool_choice_kwarg(tool_choice: ToolChoice) -> dict[str, object]:
+    """``{"tool_choice": "none"}`` / ``{"tool_choice": "required"}``, or
+    nothing at all.
 
     The same reasoning as :func:`_on_delta_kwarg`, for the same reason: a
-    fake client written before ADR 0019 declared no ``allow_tools``
+    fake client written before ADR 0019/0021 declared no ``tool_choice``
     parameter, and passing the default value explicitly would raise
     ``TypeError`` on every one of them for a call that changes nothing about
-    what they should do. Only the non-default case is ever worth a client
+    what they should do. Only a non-default choice is ever worth a client
     knowing about.
     """
-    return {} if allow_tools else {"allow_tools": False}
+    return {} if tool_choice == "auto" else {"tool_choice": tool_choice}
 
 
 def _as_snippets(evidence: Evidence) -> list[EvidenceSnippet]:
@@ -349,7 +351,7 @@ class LLMGateway:
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
-        allow_tools: bool = True,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Ask the model what to do next, and report the one choice it made.
 
@@ -374,9 +376,9 @@ class LLMGateway:
             tools: What to offer. Defaults to
                 :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS`.
             temperature: 0.0. A routing decision is not a place for variety.
-            allow_tools: ``False`` sends ``tool_choice: "none"`` on the wire
-                (ADR 0019), forcing content back even though ``tools`` is
-                still offered.
+            tool_choice: ``"auto"`` (default), ``"none"`` (ADR 0019 -- forces
+                content back even though ``tools`` is still offered), or
+                ``"required"`` (ADR 0021 -- forces a call back).
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
@@ -402,7 +404,7 @@ class LLMGateway:
             ),
             tools=tools,
             temperature=temperature,
-            allow_tools=allow_tools,
+            tool_choice=tool_choice,
         )
 
     def call_tools(
@@ -411,7 +413,7 @@ class LLMGateway:
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
-        allow_tools: bool = True,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Offer ``tools`` against an already-built prompt and return the choice.
 
@@ -439,9 +441,10 @@ class LLMGateway:
             tools: What to offer.
             temperature: 0.0. Neither a routing decision nor a memory proposal
                 is a place for variety.
-            allow_tools: ``False`` forces ``tool_choice: "none"`` (ADR 0019);
-                recorded in the telemetry row's ``detail`` so a trace shows a
-                call was forced, not merely answered.
+            tool_choice: ``"auto"`` (default), ``"none"`` (ADR 0019), or
+                ``"required"`` (ADR 0021). A non-default choice is recorded in
+                the telemetry row's ``detail`` so a trace shows a call was
+                forced, not merely answered.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
@@ -482,7 +485,7 @@ class LLMGateway:
                 tools=tools,
                 temperature=temperature,
                 **_on_delta_kwarg(on_delta),
-                **_allow_tools_kwarg(allow_tools),
+                **_tool_choice_kwarg(tool_choice),
             )
 
         started = time.perf_counter()
@@ -520,7 +523,7 @@ class LLMGateway:
                 if decision.tool_name
                 else "answered without a tool"
             )
-            + ("" if allow_tools else " (tool_choice=none)"),
+            + ("" if tool_choice == "auto" else f" (tool_choice={tool_choice})"),
         )
         return decision
 

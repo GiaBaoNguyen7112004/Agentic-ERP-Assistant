@@ -34,7 +34,7 @@ class ScriptedModel:
         self.results = list(results)
         self.calls: list[tuple] = []
         self.history_calls: list[tuple] = []
-        self.allow_tools_calls: list[bool] = []
+        self.tool_choice_calls: list[str] = []
 
     def decide(
         self,
@@ -45,11 +45,11 @@ class ScriptedModel:
         history=(),
         *,
         tools=(),
-        allow_tools=True,
+        tool_choice="auto",
     ):
         self.calls.append((question, tuple(evidence), tuple(observations), tuple(tools)))
         self.history_calls.append(tuple(history))
-        self.allow_tools_calls.append(allow_tools)
+        self.tool_choice_calls.append(tool_choice)
         return self.results[min(len(self.calls) - 1, len(self.results) - 1)]
 
 
@@ -167,44 +167,90 @@ def test_a_tool_that_was_never_offered_fails_the_turn_rather_than_crashing() -> 
 
 
 # --------------------------------------------------------------------------
-# offer_tools=False: how a turn's planning loop is ended (ADR 0019)
+# tool_choice: how a turn's planning loop is ended (ADR 0019) and how a
+# declared reply contract is enforced (ADR 0021)
 # --------------------------------------------------------------------------
 
 
-def test_offer_tools_defaults_to_true_and_reaches_the_model() -> None:
+def test_tool_choice_defaults_to_auto_and_reaches_the_model() -> None:
     model = ScriptedModel(called("list_risks", project_id="atlas"))
 
     Planner(model).plan(state())
 
-    assert model.allow_tools_calls == [True]
+    assert model.tool_choice_calls == ["auto"]
 
 
-def test_offer_tools_false_reaches_the_model_as_allow_tools_false() -> None:
+def test_tool_choice_none_reaches_the_model() -> None:
     model = ScriptedModel(ToolCallResult.from_content("Recorded R-6 against orion."))
 
-    Planner(model).plan(state(), offer_tools=False)
+    Planner(model).plan(state(), tool_choice="none")
 
-    assert model.allow_tools_calls == [False]
+    assert model.tool_choice_calls == ["none"]
 
 
-def test_offer_tools_false_with_an_answer_is_the_answer_route() -> None:
+def test_tool_choice_none_with_an_answer_is_the_answer_route() -> None:
     """The ordinary case: the real provider's tool_choice: 'none' guarantees
     this, and this is what forces a reply immediately after a write."""
     model = ScriptedModel(ToolCallResult.from_content("Recorded R-6 against orion."))
 
-    decision = Planner(model).plan(state(), offer_tools=False)
+    decision = Planner(model).plan(state(), tool_choice="none")
 
     assert decision.route == "answer"
     assert decision.message == "Recorded R-6 against orion."
 
 
-def test_offer_tools_false_with_a_tool_call_anyway_fails_rather_than_routes() -> None:
+def test_tool_choice_none_with_a_tool_call_anyway_fails_rather_than_routes() -> None:
     """The real provider cannot produce this (tool_choice: 'none' forbids a
     call); seeing it means whatever is standing in for the client did not
     honor the request. Never executed -- the turn ends at 'fail'."""
     model = ScriptedModel(called("list_risks", project_id="orion"))
 
-    decision = Planner(model).plan(state(), offer_tools=False)
+    decision = Planner(model).plan(state(), tool_choice="none")
+
+    assert decision.route == "fail"
+    assert decision.required_tool is None
+    assert "withheld" in decision.rationale
+
+
+def test_tool_choice_required_reaches_the_model() -> None:
+    model = ScriptedModel(called("get_project_status", milestone_id="M2"))
+
+    Planner(model).plan(state(), tool_choice="required")
+
+    assert model.tool_choice_calls == ["required"]
+
+
+def test_tool_choice_required_with_prose_anyway_fails_rather_than_answers() -> None:
+    """The real provider cannot produce this (tool_choice: 'required' forbids
+    content-only); seeing it means whatever is standing in for the client
+    did not honor the request."""
+    model = ScriptedModel(ToolCallResult.from_content("Two days late."))
+
+    decision = Planner(model).plan(state(), tool_choice="required")
+
+    assert decision.route == "fail"
+    assert "required" in decision.rationale
+
+
+def test_withhold_removes_a_tool_from_what_is_offered() -> None:
+    model = ScriptedModel(called("get_project_status", milestone_id="M2"))
+
+    Planner(model).plan(state(), withhold=frozenset({"search_project_documents"}))
+
+    offered = model.calls[0][3]
+    assert "search_project_documents" not in {spec.name for spec in offered}
+    assert "get_project_status" in {spec.name for spec in offered}
+
+
+def test_a_call_to_a_withheld_tool_fails_rather_than_routes() -> None:
+    """The real provider cannot call a function it was not offered; seeing
+    this means whatever is standing in for the client did not honor the
+    withheld set."""
+    model = ScriptedModel(called("search_project_documents", query="M2 delay"))
+
+    decision = Planner(model).plan(
+        state(), withhold=frozenset({"search_project_documents"})
+    )
 
     assert decision.route == "fail"
     assert decision.required_tool is None

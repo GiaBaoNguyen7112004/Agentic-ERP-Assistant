@@ -219,7 +219,7 @@ class GraphNodes:
                     f"{decision.required_tool} repeated with the same "
                     f"arguments; tools withheld"
                 )
-                decision = self.planner.plan(state, offer_tools=False)
+                decision = self.planner.plan(state, tool_choice="none")
         except Exception as error:  # noqa: BLE001 - deliberately broad; see above
             logger.warning("planner failed on %s: %s", state.trace_id, error)
             return advance(
@@ -248,7 +248,7 @@ class GraphNodes:
 
         if forced_note is not None and decision.route not in ("answer", "fail"):
             # Belt and suspenders beside Planner._unreadable's own guarantee
-            # (offer_tools=False -> only "answer" or "fail" comes back): this
+            # (tool_choice="none" -> only "answer" or "fail" comes back): this
             # is the boundary the graph itself enforces, so a PlannerPort
             # implementation that does not honor the contract as strictly
             # still cannot act on a call that should have been impossible --
@@ -364,7 +364,7 @@ class GraphNodes:
 
         # Only reachable normally as "the model named a tool that does not
         # exist" (Planner._unreadable). With forced_note set, it means the
-        # forced (offer_tools=False) call still named a tool -- something the
+        # forced (tool_choice="none") call still named a tool -- something the
         # real provider's tool_choice: "none" cannot do -- and the failure
         # says so by name rather than reading as an ordinary provider hiccup.
         failure_detail = (

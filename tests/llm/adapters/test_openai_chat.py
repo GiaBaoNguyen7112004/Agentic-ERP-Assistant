@@ -664,15 +664,25 @@ def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:
     assert recorder.body["tool_choice"] == "auto"
 
 
-def test_allow_tools_false_forces_tool_choice_none(messages) -> None:
+def test_tool_choice_none_forces_content(messages) -> None:
     """ADR 0019: the mechanism ``engine/nodes.py`` uses to end a turn's
     planning loop after a mutating tool has already succeeded."""
     recorder = Recorder(httpx.Response(200, json=success_body(content="Done.")))
     with make_client(recorder) as client:
-        client.call_with_tools(messages, allow_tools=False)
+        client.call_with_tools(messages, tool_choice="none")
 
     assert recorder.body["tool_choice"] == "none"
     assert "tools" in recorder.body  # still offered -- see the port's docstring
+
+
+def test_tool_choice_required_forces_a_call(messages) -> None:
+    """ADR 0021: the mechanism a reply-contract declaration call uses -- the
+    model must call the one function offered, never answer in prose."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages, tool_choice="required")
+
+    assert recorder.body["tool_choice"] == "required"
 
 
 # --------------------------------------------------------------------------

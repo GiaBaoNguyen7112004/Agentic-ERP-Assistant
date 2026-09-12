@@ -36,15 +36,21 @@ SCOPES = frozenset({"project.risk.read", "project.risk.write"})
 
 
 class FakePlanner:
-    """Returns decisions in sequence, and records whether tools were offered."""
+    """Returns decisions in sequence, and records the tool_choice each call saw."""
 
     def __init__(self, *decisions: ReasoningDecision) -> None:
         self.decisions = list(decisions)
-        self.offer_tools_seen: list[bool] = []
+        self.tool_choice_seen: list[str] = []
 
-    def plan(self, state: AgentState, *, offer_tools: bool = True) -> ReasoningDecision:
-        self.offer_tools_seen.append(offer_tools)
-        index = len(self.offer_tools_seen) - 1
+    def plan(
+        self,
+        state: AgentState,
+        *,
+        tool_choice: str = "auto",
+        withhold: frozenset[str] = frozenset(),
+    ) -> ReasoningDecision:
+        self.tool_choice_seen.append(tool_choice)
+        index = len(self.tool_choice_seen) - 1
         return self.decisions[min(index, len(self.decisions) - 1)]
 
 
@@ -120,7 +126,7 @@ def test_a_genuinely_new_call_after_a_success_is_not_forced() -> None:
         state(observations=(a_successful_list_risks(),))
     )
 
-    assert planner.offer_tools_seen == [True]
+    assert planner.tool_choice_seen == ["auto"]
     assert result.route == "call_tool"
     assert result.tool_name == "get_budget_summary"
 
@@ -138,7 +144,7 @@ def test_a_repeated_call_is_forced_once_and_the_forced_answer_wins() -> None:
         state(observations=(a_successful_list_risks(),))
     )
 
-    assert planner.offer_tools_seen == [True, False]
+    assert planner.tool_choice_seen == ["auto", "none"]
     assert result.route == "answer"
     assert "nothing has changed" in result.response
     assert any(
@@ -160,7 +166,7 @@ def test_a_repeat_that_survives_the_forced_call_fails_as_planner_loop() -> None:
         state(observations=(a_successful_list_risks(),))
     )
 
-    assert planner.offer_tools_seen == [True, False]
+    assert planner.tool_choice_seen == ["auto", "none"]
     assert result.route == "fail"
     assert result.failure == "planner_loop"
     assert result.failure != "max_steps_exceeded"
@@ -191,7 +197,7 @@ def test_a_repeated_write_request_is_also_forced() -> None:
 
     result = nodes(planner).think(state(observations=(already_written,)))
 
-    assert planner.offer_tools_seen == [True, False]
+    assert planner.tool_choice_seen == ["auto", "none"]
     assert result.route == "answer"
 
 
@@ -202,7 +208,7 @@ def test_a_repeated_write_request_is_also_forced() -> None:
 
 class ScriptedRealPlannerModel:
     """A ``DecisionModel`` that returns choices in sequence and honors
-    ``allow_tools`` the way the real provider does: with it False, a queued
+    ``tool_choice`` the way the real provider does: at "none", a queued
     tool call is never even offered a chance to be seen as one -- the fake
     answers with its own queued content instead, matching a well-behaved
     (real) provider's tool_choice: "none"."""
@@ -213,14 +219,14 @@ class ScriptedRealPlannerModel:
 
     def decide(
         self, question, evidence=(), observations=(), memories=(), history=(),
-        *, tools=(), allow_tools=True,
+        *, tools=(), tool_choice="auto",
     ):
         self.calls += 1
         result = self.results[min(self.calls - 1, len(self.results) - 1)]
-        if not allow_tools and result.tool_name is not None:
+        if tool_choice == "none" and result.tool_name is not None:
             raise AssertionError(
                 "a well-behaved model was asked for a queued tool call with "
-                "allow_tools=False -- fix the test's queue, not this fake"
+                "tool_choice='none' -- fix the test's queue, not this fake"
             )
         return result
 
@@ -316,7 +322,7 @@ def test_two_different_writes_in_one_turn_are_both_still_reachable() -> None:
     result = nodes(planner).think(state(observations=(first_write,)))
 
     # A different write (different arguments_summary) is never a "repeat":
-    # offer_tools=False is never even reached for it.
-    assert planner.offer_tools_seen == [True]
+    # tool_choice="none" is never even reached for it.
+    assert planner.tool_choice_seen == ["auto"]
     assert result.route == "request_approval"
     assert result.tool_name == "create_risk"

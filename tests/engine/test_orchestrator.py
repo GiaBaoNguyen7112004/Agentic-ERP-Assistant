@@ -82,7 +82,7 @@ class ScriptedModel:
         history=(),
         *,
         tools=(),
-        allow_tools=True,
+        tool_choice="auto",
     ):
         self.calls += 1
         self.shown_history = tuple(history)
