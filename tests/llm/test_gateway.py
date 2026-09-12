@@ -261,6 +261,33 @@ def test_a_valid_reply_is_returned_as_a_grounded_answer() -> None:
     assert answer.citations[0].source_id == "doc-1"
 
 
+def test_answer_sends_observations_in_their_own_block() -> None:
+    """ADR 0021: the composer has to see what this turn's own tool call
+    returned, or a compound reply drops the half it did not retrieve."""
+    from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+    recorder = Recorder()
+    gateway, _, client = make_gateway(recorder)
+
+    gateway.answer(
+        QUESTION,
+        EVIDENCE,
+        observations=(
+            ToolOutcome(
+                tool_name="get_project_status",
+                status="ok",
+                summary="2 days late.",
+                source_ids=("milestone-m2",),
+            ),
+        ),
+    )
+    client.close()
+
+    body = json.loads(recorder.requests[0].content)
+    blocks = [message["content"] for message in body["messages"]]
+    assert any("get_project_status" in block and "2 days late." in block for block in blocks)
+
+
 def test_telemetry_uses_the_providers_counts_not_the_estimate() -> None:
     recorder = Recorder()
     gateway, telemetry, client = make_gateway(recorder, counter=FixedCounter(100))

@@ -233,6 +233,7 @@ class LLMGateway:
         evidence: Evidence,
         memories: Sequence[MemoryRecord] = (),
         history: Sequence[ConversationTurn] = (),
+        observations: Sequence[ToolOutcome] = (),
         *,
         temperature: float = 0.0,
     ) -> GroundedAnswer:
@@ -251,6 +252,13 @@ class LLMGateway:
                 Reaches the answering call for the same reason memory does: an
                 answer resolving a follow-up needs the antecedent it was
                 resolved against, and it cannot become a citation either.
+            observations: What this turn's own tool calls returned, in order
+                (ADR 0021). Empty on a turn that never called one before
+                retrieving. Cannot become a citation either, for the same
+                structural reason -- no locator -- but reaches this call for a
+                sharper one: a compound question redirected to retrieval
+                after a tool call already succeeded needs both composed
+                together, not just the passage half.
             temperature: Defaults to 0.0. A grounded answer is not a place for
                 variety, and a reproducible trace is worth more here than range.
 
@@ -269,7 +277,9 @@ class LLMGateway:
             ValueError: ``question`` is blank (from ``build_messages``).
         """
         # 1. Build.
-        messages = build_messages(question, _as_snippets(evidence), memories, history)
+        messages = build_messages(
+            question, _as_snippets(evidence), memories, history, observations
+        )
 
         # 2. Budget, before anything is sent.
         estimated = self.counter.count_message_tokens(

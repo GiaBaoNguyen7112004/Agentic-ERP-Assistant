@@ -21,6 +21,7 @@ from agentic_erp_assistant.engine.nodes import (
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -89,10 +90,12 @@ class FakeComposer:
         self.raises = raises
         self.calls: list[tuple] = []
         self.history_calls: list[tuple] = []
+        self.observation_calls: list[tuple] = []
 
-    def answer(self, question: str, evidence, memories=(), history=()):
+    def answer(self, question: str, evidence, memories=(), history=(), observations=()):
         self.calls.append((question, tuple(evidence)))
         self.history_calls.append(tuple(history))
+        self.observation_calls.append(tuple(observations))
         if self.raises is not None:
             raise self.raises
         return self.answer_value
@@ -336,6 +339,37 @@ def test_a_document_answer_carries_the_sources_it_rests_on() -> None:
     assert "evidence_retrieved" in kinds(result)
 
 
+def test_the_composer_is_shown_this_turns_own_observations() -> None:
+    """ADR 0021: a compound question redirected to retrieval after a tool
+    call already succeeded needs the composer to see what that call
+    returned, or the field it established is silently dropped."""
+    composer = FakeComposer(grounded("m2-status.md"))
+    graph = nodes(composer=composer)
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    graph.retrieve_and_answer(
+        state(route="retrieve_project_documents", observations=(field,))
+    )
+
+    assert composer.calls[0][0] == "How is M2 tracking?"
+    assert composer.observation_calls[0] == (field,)
+
+
+def test_sources_merge_citations_and_observed_ids_citations_first() -> None:
+    """Deduped, citations first -- the reply names what it quoted before
+    what it merely read off a live field."""
+    graph = nodes(composer=FakeComposer(grounded("m2-status.md")))
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    result = graph.retrieve_and_answer(
+        state(route="retrieve_project_documents", observations=(field,))
+    )
+
+    assert result.response.endswith(
+        f"{SOURCES_PREFIX}[m2-status.md#p.2], milestone-m2"
+    )
+
+
 def test_the_composer_is_shown_the_history_on_the_state() -> None:
     composer = FakeComposer(grounded("m2-status.md"))
     graph = nodes(composer=composer)
@@ -390,6 +424,72 @@ def test_nothing_retrieved_is_a_refusal_and_not_a_guess() -> None:
     assert (result.route, result.failure) == ("refuse", "insufficient_evidence")
     assert result.response == NO_EVIDENCE_REPLY
     assert result.terminal
+
+
+def test_a_redirected_search_finding_nothing_delivers_the_withheld_draft() -> None:
+    """ADR 0021: the check's own redirect sent this search out and it found
+    nothing -- the planner's withheld reply is delivered anyway, marked,
+    never a bare refusal of a question the ERP already half-answered."""
+    graph = nodes(retriever=FakeRetriever())
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            observations=(field,),
+            draft="Two days late.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("Two days late.")
+    assert "milestone-m2" in result.response
+    assert "contract needs a document passage" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced"
+        and "unmet after redirect: document_passage" in event.detail
+        for event in result.events
+    )
+
+
+def test_a_model_chosen_search_finding_nothing_still_refuses() -> None:
+    """The softer landing is only for the check's own redirect -- draft is
+    never set by anything else, so a model-chosen search that finds nothing
+    refuses exactly as test_nothing_retrieved_is_a_refusal_and_not_a_guess
+    already proves. This asserts the second half of the guard directly:
+    redirected_needs alone, with no draft, is not enough either."""
+    graph = nodes(retriever=FakeRetriever())
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert (result.route, result.failure) == ("refuse", "insufficient_evidence")
+
+
+def test_the_defensive_field_check_marks_a_reply_still_missing_it() -> None:
+    """Belt and suspenders: unreachable against a well-behaved PlannerPort
+    (see reasoning/completeness.py's module docstring), reachable only
+    against a fake that redirects to retrieval with erp_field still unmet."""
+    contract = ReplyContract(
+        needs=frozenset({"document_passage", "erp_field"}), document_query="why"
+    )
+    graph = nodes(composer=FakeComposer(grounded("m2-status.md")))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents", contract=contract))
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert "erp_field" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced" and "unmet after redirect: erp_field" in event.detail
+        for event in result.events
+    )
 
 
 def test_a_composer_refusal_is_passed_through_as_a_refusal() -> None:

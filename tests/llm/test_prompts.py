@@ -22,6 +22,7 @@ from agentic_erp_assistant.llm.prompts import (
     NO_EVIDENCE,
     NO_HISTORY,
     NO_MEMORY,
+    NO_OBSERVATIONS,
     NO_REPLY,
     PLANNER_CONTRACT,
     PROMOTION_CONTRACT,
@@ -81,6 +82,7 @@ def test_the_roles_appear_in_order() -> None:
         "developer",
         "user",
         "evidence",
+        "observation",
         "history",
         "memory",
     ]
@@ -164,15 +166,49 @@ def test_no_evidence_still_produces_every_block() -> None:
     """The shape is constant; the model is told there is nothing to ground on."""
     messages = build_messages(QUESTION, [])
 
-    assert len(messages) == 6
+    assert len(messages) == 7
     assert messages[3]["content"] == NO_EVIDENCE
+
+
+def test_no_observations_still_produces_the_observation_block() -> None:
+    """The shape is constant; the model is told there is nothing observed --
+    the same reason NO_EVIDENCE is emitted rather than the block omitted."""
+    messages = build_messages(QUESTION, EVIDENCE)
+
+    assert messages[4] == {"role": "observation", "content": NO_OBSERVATIONS}
+
+
+def test_this_turns_own_tool_call_reaches_the_observation_block() -> None:
+    """ADR 0021: the composer has to see what this turn's own tool call
+    returned, or a compound reply drops the half it did not retrieve."""
+    from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+    outcome = ToolOutcome(
+        tool_name="get_project_status",
+        status="ok",
+        summary="Two days late.",
+        source_ids=("milestone-m2",),
+    )
+
+    messages = build_messages(QUESTION, EVIDENCE, observations=(outcome,))
+
+    assert messages[4]["role"] == "observation"
+    assert "get_project_status" in messages[4]["content"]
+    assert "Two days late." in messages[4]["content"]
+
+
+def test_system_policy_tells_the_model_what_an_observation_is_for() -> None:
+    """Rule 8: a current value to state plainly, never a substitute for a
+    passage that has to be quoted."""
+    assert "observation role" in SYSTEM_POLICY
+    assert "never a substitute for a passage" in SYSTEM_POLICY
 
 
 def test_no_history_still_produces_every_block() -> None:
     """The shape is constant; the first turn of a session says so plainly."""
     messages = build_messages(QUESTION, EVIDENCE)
 
-    assert messages[4] == {"role": "history", "content": NO_HISTORY}
+    assert messages[5] == {"role": "history", "content": NO_HISTORY}
 
 
 def test_no_memory_still_produces_a_memory_block() -> None:
@@ -180,7 +216,7 @@ def test_no_memory_still_produces_a_memory_block() -> None:
     saying so is what separates "nothing was established" from "recall broke"."""
     messages = build_messages(QUESTION, EVIDENCE)
 
-    assert messages[5] == {"role": "memory", "content": NO_MEMORY}
+    assert messages[6] == {"role": "memory", "content": NO_MEMORY}
 
 
 @pytest.mark.parametrize("question", ["", "   ", "\n"])
@@ -323,7 +359,7 @@ def test_history_renders_user_and_assistant_lines_oldest_first() -> None:
     older = turn(trace_id="run-1", request="How is M2 tracking?", response="On track.")
     newer = turn(trace_id="run-2", request="And the budget?", response="On plan.")
 
-    block = build_messages(QUESTION, EVIDENCE, history=(older, newer))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(older, newer))[5]["content"]
 
     assert block == (
         "1. User: How is M2 tracking?\n"
@@ -341,7 +377,7 @@ def test_a_paused_turn_renders_as_waiting_for_approval() -> None:
         tool_name="create_risk",
     )
 
-    block = build_messages(QUESTION, EVIDENCE, history=(waiting,))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(waiting,))[5]["content"]
 
     assert "waiting for approval to run create_risk" in block
 
@@ -349,7 +385,7 @@ def test_a_paused_turn_renders_as_waiting_for_approval() -> None:
 def test_a_refused_turn_renders_its_failure() -> None:
     refused = turn(route="refuse", response=None, failure="insufficient_evidence")
 
-    block = build_messages(QUESTION, EVIDENCE, history=(refused,))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(refused,))[5]["content"]
 
     assert "(insufficient_evidence)" in block
 
@@ -360,7 +396,7 @@ def test_a_turn_with_a_line_break_cannot_forge_an_extra_entry() -> None:
         response="ok",
     )
 
-    lines = build_messages(QUESTION, EVIDENCE, history=(smuggler,))[4][
+    lines = build_messages(QUESTION, EVIDENCE, history=(smuggler,))[5][
         "content"
     ].splitlines()
 

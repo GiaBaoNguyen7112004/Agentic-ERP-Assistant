@@ -2,22 +2,23 @@
 contract the turn declared -- a missing need is redirected once, and the
 redirect never delivers less than the planner would have.
 
-Two levels, the same split test_think_after_write.py uses: think() in
-isolation (the mechanics -- which call got which tool_choice and withhold,
-what the trace says, what falls through unmodified) and the real engine
-end-to-end (a call that actually executes, and the step count that results).
-The full R1 shape -- retrieval finding passages and the composer being handed
-what the tool call returned -- is Phase Q3's, tested there once
-retrieve_and_answer is wired to see observations; this file proves the
-redirect itself, not composition.
+Three levels, the first two the same split test_think_after_write.py uses:
+think() in isolation (the mechanics -- which call got which tool_choice and
+withhold, what the trace says, what falls through unmodified), the real
+engine end-to-end for one redirect at a time (a call that actually
+executes, and the step count that results), and -- at the bottom -- R1's
+full compound shape: the field fetched, the answer redirected to search,
+and the composer handed both the passage and the observation (Phase Q3).
 """
 
+from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
 from agentic_erp_assistant.reasoning.decision import ReasoningDecision
 from agentic_erp_assistant.engine.nodes import GraphNodes, RETRIEVAL_TOOL
 from agentic_erp_assistant.engine.workflow import WorkflowRuntime
 from agentic_erp_assistant.llm.tools import ToolCallResult
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
@@ -458,3 +459,87 @@ def test_a_field_redirect_that_succeeds_returns_to_think_and_completes() -> None
     assert result.route == "answer"
     assert result.failure == "none"
     assert result.step_count == 3
+
+
+# --------------------------------------------------------------------------
+# R1's full compound shape, with a real retriever and composer stand-in
+# --------------------------------------------------------------------------
+
+
+class FakeRetriever:
+    def __init__(self, *snippets: EvidenceSnippet) -> None:
+        self.snippets = snippets
+        self.calls: list[str] = []
+
+    def search(self, query: str, *, limit: int):
+        self.calls.append(query)
+        return self.snippets[:limit]
+
+
+class RecordingComposer:
+    def __init__(self, answer: GroundedAnswer) -> None:
+        self.answer_value = answer
+        self.observation_calls: list[tuple] = []
+
+    def answer(self, question, evidence, memories=(), history=(), observations=()):
+        self.observation_calls.append(tuple(observations))
+        return self.answer_value
+
+
+def test_r1s_full_shape_field_then_redirected_search_composes_both() -> None:
+    """The model calls the ERP tool on its own (erp_field is satisfied
+    without any redirect), then tries to answer -- the check redirects that
+    to a search with the contract's own query, and the composer is handed
+    both the retrieved passage and the tool's own observation. The reply
+    carries a document citation *and* the observed ERP id -- gap 13's fix,
+    proven end to end."""
+    model = ScriptedRealPlannerModel(
+        real_called("get_project_status", milestone_id="M2"),
+        real_answered("Two days late."),
+    )
+    ok = ToolOutcome(
+        tool_name="get_project_status",
+        status="ok",
+        summary="2 days late.",
+        source_ids=("milestone-m2",),
+    )
+    snippet = EvidenceSnippet(
+        source_id="status-report-2026-09",
+        locator="2.2",
+        text="M2 is two days late due to reconciliation exceptions.",
+    )
+    composer = RecordingComposer(
+        GroundedAnswer(
+            answer="M2 is two days late due to 41 reconciliation exceptions.",
+            citations=[Citation(source_id="status-report-2026-09", locator="2.2")],
+            grounded=True,
+            confidence=0.9,
+        )
+    )
+    engine = WorkflowRuntime(
+        retriever=FakeRetriever(snippet),
+        tools=ScriptedGateway(ok),
+        planner=Planner(model),
+        composer=composer,
+        sleep=lambda seconds: None,
+    )
+
+    result = engine.run(
+        AgentState(
+            request="Why is milestone M2 late and by how much?",
+            actor="priya",
+            project_code="atlas",
+            trace_id="run-1",
+            scopes=SCOPES,
+            contract=BOTH,
+        )
+    )
+
+    assert model.calls == 2
+    assert result.route == "answer"
+    assert result.failure == "none"
+    assert result.step_count == 4
+    assert composer.observation_calls[0][0].tool_name == "get_project_status"
+    assert "[status-report-2026-09#2.2]" in result.response
+    assert "milestone-m2" in result.response
+    assert "41 reconciliation exceptions" in result.response

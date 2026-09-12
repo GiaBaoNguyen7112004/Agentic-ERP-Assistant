@@ -239,6 +239,7 @@ class AnswerComposerPort(Protocol):
         evidence: Sequence[EvidenceSnippet],
         memories: Sequence[MemoryRecord] = (),
         history: Sequence[ConversationTurn] = (),
+        observations: Sequence[ToolOutcome] = (),
     ) -> "GroundedAnswer":
         """Answer ``question`` from ``evidence``, or refuse in a typed way.
 
@@ -253,6 +254,14 @@ class AnswerComposerPort(Protocol):
         than a hopeful one: neither carries a locator, so there is nothing in
         either a citation could be built from, and the caller's check against
         the retrieved evidence catches one that was invented anyway.
+
+        ``observations`` (ADR 0021) joins them on the same structural
+        footing -- no locator, so it cannot become a citation either -- but
+        for a sharper reason: a compound question redirected to retrieval
+        after this turn's own tool call already succeeded
+        (``engine/nodes.py::think``'s ``erp_field`` redirect) needs both
+        halves composed together, or the field the tool already established
+        is silently dropped from the reply.
 
         Raises:
             Exception: Provider failures and contract violations propagate. The

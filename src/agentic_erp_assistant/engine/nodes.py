@@ -539,6 +539,36 @@ class GraphNodes:
         )
 
         if not snippets:
+            if "document_passage" in state.redirected_needs and state.draft is not None:
+                # ADR 0021: the check's own redirect sent this search out,
+                # and it found nothing. The planner's withheld reply is
+                # delivered anyway -- never worse than the turn would have
+                # been without the check -- marked incomplete rather than
+                # refused. A search the *model* chose that finds nothing
+                # still refuses exactly as it always has, below: only a
+                # redirect this check made gets the softer landing.
+                return advance(
+                    state,
+                    "answer",
+                    evidence=(),
+                    response=_with_sources(
+                        state.draft, _observed_sources(state.observations)
+                    ),
+                    failure="incomplete_reply",
+                    error_detail=_clip(
+                        f"contract needs a document passage; the redirected "
+                        f"search for {query!r} found none",
+                        ERROR_DETAIL_MAX_CHARS,
+                    ),
+                    events=events
+                    + (
+                        _event(
+                            "retrieve",
+                            "contract_enforced",
+                            "unmet after redirect: document_passage",
+                        ),
+                    ),
+                )
             return advance(
                 state,
                 "refuse",
@@ -550,7 +580,7 @@ class GraphNodes:
 
         try:
             answer = self.composer.answer(
-                state.request, snippets, state.memories, state.history
+                state.request, snippets, state.memories, state.history, state.observations
             )
         except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
             logger.warning("composer failed on %s: %s", state.trace_id, error)
@@ -582,14 +612,44 @@ class GraphNodes:
                 events=events + (_event("retrieve", "failed", problem),),
             )
 
+        sources = [f"[{cite.source_id}#{cite.locator}]" for cite in answer.citations]
+        sources += [
+            source_id
+            for source_id in _observed_sources(state.observations)
+            if source_id not in sources
+        ]
+        response = _with_sources(answer.answer, sources)
+
+        # Belt and suspenders (ADR 0021): the redirect logic in think() means
+        # an erp_field need cannot reach this point still missing against a
+        # well-behaved PlannerPort -- see reasoning/completeness.py's module
+        # docstring -- but a non-conforming one is not this method's problem
+        # to trust away.
+        gap = assess(state.contract, state.evolve(evidence=snippets))
+        if gap.missing:
+            missing = ", ".join(sorted(gap.missing))
+            return advance(
+                state,
+                "answer",
+                evidence=snippets,
+                response=response,
+                failure="incomplete_reply",
+                error_detail=_clip(
+                    f"contract not met after redirect: {missing}", ERROR_DETAIL_MAX_CHARS
+                ),
+                events=events
+                + (
+                    _event(
+                        "retrieve", "contract_enforced", f"unmet after redirect: {missing}"
+                    ),
+                ),
+            )
+
         return advance(
             state,
             "answer",
             evidence=snippets,
-            response=_with_sources(
-                answer.answer,
-                [f"[{cite.source_id}#{cite.locator}]" for cite in answer.citations],
-            ),
+            response=response,
             events=events,
         )
 

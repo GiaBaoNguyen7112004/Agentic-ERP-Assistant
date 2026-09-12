@@ -196,6 +196,7 @@ def test_evidence_is_relabeled_developer_and_stays_its_own_message(messages) -> 
         "developer",
         "developer",
         "developer",
+        "developer",
     ]
 
     evidence_block = wire[3]["content"]
@@ -767,6 +768,7 @@ def test_call_with_tools_folds_roles_the_same_way_complete_does(messages) -> Non
         "system",
         "developer",
         "user",
+        "developer",
         "developer",
         "developer",
         "developer",

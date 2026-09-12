@@ -101,7 +101,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=(), history=()):
+    def answer(self, question: str, evidence, memories=(), history=(), observations=()):
         return self.answer_value
 
 
