@@ -77,3 +77,67 @@ def test_apply_schema_twice_still_accepts_every_declared_event_kind(database) ->
         ("run-schema-test",),
     ).fetchall()
     assert [row[0] for row in rows] == ["history_recalled", "history_promoted"]
+
+
+@pytest.mark.postgres
+def test_apply_schema_twice_still_accepts_every_declared_failure_mode(database) -> None:
+    """The same migration hazard as the kind constraint above, for
+    ``session_turns.failure`` -- named and re-applied for the same reason:
+    FailureMode grew (``planner_loop``, ADR 0019) after this column shipped,
+    and a database initialised before that growth must not be left with a
+    CHECK that still rejects it."""
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    when = datetime(2026, 9, 12, tzinfo=UTC)
+    database.execute("TRUNCATE session_turns CASCADE")
+    database.execute(
+        "INSERT INTO session_turns (trace_id, session_id, actor, request, "
+        "response, route, failure, tool_name, approval, started_at, "
+        "finished_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            "run-schema-test-failure",
+            "session-schema-test",
+            "bao",
+            "hi",
+            None,
+            "think",
+            "none",
+            None,
+            "not_required",
+            when,
+            when,
+        ),
+    )
+
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    # The constraint was just re-applied; a failure mode added since this
+    # column shipped must still be insertable, and the row inserted before
+    # re-applying it must still be there.
+    database.execute(
+        "INSERT INTO session_turns (trace_id, session_id, actor, request, "
+        "response, route, failure, tool_name, approval, started_at, "
+        "finished_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            "run-schema-test-planner-loop",
+            "session-schema-test",
+            "bao",
+            "hi again",
+            None,
+            "fail",
+            "planner_loop",
+            "list_risks",
+            "not_required",
+            when,
+            when,
+        ),
+    )
+    rows = database.execute(
+        "SELECT failure FROM session_turns WHERE session_id = %s ORDER BY trace_id",
+        ("session-schema-test",),
+    ).fetchall()
+    assert {row[0] for row in rows} == {"none", "planner_loop"}
