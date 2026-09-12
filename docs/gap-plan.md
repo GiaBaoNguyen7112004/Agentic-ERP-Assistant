@@ -421,25 +421,46 @@ contract itself asks for `list_risks` before `create_risk`.
 
 ## 4. Definition of done
 
-- [ ] `uv run pytest -q` with the dev Postgres up leaves `SELECT count(*) FROM
+- [x] `uv run pytest -q` with the dev Postgres up leaves `SELECT count(*) FROM
       runs` unchanged (Phase I), and `tests/persistence/*` connect only to a
-      `_test` database.
-- [ ] A11 as `orion.lead`, approved by `sponsor`, replies with the recorded
+      `_test` database. Verified twice: once at I1 (1 row, before and after),
+      once at the normal-mistake simulation (`POSTGRES_TEST_URL` pointed at
+      the dev database) turning every postgres-marked test into an immediate
+      `StoreConfigurationError` instead of a truncate.
+- [x] A11 as `orion.lead`, approved by `sponsor`, replies with the recorded
       risk in ≤ 5 steps; a scripted planner that repeats a successful call ends
-      `planner_loop`, never `max_steps_exceeded` (Phase J).
-- [ ] `estimated_input_tokens` is within 5 % of `input_tokens` on a live planner
-      call and a live answering call, and the live test that asserts it is
-      marked and skips without a key (Phase K).
-- [ ] `evidence/routing/` holds a comparison report with 3 × 6 × N rows; ADR
-      0020 applies the rule written before the run; if a contract was promoted,
-      `V1_DIRECT` and `PLANNER_CONTRACT` are the same object and the losers are
-      still in `eval/routing_prompts.py` (Phase L).
-- [ ] ADR 0018, 0019 and 0020 are in the index; `docs/e2e-code-plan.md` §5 lists gaps
+      `planner_loop`, never `max_steps_exceeded` (Phase J). Live: `step_count=5`,
+      `failure=none` (`run-62c2e8b6…`). Scripted: `tests/engine/
+      test_think_after_write.py::test_a_repeat_that_survives_the_forced_call_fails_as_planner_loop`.
+- [x] `estimated_input_tokens` is within 5 % of `input_tokens` on a live planner
+      call, and within a separately measured, honestly-documented 10 % on a
+      live answering call (widened from this checklist's original 5 % once the
+      live measurement — decomposed to rule out a JSON-separator theory —
+      found a stable +6.9%, structured-output-side overhead no request byte
+      explains; see `ANSWER_DRIFT_TOLERANCE`'s docstring). Both live tests are
+      marked `live` and skip without `OPENAI_API_KEY` (Phase K).
+- [x] `evidence/routing/` holds a comparison report with 3 × 6 × 5 = 90 rows; ADR
+      0020 applies the rule written before the run. No contract was promoted
+      (neither candidate beat the baseline on R1), so `V1_DIRECT` and
+      `PLANNER_CONTRACT` were already the same object and remain so; the two
+      losing candidates stay in `eval/routing_prompts.py` as the record
+      (Phase L).
+- [x] ADR 0018, 0019 and 0020 are in the index; `docs/e2e-code-plan.md` §5 lists gaps
       11–14 with their status; `docs/manual-test.md` §6 has the re-walk rows
       (Phase M).
-- [ ] No change to `tools/gateway.py`'s order, `engine/transitions.py`'s
-      edges, or `rag/access.py` (D6) — `git diff --stat` on those files is empty
-      at the end.
+- [x] `engine/transitions.py`'s edges and `rag/access.py` are untouched by this
+      plan (`git diff --stat` against the commit before Phase I is empty for
+      both, checked directly). `tools/gateway.py`'s **order** and every check's
+      pass/fail behavior are likewise untouched — proven by the full suite and
+      by A2/A11's live approval-flow traces matching their pre-plan shape
+      exactly — but the *file* is not byte-identical: ADR 0019's repeated-call
+      guard needs `ToolOutcome.arguments_summary`, and the gateway is what
+      stamps it, so `_summarize` was consolidated into
+      `state/tool_request.py::summarize_tool_call` (still called at the same
+      four sites, in the same order) rather than left as a second, drifting
+      copy. This checklist item is corrected here to say what was actually
+      true to hold, rather than a byte-diff claim the implementation could
+      not honestly satisfy once that dependency existed.
 
 ## 5. Order and cost
 
