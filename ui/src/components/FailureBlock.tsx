@@ -1,3 +1,6 @@
+import { CircleAlert } from 'lucide-react'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+
 export function FailureBlock({
   failure,
   errorDetail,
@@ -8,9 +11,10 @@ export function FailureBlock({
   if (failure === 'none') return null
 
   return (
-    <div className="failure-block" role="alert">
-      <strong>{failure}</strong>
-      {errorDetail ? `: ${errorDetail}` : null}
-    </div>
+    <Alert variant="destructive">
+      <CircleAlert aria-hidden />
+      <AlertTitle className="font-mono">{failure}</AlertTitle>
+      {errorDetail && <AlertDescription className="break-words">{errorDetail}</AlertDescription>}
+    </Alert>
   )
 }

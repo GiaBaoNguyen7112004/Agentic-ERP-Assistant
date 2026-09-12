@@ -190,6 +190,7 @@ export default function App() {
         <ChatPanel
           messages={state.messages}
           actor={state.actor}
+          sessionId={state.sessionId}
           canApprove={canApprove}
           running={running}
           decidingId={decidingId}
