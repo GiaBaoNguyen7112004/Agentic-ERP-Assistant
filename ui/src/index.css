@@ -1,5 +1,137 @@
+/* Design system: shadcn/ui tokens (neutral base) + four project tones.
+   Dark mode follows the OS -- no toggle -- so the dark block lives under a
+   media query rather than a `.dark` class, and Tailwind's default `dark:`
+   variant (also the media query) needs no @custom-variant. Components consume
+   these only through Tailwind utilities; the legacy block at the bottom is
+   deleted in Phase 6. */
+
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
 :root {
   color-scheme: light dark;
+
+  /* shadcn neutral, light */
+  --background: #ffffff;
+  --foreground: #1a1d21;
+  --card: #ffffff;
+  --card-foreground: #1a1d21;
+  --popover: #ffffff;
+  --popover-foreground: #1a1d21;
+  --primary: #1a1d21;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f5f7;
+  --secondary-foreground: #1a1d21;
+  --muted: #f4f5f7;
+  --muted-foreground: #5c6370;
+  --accent: #f4f5f7;
+  --accent-foreground: #1a1d21;
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+  --border: #d9dce1;
+  --input: #d9dce1;
+  --ring: #2563eb;
+  --sidebar: #f4f5f7;
+  --sidebar-foreground: #1a1d21;
+  --radius: 0.5rem;
+
+  /* Project tones (light): every value ≥ 4.5:1 as text on --background */
+  --success: #15803d;
+  --warning: #92400e;
+  --info: #1d4ed8;
+  --memory: #7e22ce;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* shadcn neutral, dark */
+    --background: #17181c;
+    --foreground: #eceef1;
+    --card: #202226;
+    --card-foreground: #eceef1;
+    --popover: #202226;
+    --popover-foreground: #eceef1;
+    --primary: #eceef1;
+    --primary-foreground: #1a1d21;
+    --secondary: #26282e;
+    --secondary-foreground: #eceef1;
+    --muted: #26282e;
+    --muted-foreground: #9aa0aa;
+    --accent: #26282e;
+    --accent-foreground: #eceef1;
+    --destructive: #f28b82;
+    --destructive-foreground: #1a1d21;
+    --border: #33363c;
+    --input: #33363c;
+    --ring: #6ea8fe;
+    --sidebar: #202226;
+    --sidebar-foreground: #eceef1;
+
+    /* Project tones (dark), ≥ 4.5:1 on --background */
+    --success: #4ade80;
+    --warning: #fbbf24;
+    --info: #60a5fa;
+    --memory: #c084fc;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+
+  /* the four project tones */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-memory: var(--memory);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground font-sans text-sm antialiased;
+  }
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+/* LEGACY -- deleted in Phase 6 ------------------------------------------------
+   The pre-redesign stylesheet, verbatim, so the app keeps its exact look while
+   components migrate onto the token system one phase at a time. New code must
+   not add classes here; migrating components drop their rules from this block. */
+
+:root {
   --bg: #ffffff;
   --bg-alt: #f4f5f7;
   --border: #d9dce1;
@@ -9,7 +141,6 @@
   --danger: #b3261e;
   --ok: #1a7f37;
   --warn: #9a5b00;
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
