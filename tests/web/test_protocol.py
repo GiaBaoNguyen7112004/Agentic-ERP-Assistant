@@ -13,6 +13,9 @@ from agentic_erp_assistant.web.protocol import (
     AnswerEvent,
     ApprovalRequiredEvent,
     CitationOut,
+    clip_text,
+    ContextEvent,
+    ContractOut,
     encode_sse,
     ErrorEvent,
     EVENT_TYPES,
@@ -30,6 +33,7 @@ SCOPES = frozenset({"project.status.read"})
 
 _MODELS_BY_TYPE = {
     "turn_started": TurnStartedEvent,
+    "context": ContextEvent,
     "trace": TraceRow,
     "step": StepEvent,
     "token": TokenEvent,
@@ -170,3 +174,55 @@ def test_mixed_document_and_erp_citations_in_one_trailer() -> None:
     body, citations = parse_citations(response, state(evidence=(snippet,)))
 
     assert [c.kind for c in citations] == ["document", "erp"]
+
+
+# --------------------------------------------------------------------------
+# clip_text
+# --------------------------------------------------------------------------
+
+
+def test_clip_text_leaves_short_text_unmarked() -> None:
+    out = clip_text("a short passage")
+
+    assert out.text == "a short passage"
+    assert out.truncated is False
+    assert out.chars == len("a short passage")
+
+
+def test_clip_text_marks_and_cuts_long_text() -> None:
+    text = "x" * 10
+    out = clip_text(text, limit=4)
+
+    assert out.text == "xxxx"
+    assert out.truncated is True
+    assert out.chars == 10, "the original length, not the clipped one"
+
+
+def test_clip_text_at_exactly_the_limit_is_not_truncated() -> None:
+    out = clip_text("abcd", limit=4)
+
+    assert out.truncated is False
+    assert out.text == "abcd"
+
+
+# --------------------------------------------------------------------------
+# ContextEvent
+# --------------------------------------------------------------------------
+
+
+def test_context_event_accepts_no_history_no_memory_and_an_unchecked_contract() -> None:
+    event = ContextEvent(request="hi", history=(), memories=(), contract=None)
+
+    assert event.history == ()
+    assert event.memories == ()
+    assert event.contract is None
+
+
+def test_context_event_carries_a_declared_contract_with_no_needs() -> None:
+    event = ContextEvent(
+        request="hi", history=(), memories=(),
+        contract=ContractOut(needs=(), document_query=None),
+    )
+
+    assert event.contract is not None
+    assert event.contract.needs == ()

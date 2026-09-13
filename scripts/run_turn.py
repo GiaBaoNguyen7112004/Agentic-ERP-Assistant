@@ -45,6 +45,9 @@ class ConsoleStream:
     def __init__(self) -> None:
         self._started = False
 
+    def context(self, state) -> None:  # noqa: ARG002 - the observer's contract
+        pass
+
     def step(self, state) -> None:  # noqa: ARG002 - the observer's contract
         pass
 

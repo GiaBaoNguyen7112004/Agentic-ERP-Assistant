@@ -252,6 +252,19 @@ class RunOrchestrator:
         now: The clock, injected so a test can make time deterministic and
             so the orchestrator itself never calls ``datetime.now`` at a
             distance.
+        on_start: Called once, with the state the engine is about to run
+            (in :meth:`handle`, after recall and declaration; in
+            :meth:`resume`, the claimed paused state), before the engine is
+            touched. ``None`` is a complete configuration, like every other
+            port here: a caller with nobody watching a turn live passes
+            nothing and this class does not notice. Exists for
+            ``web/stream.py::TurnStream.context`` -- a screen needs to know
+            what a turn was shown *before* the first node runs, and the
+            engine's own observer (:attr:`~agentic_erp_assistant.engine.
+            workflow.WorkflowRuntime.observer`) only ever fires *after*
+            one. Never-fail, the same severity every other hook in this
+            class is held to: an observer that raises is logged and
+            dropped, because a screen going away must not end a turn.
 
     The ordering inside both methods is the load-bearing part and reads the
     same in both: short-term recall first, long-term recall second, the
@@ -279,6 +292,7 @@ class RunOrchestrator:
     conversation: SessionHistoryPort | None = None
     declarer: ContractDeclarerPort | None = None
     now: Callable[[], datetime] = _utc_now
+    on_start: Callable[[AgentState], object] | None = None
 
     def handle(self, state: AgentState) -> AgentState:
         """Run a turn to its end and file it.
@@ -298,7 +312,9 @@ class RunOrchestrator:
         started = self.now()
         state = self._with_history(state)
         state = self._recalled(state)
-        final = self.runtime.run(self._declared(state))
+        declared = self._declared(state)
+        self._started(declared)
+        final = self.runtime.run(declared)
         final = self._consolidated(final)
         self.traces.save_run(self._record(started, final))
         if is_paused(final):
@@ -350,6 +366,7 @@ class RunOrchestrator:
             )
 
         started = self.now()
+        self._started(paused)
         final = self.runtime.resume_approval(
             paused, approved=approved, decided_by=decided_by
         )
@@ -359,6 +376,22 @@ class RunOrchestrator:
             self.pauses.save(final)
         self._recorded(final, started)
         return final
+
+    # -- observation, before the engine is touched -------------------------
+
+    def _started(self, state: AgentState) -> None:
+        """Tell whoever is watching this turn live what it is about to run
+        with, before the engine sees it. Never raises -- see :attr:`on_start`."""
+        if self.on_start is None:
+            return
+        try:
+            self.on_start(state)
+        except Exception:  # noqa: BLE001 - a screen going away must not end a turn
+            logger.warning(
+                "on_start observer raised for run %s; the turn continues",
+                state.trace_id,
+                exc_info=True,
+            )
 
     # -- memory, on both sides of the run ----------------------------------
 

@@ -24,6 +24,8 @@ from agentic_erp_assistant.web.protocol import (
     AnswerEvent,
     ApprovalRequiredEvent,
     ErrorEvent,
+    MemoryAuditOut,
+    ModelCallOut,
     ModelCallTotalsOut,
     ObservationOut,
     TurnFinishedEvent,
@@ -283,6 +285,14 @@ class ChatService:
             )
 
         records, totals = turn.queries.model_calls(final.trace_id)
+        run_row = turn.queries.run(final.trace_id)
+        # The run row this call just filed (handle()/resume() already called
+        # traces.save_run before returning) -- see the trace store's own
+        # contract that an unsaved run "did not happen"; by the time this
+        # tail runs, it always has.
+        assert run_row is not None
+        audit_rows = turn.queries.memory_audit(final.trace_id)
+
         stream.emit(
             TurnFinishedEvent(
                 outcome="paused" if is_paused(final) else "terminal",
@@ -302,6 +312,35 @@ class ChatService:
                     output_tokens=totals.output_tokens,
                     cost_usd=totals.cost_usd,
                     unpriced=totals.unpriced,
+                    records=tuple(
+                        ModelCallOut(
+                            model=record.model,
+                            outcome=record.outcome,
+                            estimated_input_tokens=record.estimated_input_tokens,
+                            input_tokens=record.input_tokens,
+                            output_tokens=record.output_tokens,
+                            cost_usd=record.cost_usd,
+                            latency_seconds=record.latency_seconds,
+                            attempts=record.attempts,
+                            occurred_at=record.occurred_at,
+                            detail=record.detail,
+                        )
+                        for record in records
+                    ),
                 ),
+                memory_audit=tuple(
+                    MemoryAuditOut(
+                        occurred_at=row.occurred_at,
+                        memory_id=row.memory_id,
+                        kind=row.kind,
+                        decision=row.decision,
+                        rejection=row.rejection,
+                        reason=row.reason,
+                        statement_summary=row.statement_summary,
+                    )
+                    for row in audit_rows
+                ),
+                started_at=run_row.started_at,
+                finished_at=run_row.finished_at,
             )
         )

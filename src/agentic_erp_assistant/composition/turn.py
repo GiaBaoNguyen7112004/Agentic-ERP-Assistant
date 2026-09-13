@@ -66,6 +66,12 @@ class TurnStreamLike(Protocol):
     notices the difference.
     """
 
+    def context(self, state: AgentState) -> None:
+        """Called once, before the engine runs (or resumes), with the
+        state history/memories/contract were attached to. See
+        :attr:`~agentic_erp_assistant.engine.orchestrator.RunOrchestrator.on_start`."""
+        ...
+
     def step(self, state: AgentState) -> None:
         """Called with the state after every node execution. See
         :attr:`~agentic_erp_assistant.engine.workflow.WorkflowRuntime.observer`."""
@@ -222,6 +228,7 @@ def build_turn(
         memory=memory,
         conversation=conversation,
         declarer=planner,
+        on_start=stream.context if stream is not None else None,
     )
 
     return TurnPorts(

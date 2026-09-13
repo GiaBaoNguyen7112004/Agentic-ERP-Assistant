@@ -10,6 +10,7 @@ which every other test file already proves.
 import asyncio
 import threading
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import pytest
 
@@ -18,7 +19,7 @@ from agentic_erp_assistant.composition.resources import AppResources
 from agentic_erp_assistant.composition.turn import TurnPorts
 from agentic_erp_assistant.composition.users import User, UserDirectory
 from agentic_erp_assistant.engine.orchestrator import ApprovalAlreadySettled
-from agentic_erp_assistant.persistence.postgres_queries import ModelCallTotals
+from agentic_erp_assistant.persistence.postgres_queries import ModelCallTotals, RunRow
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.web import service as service_module
 from agentic_erp_assistant.web.protocol import (
@@ -61,6 +62,21 @@ class FakeOrchestrator:
 class FakeQueries:
     def model_calls(self, trace_id: str):
         return (), ModelCallTotals(count=1, input_tokens=10, output_tokens=5, cost_usd=0.01, unpriced=0)
+
+    def run(self, trace_id: str):
+        stamp = datetime(2026, 1, 1, tzinfo=UTC)
+        return RunRow(
+            trace_id=trace_id,
+            actor="priya",
+            project_code="atlas",
+            outcome="terminal",
+            started_at=stamp,
+            finished_at=stamp,
+            state=None,  # _emit_tail never reads this field
+        )
+
+    def memory_audit(self, trace_id: str):
+        return ()
 
 
 class Row:

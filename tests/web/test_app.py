@@ -6,6 +6,7 @@ test_service.py uses one layer down: what a fake build_turn proves there,
 a fake ChatService proves here.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -216,8 +217,12 @@ def test_chat_streams_turn_started_tokens_answer_turn_finished_in_order() -> Non
                 outcome="terminal", route="answer", failure="none", step_count=1,
                 evidence=(), memories_recalled=0, history_shown=0, observations=(),
                 model_calls=ModelCallTotalsOut(
-                    count=0, input_tokens=0, output_tokens=0, cost_usd=0.0, unpriced=0
+                    count=0, input_tokens=0, output_tokens=0, cost_usd=0.0, unpriced=0,
+                    records=(),
                 ),
+                memory_audit=(),
+                started_at=datetime(2026, 1, 1, tzinfo=UTC),
+                finished_at=datetime(2026, 1, 1, tzinfo=UTC),
             )
         )
 

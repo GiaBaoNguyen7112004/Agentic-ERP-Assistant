@@ -307,6 +307,59 @@ def test_a_resumed_turn_can_pause_again_and_waits_anew() -> None:
     assert [risk.title for risk in store.risks].count("first") == 1
     assert [risk.title for risk in store.risks].count("second") == 0
 
+
+# --------------------------------------------------------------------------
+# on_start: whoever is watching live learns what a turn is about to run
+# with, before the engine ever sees it
+# --------------------------------------------------------------------------
+
+
+def test_on_start_receives_the_declared_state_before_any_node_runs() -> None:
+    orchestrator, *_ = an_orchestrator(answered("Sure."))
+    seen: list[AgentState] = []
+    orchestrator.on_start = seen.append
+
+    orchestrator.handle(start())
+
+    assert len(seen) == 1
+    assert seen[0].step_count == 0
+    assert seen[0].request == "Record the risk."
+
+
+def test_on_start_receives_the_paused_state_on_resume() -> None:
+    orchestrator, *_ = an_orchestrator(a_write(), answered("Risk recorded."))
+    paused = orchestrator.handle(start())
+    seen: list[AgentState] = []
+    orchestrator.on_start = seen.append
+
+    orchestrator.resume("run-1", approved=True)
+
+    assert len(seen) == 1
+    assert seen[0] == paused
+
+
+def test_a_raising_on_start_is_logged_and_the_turn_still_completes() -> None:
+    orchestrator, traces, *_ = an_orchestrator(answered("Sure."))
+
+    def raises(state: AgentState) -> None:
+        raise RuntimeError("a screen went away")
+
+    orchestrator.on_start = raises
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal
+    assert traces.runs["run-1"].outcome == "terminal"
+
+
+def test_no_on_start_is_a_complete_configuration() -> None:
+    orchestrator, *_ = an_orchestrator(answered("Sure."))
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal
+
+
 # --------------------------------------------------------------------------
 # Memory: recall before the run, consolidation after it, and never a failure
 # --------------------------------------------------------------------------

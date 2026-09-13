@@ -14,19 +14,85 @@ cross-thread handoff in this whole turn happens here and nowhere else.
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
+from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.web.protocol import (
+    clip_text,
+    ContextEvent,
+    ContractOut,
+    EvidenceOut,
+    HistoryTurnOut,
+    MemoryOut,
     ResetEvent,
     ServerEvent,
     StepEvent,
     TokenEvent,
+    ToolOutcomeOut,
     TraceRow,
 )
 
 __all__ = ["TurnStream"]
+
+
+def _history_out(turn: ConversationTurn) -> HistoryTurnOut:
+    return HistoryTurnOut(
+        trace_id=turn.trace_id,
+        request=turn.request,
+        response=turn.response,
+        route=turn.route,
+        failure=turn.failure,
+        tool_name=turn.tool_name,
+        approval=turn.approval,
+        started_at=turn.started_at,
+        finished_at=turn.finished_at,
+    )
+
+
+def _memory_out(memory: MemoryRecord) -> MemoryOut:
+    return MemoryOut(
+        memory_id=memory.memory_id,
+        kind=memory.kind,
+        key=memory.key,
+        statement=memory.statement,
+        confidence=memory.confidence,
+        recorded_in_run=memory.recorded_in_run,
+        recorded_at=memory.recorded_at,
+        supersedes=memory.supersedes,
+        links=memory.links,
+        required_scope=memory.required_scope,
+        actor=memory.actor,
+        project_code=memory.project_code,
+        session_id=memory.session_id,
+    )
+
+
+def _evidence_out(snippet: EvidenceSnippet) -> EvidenceOut:
+    return EvidenceOut(
+        source_id=snippet.source_id,
+        locator=snippet.locator,
+        tag=snippet.tag,
+        text=clip_text(snippet.text),
+    )
+
+
+def _observation_out(outcome: ToolOutcome) -> ToolOutcomeOut:
+    return ToolOutcomeOut(
+        tool_name=outcome.tool_name,
+        arguments_summary=outcome.arguments_summary,
+        status=outcome.status,
+        summary=clip_text(outcome.summary),
+        source_ids=outcome.source_ids,
+        error=outcome.error,
+        attempts=outcome.attempts,
+        retry_after_seconds=outcome.retry_after_seconds,
+    )
 
 
 class TurnStream:
@@ -46,6 +112,20 @@ class TurnStream:
         events were already streamed the first time the client saw them, and
         re-emitting them here would duplicate a row the client already has.
         """
+        self._last: AgentState | None = None
+        """The state :meth:`context` or the previous :meth:`step` left off
+        at -- the baseline every delta field on the next
+        :class:`~agentic_erp_assistant.web.protocol.StepEvent` is computed
+        against, and what :meth:`trace_event` reads ``step_count`` off of to
+        number a live gateway row. ``None`` only before :meth:`context` has
+        ever been called, which composition wires to fire before this
+        object ever sees a node -- see ``composition/turn.py``.
+        """
+        self._last_perf = time.perf_counter()
+        """The clock :meth:`step`'s ``elapsed_ms`` measures against. Reset
+        by :meth:`context` and by every :meth:`step` call, so each step
+        reports the wall clock since the *previous* one (or since the
+        context was attached, for the first)."""
 
     def _put(self, event: ServerEvent | None) -> None:
         """Hand one event (or the closing ``None``) to the loop, from
@@ -53,7 +133,47 @@ class TurnStream:
         queue across the thread boundary."""
         self._loop.call_soon_threadsafe(self._queue.put_nowait, event)
 
+    def _elapsed_ms(self) -> float:
+        """Milliseconds since the last time this was called (or since
+        construction), and reset the clock for the next call."""
+        now = time.perf_counter()
+        elapsed = (now - self._last_perf) * 1000.0
+        self._last_perf = now
+        return elapsed
+
     # -- TurnStreamLike: called from the worker thread, mid-run -------------
+
+    def context(self, state: AgentState) -> None:
+        """Called once, before the engine runs (or resumes) -- what the
+        orchestrator attached to the state before handing it to the engine:
+        the session's recent turns, recalled memory, and the declared reply
+        contract. See :class:`~agentic_erp_assistant.web.protocol.
+        ContextEvent` for why this exists beside the ``history_recalled``/
+        ``memory_recalled``/``contract_declared`` rows that still stream as
+        usual, folded into the first node's own batch.
+
+        Also seeds :attr:`_last`, the baseline every later :meth:`step`
+        computes its delta fields against -- on a resumed turn this is the
+        paused state itself, so a resumed stream's first ``step`` correctly
+        reports only what changed *since the pause*, not since the turn
+        began.
+        """
+        contract = None
+        if state.contract is not None:
+            contract = ContractOut(
+                needs=tuple(sorted(state.contract.needs)),
+                document_query=state.contract.document_query,
+            )
+        self._put(
+            ContextEvent(
+                request=state.request,
+                history=tuple(_history_out(turn) for turn in state.history),
+                memories=tuple(_memory_out(memory) for memory in state.memories),
+                contract=contract,
+            )
+        )
+        self._last = state
+        self._elapsed_ms()  # reset the clock; node 1's own time starts now
 
     def step(self, state: AgentState) -> None:
         """The engine's own observer hook -- called after every node.
@@ -61,9 +181,11 @@ class TurnStream:
         Streams every new entry of ``state.events`` since the last call (as
         :class:`~agentic_erp_assistant.web.protocol.TraceRow`, ``source``
         ``"engine"``), then a :class:`~agentic_erp_assistant.web.protocol.
-        StepEvent` summarizing where the turn now stands.
+        StepEvent` summarizing where the turn now stands and what this one
+        step changed, against :attr:`_last`.
         """
         new_events = state.events[self._emitted :]
+        node: str | None = None
         for offset, event in enumerate(new_events):
             self._put(
                 TraceRow(
@@ -72,9 +194,25 @@ class TurnStream:
                     kind=event.kind,
                     detail=event.detail,
                     source="engine",
+                    step=None,
                 )
             )
+            if event.kind == "node_entered":
+                node = event.node
         self._emitted += len(new_events)
+
+        last = self._last
+        evidence = None
+        if last is None or state.evidence != last.evidence:
+            evidence = tuple(_evidence_out(snippet) for snippet in state.evidence)
+        new_observation_count = len(state.observations) - (
+            len(last.observations) if last is not None else 0
+        )
+        observations = (
+            tuple(_observation_out(outcome) for outcome in state.observations[-new_observation_count:])
+            if new_observation_count > 0
+            else ()
+        )
 
         self._put(
             StepEvent(
@@ -85,12 +223,31 @@ class TurnStream:
                 approval=state.approval,
                 step_count=state.step_count,
                 terminal=state.terminal,
+                node=node,
+                elapsed_ms=self._elapsed_ms(),
+                evidence=evidence,
+                observations=observations,
+                response=state.response,
+                failure=state.failure,
+                error_detail=state.error_detail,
+                draft=state.draft,
+                redirected_needs=tuple(sorted(state.redirected_needs)),
+                retry_count=state.retry_count,
             )
         )
+        self._last = state
 
     def trace_event(self, event: TraceEvent) -> None:
         """A gateway-internal event (a retry, an approval record) -- never
-        stored on ``AgentState.events``, so it carries no ``seq``."""
+        stored on ``AgentState.events``, so it carries no ``seq``.
+
+        Stamped with the node execution under way when it fired --
+        ``self._last``'s ``step_count`` plus one, since a live gateway row
+        is always produced *during* the node about to close on the next
+        ``step_count`` (see ``engine/nodes.py``'s call sites and
+        :class:`~agentic_erp_assistant.web.protocol.TraceRow`'s own
+        docstring for why).
+        """
         self._put(
             TraceRow(
                 seq=None,
@@ -98,6 +255,7 @@ class TurnStream:
                 kind=event.kind,
                 detail=event.detail,
                 source="tool_gateway",
+                step=(self._last.step_count if self._last is not None else 0) + 1,
             )
         )
 
@@ -143,6 +301,7 @@ class TurnStream:
                     kind=event.kind,
                     detail=event.detail,
                     source="engine",
+                    step=None,
                 )
             )
         self._emitted += len(new_events)

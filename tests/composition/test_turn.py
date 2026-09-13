@@ -52,10 +52,14 @@ class FakeRetrievalService:
 
 class RecordingStream:
     def __init__(self) -> None:
+        self.contexts = []
         self.steps = []
         self.trace_events = []
         self.deltas = []
         self.resets = 0
+
+    def context(self, state) -> None:
+        self.contexts.append(state)
 
     def step(self, state) -> None:
         self.steps.append(state)
@@ -119,6 +123,37 @@ def test_the_answering_gateway_carries_the_stream_sink() -> None:
     )
 
     assert turn.orchestrator.runtime.composer.stream is stream
+
+
+def test_the_orchestrators_on_start_is_the_streams_context_method() -> None:
+    resources = a_resources()
+    stream = RecordingStream()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=stream,
+    )
+
+    assert turn.orchestrator.on_start == stream.context
+
+
+def test_without_a_stream_on_start_is_none() -> None:
+    resources = a_resources()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=None,
+    )
+
+    assert turn.orchestrator.on_start is None
 
 
 def test_the_memory_gateway_carries_no_sink() -> None:

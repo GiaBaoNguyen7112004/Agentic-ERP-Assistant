@@ -11,7 +11,30 @@ literals against web/protocol.py's own EVENT_TYPES, so a mismatch fails
 import re
 from pathlib import Path
 
-from agentic_erp_assistant.web.protocol import EVENT_TYPES
+import pytest
+
+from agentic_erp_assistant.web.protocol import (
+    AnswerEvent,
+    ApprovalRequiredEvent,
+    CitationOut,
+    ContextEvent,
+    ContractOut,
+    ErrorEvent,
+    EVENT_TYPES,
+    EvidenceOut,
+    HistoryTurnOut,
+    MemoryAuditOut,
+    MemoryOut,
+    ModelCallOut,
+    ModelCallTotalsOut,
+    ObservationOut,
+    StepEvent,
+    TextOut,
+    ToolOutcomeOut,
+    TraceRow,
+    TurnFinishedEvent,
+    TurnStartedEvent,
+)
 
 PROTOCOL_TS = Path(__file__).resolve().parents[2] / "ui" / "src" / "protocol.ts"
 
@@ -55,3 +78,59 @@ def test_event_types_export_matches_the_ts_array_too() -> None:
     assert match, "protocol.ts must export EVENT_TYPES as a const array"
     declared = set(re.findall(r"'([a-z_]+)'", match.group(1)))
     assert declared == set(EVENT_TYPES)
+
+
+# --------------------------------------------------------------------------
+# Field-level drift: a widened model must widen its TS mirror too, not just
+# the event types the two checks above already cover.
+# --------------------------------------------------------------------------
+
+
+def _ts_interface_fields(source: str, name: str) -> set[str]:
+    """Every field name declared in ``export interface {name} { ... }``.
+
+    A regex over one field-per-line block, the same kind of narrow,
+    consistently-formatted match the event-type checks above make -- this
+    is a drift guard, not a TypeScript parser.
+    """
+    match = re.search(rf"export interface {re.escape(name)} \{{(.*?)\n\}}", source, re.DOTALL)
+    assert match, f"protocol.ts has no `export interface {name}` block"
+    return set(re.findall(r"^\s*([a-zA-Z_]+)\??:", match.group(1), re.MULTILINE))
+
+
+# TS interface name -> the pydantic model it mirrors. Named identically on
+# both sides except where the TS side dropped the "Out" suffix already (a
+# pre-existing choice this test does not relitigate).
+_MIRRORED_MODELS = {
+    "TurnStartedEvent": TurnStartedEvent,
+    "ContextEvent": ContextEvent,
+    "TraceRow": TraceRow,
+    "StepEvent": StepEvent,
+    "ApprovalRequiredEvent": ApprovalRequiredEvent,
+    "AnswerEvent": AnswerEvent,
+    "TurnFinishedEvent": TurnFinishedEvent,
+    "ErrorEvent": ErrorEvent,
+    "Citation": CitationOut,
+    "Observation": ObservationOut,
+    "ModelCallTotals": ModelCallTotalsOut,
+    "TextOut": TextOut,
+    "HistoryTurnOut": HistoryTurnOut,
+    "MemoryOut": MemoryOut,
+    "ContractOut": ContractOut,
+    "EvidenceOut": EvidenceOut,
+    "ToolOutcomeOut": ToolOutcomeOut,
+    "MemoryAuditOut": MemoryAuditOut,
+    "ModelCallOut": ModelCallOut,
+}
+
+
+@pytest.mark.parametrize("ts_name,model", sorted(_MIRRORED_MODELS.items()))
+def test_ts_interface_fields_match_the_pydantic_model(ts_name, model) -> None:
+    source = PROTOCOL_TS.read_text(encoding="utf-8")
+    ts_fields = _ts_interface_fields(source, ts_name)
+    py_fields = set(model.model_fields)
+    assert ts_fields == py_fields, (
+        f"{ts_name} (TS) vs {model.__name__} (Python) disagree: "
+        f"TS-only={sorted(ts_fields - py_fields)}, "
+        f"Python-only={sorted(py_fields - ts_fields)}"
+    )

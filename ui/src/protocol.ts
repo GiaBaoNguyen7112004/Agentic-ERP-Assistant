@@ -19,12 +19,93 @@ export interface Observation {
   attempts: number
 }
 
+export interface TextOut {
+  text: string
+  truncated: boolean
+  chars: number
+}
+
+export interface HistoryTurnOut {
+  trace_id: string
+  request: string
+  response: string | null
+  route: string | null
+  failure: string
+  tool_name: string | null
+  approval: string
+  started_at: string
+  finished_at: string
+}
+
+export interface MemoryOut {
+  memory_id: string
+  kind: string
+  key: string
+  statement: string
+  confidence: number
+  recorded_in_run: string
+  recorded_at: string
+  supersedes: string[]
+  links: string[]
+  required_scope: string
+  actor: string
+  project_code: string
+  session_id: string
+}
+
+export interface ContractOut {
+  needs: string[]
+  document_query: string | null
+}
+
+export interface EvidenceOut {
+  source_id: string
+  locator: string
+  tag: string
+  text: TextOut
+}
+
+export interface ToolOutcomeOut {
+  tool_name: string
+  arguments_summary: string
+  status: string
+  summary: TextOut
+  source_ids: string[]
+  error: string | null
+  attempts: number
+  retry_after_seconds: number | null
+}
+
+export interface MemoryAuditOut {
+  occurred_at: string
+  memory_id: string
+  kind: string
+  decision: string
+  rejection: string | null
+  reason: string
+  statement_summary: string
+}
+
+export interface ModelCallOut {
+  model: string
+  outcome: string
+  estimated_input_tokens: number
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number | null
+  latency_seconds: number
+  attempts: number
+  occurred_at: string
+  detail: string | null
+}
+
 export interface ModelCallTotals {
   count: number
   input_tokens: number
   output_tokens: number
   cost_usd: number | null
   unpriced: number
+  records: ModelCallOut[]
 }
 
 export interface TurnStartedEvent {
@@ -35,6 +116,14 @@ export interface TurnStartedEvent {
   resumed: boolean
 }
 
+export interface ContextEvent {
+  type: 'context'
+  request: string
+  history: HistoryTurnOut[]
+  memories: MemoryOut[]
+  contract: ContractOut | null
+}
+
 export interface TraceRow {
   type: 'trace'
   seq: number | null
@@ -42,6 +131,7 @@ export interface TraceRow {
   kind: string
   detail: string
   source: 'engine' | 'tool_gateway'
+  step: number | null
 }
 
 export interface StepEvent {
@@ -53,6 +143,16 @@ export interface StepEvent {
   approval: string
   step_count: number
   terminal: boolean
+  node: string | null
+  elapsed_ms: number
+  evidence: EvidenceOut[] | null
+  observations: ToolOutcomeOut[]
+  response: string | null
+  failure: string
+  error_detail: string | null
+  draft: string | null
+  redirected_needs: string[]
+  retry_count: number
 }
 
 export interface TokenEvent {
@@ -93,6 +193,9 @@ export interface TurnFinishedEvent {
   history_shown: number
   observations: Observation[]
   model_calls: ModelCallTotals
+  memory_audit: MemoryAuditOut[]
+  started_at: string
+  finished_at: string
 }
 
 export interface ErrorEvent {
@@ -102,6 +205,7 @@ export interface ErrorEvent {
 
 export type ServerEvent =
   | TurnStartedEvent
+  | ContextEvent
   | TraceRow
   | StepEvent
   | TokenEvent
@@ -113,6 +217,7 @@ export type ServerEvent =
 
 export const EVENT_TYPES: readonly ServerEvent['type'][] = [
   'turn_started',
+  'context',
   'trace',
   'step',
   'token',
