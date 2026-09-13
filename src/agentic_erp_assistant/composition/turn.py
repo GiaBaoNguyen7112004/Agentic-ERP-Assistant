@@ -10,6 +10,8 @@ process-wide clients and indexes. This is cheap: every object built below is a
 frozen dataclass holding references, not a connection or an index rebuild.
 """
 
+import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -19,9 +21,12 @@ from agentic_erp_assistant.composition.resources import AppResources
 from agentic_erp_assistant.composition.users import User
 from agentic_erp_assistant.context.history_injection import HISTORY_TURN_LIMIT
 from agentic_erp_assistant.engine.orchestrator import RunOrchestrator
+from agentic_erp_assistant.engine.ports import DocumentRetrieverPort
 from agentic_erp_assistant.engine.workflow import MAX_STEPS, WorkflowRuntime
 from agentic_erp_assistant.llm.gateway import LLMGateway
+from agentic_erp_assistant.llm.inspection import ModelRequestSnapshot, ModelResponseSnapshot
 from agentic_erp_assistant.llm.streaming import AnswerStreamSink
+from agentic_erp_assistant.llm.telemetry import ModelCallRecord
 from agentic_erp_assistant.llm.tools import (
     GET_PROJECT_STATUS_FLAKY_TOOL,
     GET_PROJECT_STATUS_TOOL,
@@ -45,13 +50,24 @@ from agentic_erp_assistant.persistence.postgres_pause import PostgresPauseStore
 from agentic_erp_assistant.persistence.postgres_queries import EvidenceQueries
 from agentic_erp_assistant.persistence.postgres_trace import PostgresTraceStore
 from agentic_erp_assistant.rag.access import RetrievalContext
+from agentic_erp_assistant.rag.retriever import HybridRetriever, RetrievalOutcome
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.tools.gateway import ToolGateway
 from agentic_erp_assistant.trace import RunTelemetry
 
-__all__ = ["build_turn", "initial_state", "offered_tools", "TurnPorts", "TurnStreamLike"]
+__all__ = [
+    "build_turn",
+    "initial_state",
+    "InspectedRetriever",
+    "offered_tools",
+    "TurnPorts",
+    "TurnStreamLike",
+]
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -82,6 +98,26 @@ class TurnStreamLike(Protocol):
         :attr:`~agentic_erp_assistant.tools.gateway.ToolGateway.on_event`."""
         ...
 
+    def model_call(
+        self,
+        record: ModelCallRecord,
+        request: ModelRequestSnapshot | None,
+        response: ModelResponseSnapshot | None,
+    ) -> None:
+        """Called after every model call this turn's answering gateway
+        makes. Satisfies :class:`~agentic_erp_assistant.llm.inspection.
+        ModelCallInspector`; see :attr:`~agentic_erp_assistant.llm.gateway.
+        LLMGateway.inspector`."""
+        ...
+
+    def retrieval(
+        self, query: str, limit: int, outcome: RetrievalOutcome, minimum_similarity: float
+    ) -> None:
+        """Called after every search this turn's retriever makes, with the
+        same diagnostics the retriever computed for itself. See
+        :class:`InspectedRetriever`."""
+        ...
+
     def delta(self, text: str) -> None:
         """More reply text has arrived. See
         :class:`~agentic_erp_assistant.llm.streaming.AnswerStreamSink`."""
@@ -101,6 +137,37 @@ class TurnPorts:
     orchestrator: RunOrchestrator
     connection: psycopg.Connection
     queries: EvidenceQueries
+
+
+@dataclass(frozen=True)
+class InspectedRetriever:
+    """A :class:`~agentic_erp_assistant.rag.retriever.HybridRetriever`,
+    reporting its own search diagnostics to whoever is watching this turn
+    live, without widening :class:`~agentic_erp_assistant.engine.ports.
+    DocumentRetrieverPort` or asking a single test standing in for it to
+    know this class exists.
+
+    Satisfies the port structurally (one method, ``search``, the same
+    signature) by delegating to :meth:`~agentic_erp_assistant.rag.
+    retriever.HybridRetriever.search_detailed` -- the same computation
+    :meth:`~agentic_erp_assistant.rag.retriever.HybridRetriever.search`
+    itself makes, one layer earlier, so wrapping a retriever never runs a
+    search twice or changes what a node sees back.
+    """
+
+    inner: HybridRetriever
+    stream: TurnStreamLike
+
+    def search(self, query: str, *, limit: int) -> Sequence[EvidenceSnippet]:
+        outcome = self.inner.search_detailed(query, limit=limit)
+        try:
+            self.stream.retrieval(query, limit, outcome, self.inner.minimum_similarity)
+        except Exception:  # noqa: BLE001 - a screen going away must not end a turn
+            logger.warning(
+                "retrieval diagnostics observer raised; the turn continues",
+                exc_info=True,
+            )
+        return tuple(hit.chunk.as_snippet() for hit in outcome.hits)
 
 
 def offered_tools(resources: AppResources) -> tuple[ToolSpec, ...]:
@@ -145,11 +212,13 @@ def build_turn(
             AppResources.connect`.
         stream: Where to observe this turn live, or ``None`` for a turn
             nobody is watching (a script, a replay). When given, it is
-            wired to four places at once: the engine's node-by-node
-            observer, the tool gateway's internal event hook, and the
-            streaming sink on the *answering* gateway only -- never on the
-            memory gateway, so a memory proposal can never stream into the
-            chat (D5 in the code plan).
+            wired to six places at once: the orchestrator's ``on_start``
+            hook, the engine's node-by-node observer, the tool gateway's
+            internal event hook, the retriever (via :class:`InspectedRetriever`),
+            and both the streaming sink and the model-call inspector on the
+            *answering* gateway only -- never on the memory gateway, so a
+            memory proposal can never stream into the chat (D5 in the code
+            plan) and its calls' live I/O is out of this phase's scope.
     """
     settings = resources.settings
     traces = PostgresTraceStore(connection)
@@ -162,9 +231,13 @@ def build_turn(
         output_reserve=settings.output_reserve,
         telemetry=telemetry,
         stream=answer_sink,
+        inspector=stream if stream is not None else None,
+        inspect_io=settings.dev_trace_model_io,
     )
-    # A second gateway, same client and budget, no sink: memory work must
-    # never stream into the chat.
+    # A second gateway, same client and budget, no sink and no inspector:
+    # memory work must never stream into the chat, and its calls' I/O is a
+    # narrower scope than this phase covers -- see
+    # docs/trace-inspector-plan.md's own note on the simplification.
     memory_model = LLMGateway(
         resources.chat_client,
         context_window=settings.context_window,
@@ -174,11 +247,13 @@ def build_turn(
 
     planner = Planner(answering, tools=offered_tools(resources))
 
-    retriever = resources.retrieval.for_context(
+    retriever: DocumentRetrieverPort = resources.retrieval.for_context(
         RetrievalContext.for_actor(
             user.actor, project_code=user.project_code, scopes=user.scopes
         )
     )
+    if stream is not None:
+        retriever = InspectedRetriever(inner=retriever, stream=stream)
 
     gateway = ToolGateway(
         registry=resources.registry,

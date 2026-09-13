@@ -41,11 +41,16 @@ __all__ = [
     "HistoryTurnOut",
     "MemoryAuditOut",
     "MemoryOut",
+    "MessageOut",
     "ModelCallOut",
     "ModelCallTotalsOut",
+    "ModelRequestOut",
+    "ModelResponseOut",
     "ObservationOut",
     "parse_citations",
     "ResetEvent",
+    "RetrievalHitOut",
+    "RetrievalOut",
     "ServerEvent",
     "StepEvent",
     "TEXT_MAX_CHARS",
@@ -185,14 +190,84 @@ class MemoryAuditOut(_Event):
     statement_summary: str
 
 
+class MessageOut(_Event):
+    """One role block of a model request -- the port's own
+    :class:`~agentic_erp_assistant.llm.ports.Role`, before an adapter folds
+    it onto the wire's narrower vocabulary."""
+
+    role: str
+    content: TextOut
+
+
+class ModelRequestOut(_Event):
+    """What one model call sent -- live-only, and present only when
+    ``DEV_TRACE_MODEL_IO`` is on; see :class:`ModelCallOut`."""
+
+    kind: Literal["answer", "tools"]
+    """``"answer"`` for a structured-output call (no tools offered);
+    ``"tools"`` for a function-calling call (routing, a declaration, a
+    memory proposal)."""
+
+    messages: tuple[MessageOut, ...]
+    tools: tuple[str, ...]
+    """The offered tools' names, empty for ``kind="answer"``."""
+
+    tool_choice: str | None
+    """The wire's own ``tool_choice`` value, or ``None`` for ``kind="answer"``,
+    which has none."""
+
+    temperature: float
+
+
+class ModelResponseOut(_Event):
+    """What one model call received back -- content, or a tool call, never
+    both. Live-only, present only when ``DEV_TRACE_MODEL_IO`` is on."""
+
+    content: TextOut | None
+    tool_name: str | None
+    arguments: dict[str, object] | None
+    stop_reason: str | None
+
+
+class RetrievalHitOut(_Event):
+    """One chunk a search returned, with the ranks and scores that put it
+    there -- :class:`~agentic_erp_assistant.rag.fusion.FusedHit`, live-only:
+    the port ``engine/`` depends on deliberately returns none of this (see
+    that port's own docstring)."""
+
+    chunk_id: str
+    document_id: str
+    locator: str
+    title: str
+    score: float
+    """The fused (reciprocal-rank) score. Comparable within this search
+    only -- see :attr:`~agentic_erp_assistant.rag.fusion.FusedHit.score`."""
+    ranks: dict[str, int]
+    scores: dict[str, float]
+
+
+class RetrievalOut(_Event):
+    """One search's diagnostics -- :class:`~agentic_erp_assistant.rag.
+    retriever.RetrievalOutcome`, live-only, from a composition-level
+    wrapper around the retriever the port itself carries none of."""
+
+    query: str
+    limit: int
+    hits: tuple[RetrievalHitOut, ...]
+    best_similarity: float | None
+    """The highest cosine the dense half saw before the floor was applied,
+    or ``None`` only when it returned nothing at all."""
+    minimum_similarity: float
+    dense_candidates: int
+    lexical_candidates: int
+    gated: bool
+    """Whether the similarity floor is what made this search come back
+    empty."""
+
+
 class ModelCallOut(_Event):
     """One model call's cost, latency and outcome --
     :class:`~agentic_erp_assistant.llm.telemetry.ModelCallRecord`, as filed.
-
-    Carries no prompt or reply text: that is
-    ``docs/trace-inspector-plan.md``'s ``DEV_TRACE_MODEL_IO`` toggle's job,
-    layered on top of this same record in a later phase, live-only and never
-    persisted alongside it.
     """
 
     model: str
@@ -205,6 +280,14 @@ class ModelCallOut(_Event):
     attempts: int
     occurred_at: datetime
     detail: str | None
+    request: ModelRequestOut | None = None
+    """The prompt this call sent -- ``None`` unless ``DEV_TRACE_MODEL_IO``
+    was on for this turn, live-only, and never what
+    :meth:`~agentic_erp_assistant.persistence.postgres_queries.
+    EvidenceQueries.model_calls` returns (nothing this rich is ever filed;
+    see the toggle's own doc in ``composition/settings.py``)."""
+    response: ModelResponseOut | None = None
+    """The reply this call received -- the same rule as :attr:`request`."""
 
 
 class TurnStartedEvent(_Event):
@@ -238,6 +321,12 @@ class ContextEvent(_Event):
     contract: ContractOut | None
     """``None`` means this turn was never checked (ADR 0021) -- a replay, a
     hand-built state, or a declarer that raised outright."""
+    model_calls: tuple[ModelCallOut, ...]
+    """Model calls made before the first node ran -- the reply contract's
+    own declaration call. Ordering, not the engine's: the declaration
+    happens before this event is even built (see ``engine/orchestrator.py``
+    -- recall, then declare, then the engine), so a call made here would
+    otherwise have nowhere on the wire to be attributed to at all."""
 
 
 class TraceRow(_Event):
@@ -310,6 +399,12 @@ class StepEvent(_Event):
     draft: str | None
     redirected_needs: tuple[ReplyNeed, ...]
     retry_count: int
+    retrieval: RetrievalOut | None
+    """This step's own search diagnostics, from the composition-level
+    retriever wrapper -- ``None`` on every step but the one that searched."""
+    model_calls: tuple[ModelCallOut, ...]
+    """Model calls made during this node's own execution -- a planner
+    decision, a composer call. Empty on a step that made none."""
 
 
 class TokenEvent(_Event):

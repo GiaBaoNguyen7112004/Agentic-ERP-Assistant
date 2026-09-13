@@ -109,6 +109,7 @@ def test_every_dev_toggle_defaults_to_off(monkeypatch: pytest.MonkeyPatch) -> No
     assert settings.dev_flaky_status is False
     assert settings.dev_max_steps is None
     assert settings.dev_history_turn_limit is None
+    assert settings.dev_trace_model_io is False
     assert settings.memory_proposer is True
 
 
@@ -195,6 +196,19 @@ def test_dev_max_steps_and_history_turn_limit_parse_as_integers(
     assert settings.dev_history_turn_limit == 2
 
 
+def test_dev_trace_model_io_only_the_literal_1_turns_it_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    set_required(monkeypatch)
+    monkeypatch.setenv("DEV_TRACE_MODEL_IO", "true")
+
+    assert Settings.from_env().dev_trace_model_io is False
+
+    monkeypatch.setenv("DEV_TRACE_MODEL_IO", "1")
+
+    assert Settings.from_env().dev_trace_model_io is True
+
+
 def test_users_path_override_is_honoured(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -230,6 +244,7 @@ def test_log_dev_toggles_warns_once_per_active_toggle(
     monkeypatch.setenv("DEV_FLAKY_STATUS", "1")
     monkeypatch.setenv("DEV_MAX_STEPS", "2")
     monkeypatch.setenv("DEV_HISTORY_TURN_LIMIT", "2")
+    monkeypatch.setenv("DEV_TRACE_MODEL_IO", "1")
     monkeypatch.setenv("MEMORY_PROPOSER", "off")
     settings = Settings.from_env()
 
@@ -241,5 +256,6 @@ def test_log_dev_toggles_warns_once_per_active_toggle(
     assert "DEV_FLAKY_STATUS" in messages
     assert "DEV_MAX_STEPS" in messages
     assert "DEV_HISTORY_TURN_LIMIT" in messages
+    assert "DEV_TRACE_MODEL_IO" in messages
     assert "MEMORY_PROPOSER" in messages
-    assert len(caplog.records) == 5
+    assert len(caplog.records) == 6

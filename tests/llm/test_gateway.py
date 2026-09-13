@@ -1022,3 +1022,136 @@ def test_a_gateway_without_a_sink_never_passes_on_delta() -> None:
     answer = gateway.answer(QUESTION, EVIDENCE)
 
     assert answer.grounded is True
+
+
+# --------------------------------------------------------------------------
+# The live inspector: off by default, and never the persisted record's job
+# --------------------------------------------------------------------------
+
+
+class FakeToolClient:
+    """A bare ToolCallingClient, for call_tools()/decide() without HTTP."""
+
+    model_name = "fake-tool-model"
+
+    def __init__(self, result: ToolCallResult) -> None:
+        self._result = result
+        self.calls = 0
+
+    def call_with_tools(self, messages, *, tools, temperature, on_delta=None, tool_choice="auto"):
+        self.calls += 1
+        return self._result
+
+
+class RecordingInspector:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def model_call(self, record, request, response) -> None:
+        self.calls.append((record, request, response))
+
+
+def test_no_inspector_is_a_complete_configuration() -> None:
+    """The default: nothing watching, nothing built, nothing to break."""
+    client = FakePortClient()
+    gateway = LLMGateway(client, context_window=128_000)  # inspector=None, inspect_io=False
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+
+    assert answer.grounded is True
+
+
+def test_an_inspector_learns_of_every_answer_call_even_with_io_off() -> None:
+    client = FakePortClient()
+    inspector = RecordingInspector()
+    gateway = LLMGateway(client, context_window=128_000, inspector=inspector)
+
+    gateway.answer(QUESTION, EVIDENCE)
+
+    assert len(inspector.calls) == 1
+    record, request, response = inspector.calls[0]
+    assert record.outcome == "answered"
+    # inspect_io defaults to False: the inspector hears about every call, but
+    # never sees the prompt or reply unless it was explicitly turned on.
+    assert request is None
+    assert response is None
+
+
+def test_an_inspector_sees_the_prompt_and_reply_when_io_is_on() -> None:
+    client = FakePortClient()
+    inspector = RecordingInspector()
+    gateway = LLMGateway(client, context_window=128_000, inspector=inspector, inspect_io=True)
+
+    gateway.answer(QUESTION, EVIDENCE)
+
+    (_, request, response) = inspector.calls[0]
+    assert request is not None
+    assert request.kind == "answer"
+    assert any(role == "user" and content == QUESTION for role, content in request.messages)
+    assert response is not None
+    assert response.content is not None
+    assert response.stop_reason == "stop"
+
+
+def test_an_inspector_sees_the_tools_offered_and_the_call_chosen() -> None:
+    client = FakeToolClient(
+        ToolCallResult.from_tool_call(tool_name="list_risks", arguments={"project_id": "atlas"})
+    )
+    inspector = RecordingInspector()
+    gateway = LLMGateway(client, context_window=128_000, inspector=inspector, inspect_io=True)
+
+    gateway.call_tools(
+        [{"role": "user", "content": "What could go wrong?"}],
+        tools=[LIST_RISKS_TOOL],
+        tool_choice="required",
+    )
+
+    (_, request, response) = inspector.calls[0]
+    assert request.kind == "tools"
+    assert request.tools == ("list_risks",)
+    assert request.tool_choice == "required"
+    assert response.tool_name == "list_risks"
+    assert response.arguments == {"project_id": "atlas"}
+    assert response.content is None
+
+
+def test_a_budget_refusal_still_reaches_the_inspector_with_its_request() -> None:
+    client = FakePortClient()
+    inspector = RecordingInspector()
+    gateway = LLMGateway(
+        client, context_window=64, inspector=inspector, inspect_io=True
+    )
+
+    with pytest.raises(ContextWindowExceeded):
+        gateway.answer(QUESTION, EVIDENCE)
+
+    (record, request, response) = inspector.calls[0]
+    assert record.outcome == "budget_exceeded"
+    assert request is not None
+    assert response is None
+
+
+def test_a_raising_inspector_does_not_fail_the_request() -> None:
+    class RaisingInspector:
+        def model_call(self, record, request, response) -> None:
+            raise RuntimeError("a screen went away")
+
+    client = FakePortClient()
+    gateway = LLMGateway(client, context_window=128_000, inspector=RaisingInspector())
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+
+    assert answer.grounded is True
+
+
+def test_telemetry_still_records_when_an_inspector_is_also_bound() -> None:
+    """The two sinks are independent -- one must not crowd out the other."""
+    telemetry = InMemoryTelemetry()
+    client = FakePortClient()
+    gateway = LLMGateway(
+        client, context_window=128_000, telemetry=telemetry, inspector=RecordingInspector()
+    )
+
+    gateway.answer(QUESTION, EVIDENCE)
+
+    assert [record.outcome for record in telemetry.records] == ["answered"]

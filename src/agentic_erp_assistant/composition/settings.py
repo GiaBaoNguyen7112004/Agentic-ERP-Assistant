@@ -154,6 +154,18 @@ class Settings:
     """``DEV_HISTORY_TURN_LIMIT``. ``None`` keeps
     :data:`~agentic_erp_assistant.context.history_injection.HISTORY_TURN_LIMIT`."""
 
+    dev_trace_model_io: bool = False
+    """``DEV_TRACE_MODEL_IO=1``: a turn's model calls carry their prompt and
+    reply text to the trace panel live, through
+    :class:`~agentic_erp_assistant.llm.inspection.ModelCallInspector`
+    (``LLMGateway.inspect_io``). A different shape of dev toggle from its
+    siblings above -- it does not loosen a budget a person could otherwise
+    exhaust, it turns on a capability that is expensive to leave on by
+    default (every evidence, history and memory block a turn's calls saw,
+    restated, on every turn) and never persisted regardless. Off by
+    default for that reason: the model calls a turn made, and what they
+    cost, are always inspectable; what they *said* is opt-in."""
+
     users_path: Path = DEFAULT_USERS_PATH
     """``USERS_PATH``. Where the dev chat's actor directory is read from."""
 
@@ -190,6 +202,7 @@ class Settings:
             dev_flaky_status=(os.environ.get("DEV_FLAKY_STATUS") or "").strip() == "1",
             dev_max_steps=_optional_int("DEV_MAX_STEPS"),
             dev_history_turn_limit=_optional_int("DEV_HISTORY_TURN_LIMIT"),
+            dev_trace_model_io=(os.environ.get("DEV_TRACE_MODEL_IO") or "").strip() == "1",
             users_path=Path(users_path_raw) if users_path_raw else DEFAULT_USERS_PATH,
         )
 
@@ -218,6 +231,11 @@ class Settings:
             log.warning(
                 "DEV_HISTORY_TURN_LIMIT active: short-term window holds %d turn(s)",
                 self.dev_history_turn_limit,
+            )
+        if self.dev_trace_model_io:
+            log.warning(
+                "DEV_TRACE_MODEL_IO active: model call prompts and replies "
+                "stream live to the trace panel"
             )
         if not self.memory_proposer:
             log.warning("MEMORY_PROPOSER=off: consolidation proposes nothing")

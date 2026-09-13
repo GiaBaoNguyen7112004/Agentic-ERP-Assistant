@@ -26,9 +26,17 @@ import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import ValidationError
 
+from agentic_erp_assistant.llm.inspection import (
+    ModelCallInspector,
+    ModelRequestSnapshot,
+    ModelResponseSnapshot,
+    snapshot_request,
+    snapshot_response,
+)
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
     Message,
@@ -190,6 +198,21 @@ class LLMGateway:
     telemetry: TelemetrySink = field(default_factory=InMemoryTelemetry)
     """Where the cost record goes. Swapped for the trace store when it exists."""
 
+    inspector: ModelCallInspector | None = None
+    """Where a call's live I/O goes, beside its cost record. ``None`` --
+    the default -- means nobody is watching this gateway's calls live, and
+    every call site in this class skips building a snapshot at all rather
+    than building one nobody reads. Bound the same way ``stream`` is
+    (``composition/turn.py``): per turn, to whatever is watching it."""
+
+    inspect_io: bool = False
+    """Whether a snapshot actually carries the request/reply text, when an
+    :attr:`inspector` is bound at all. ``False`` -- the default -- means
+    :attr:`inspector` still learns about every call (paired with ``None``,
+    ``None`` for its request and response), but the prompt and reply
+    themselves never leave this process. The one caller that sets this is
+    ``composition/turn.py``, reading ``DEV_TRACE_MODEL_IO``."""
+
     counter: TokenCounter = field(default_factory=TiktokenCounter)
     """How the pre-call estimate is made."""
 
@@ -285,7 +308,8 @@ class LLMGateway:
         estimated = self.counter.count_message_tokens(
             messages, model=self.client.model_name
         ) + _extra_tokens(self.client, structured=True)
-        self._check_budget(estimated)
+        request_snapshot = self._snapshot_request("answer", messages, temperature=temperature)
+        self._check_budget(estimated, request=request_snapshot)
 
         # 3. Call, with retry.
         attempts = 0
@@ -328,6 +352,7 @@ class LLMGateway:
                 latency=time.perf_counter() - started,
                 attempts=attempts,
                 detail=f"{type(error).__name__}: {error}",
+                request=request_snapshot,
             )
             raise
         latency = time.perf_counter() - started
@@ -344,6 +369,8 @@ class LLMGateway:
                 attempts=attempts,
                 model=response["model"],
                 detail=f"{error.error_count()} validation error(s)",
+                request=request_snapshot,
+                response=self._snapshot_response(content=response["text"]),
             )
             raise
 
@@ -354,6 +381,10 @@ class LLMGateway:
             latency=latency,
             attempts=attempts,
             model=response["model"],
+            request=request_snapshot,
+            response=self._snapshot_response(
+                content=response["text"], stop_reason=response["stop_reason"]
+            ),
         )
         return answer
 
@@ -525,7 +556,14 @@ class LLMGateway:
         estimated = self.counter.count_message_tokens(
             messages, model=client.model_name
         ) + _extra_tokens(client, tools=tools)
-        self._check_budget(estimated)
+        request_snapshot = self._snapshot_request(
+            "tools",
+            messages,
+            tools=[tool.name for tool in tools],
+            tool_choice=tool_choice,
+            temperature=temperature,
+        )
+        self._check_budget(estimated, request=request_snapshot)
 
         attempts = 0
 
@@ -562,6 +600,7 @@ class LLMGateway:
                 latency=time.perf_counter() - started,
                 attempts=attempts,
                 detail=f"{type(error).__name__}: {error}",
+                request=request_snapshot,
             )
             raise
         latency = time.perf_counter() - started
@@ -582,10 +621,18 @@ class LLMGateway:
                 else "answered without a tool"
             )
             + ("" if tool_choice == "auto" else f" (tool_choice={tool_choice})"),
+            request=request_snapshot,
+            response=self._snapshot_response(
+                tool_name=decision.tool_name,
+                arguments=decision.arguments,
+                content=decision.content,
+            ),
         )
         return decision
 
-    def _check_budget(self, estimated: int) -> None:
+    def _check_budget(
+        self, estimated: int, *, request: ModelRequestSnapshot | None = None
+    ) -> None:
         """Refuse a request that cannot fit, before it costs anything.
 
         The comparison is strictly greater than: a request that fills the window
@@ -609,9 +656,49 @@ class LLMGateway:
             latency=0.0,
             attempts=0,
             detail=detail,
+            request=request,
         )
         logger.warning("refusing request locally: %s", detail)
         raise ContextWindowExceeded(detail)
+
+    # -- the live inspector, off by default -----------------------------
+
+    def _snapshot_enabled(self) -> bool:
+        """Whether building a snapshot at all is worth the caller's while --
+        `inspector` bound and `inspect_io` on. Checked at every call site
+        before building one, so a gateway nobody is watching, or one only
+        counting calls without their text, never pays for a snapshot
+        nothing will read."""
+        return self.inspector is not None and self.inspect_io
+
+    def _snapshot_request(
+        self,
+        kind: Literal["answer", "tools"],
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[str] = (),
+        tool_choice: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelRequestSnapshot | None:
+        if not self._snapshot_enabled():
+            return None
+        return snapshot_request(
+            kind, messages, tools=tools, tool_choice=tool_choice, temperature=temperature
+        )
+
+    def _snapshot_response(
+        self,
+        *,
+        content: str | None = None,
+        tool_name: str | None = None,
+        arguments: Mapping[str, object] | None = None,
+        stop_reason: str | None = None,
+    ) -> ModelResponseSnapshot | None:
+        if not self._snapshot_enabled():
+            return None
+        return snapshot_response(
+            content=content, tool_name=tool_name, arguments=arguments, stop_reason=stop_reason
+        )
 
     def _reported_usage(self) -> Usage:
         """What the provider last said it billed, when no response survived.
@@ -645,8 +732,12 @@ class LLMGateway:
         attempts: int,
         model: str | None = None,
         detail: str | None = None,
+        request: ModelRequestSnapshot | None = None,
+        response: ModelResponseSnapshot | None = None,
     ) -> None:
-        """Price one call and hand it to the sink.
+        """Price one call, hand it to the cost sink, and -- if anyone is
+        watching this gateway live -- hand the same record to the inspector
+        alongside whatever request/response snapshot the call site built.
 
         Prices from the provider's reported counts, never from the estimate --
         the estimate is what decided whether to send, and the invoice is what
@@ -660,18 +751,26 @@ class LLMGateway:
             output_tokens=usage["output_tokens"],
         )
 
-        self.telemetry.record(
-            ModelCallRecord(
-                model=served_model,
-                outcome=outcome,
-                estimated_input_tokens=estimated,
-                input_tokens=usage["input_tokens"],
-                output_tokens=usage["output_tokens"],
-                cost_usd=cost,
-                latency_seconds=latency,
-                attempts=attempts,
-                occurred_at=now(),
-                detail="; ".join(part for part in (detail, price_detail) if part)
-                or None,
-            )
+        record = ModelCallRecord(
+            model=served_model,
+            outcome=outcome,
+            estimated_input_tokens=estimated,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cost_usd=cost,
+            latency_seconds=latency,
+            attempts=attempts,
+            occurred_at=now(),
+            detail="; ".join(part for part in (detail, price_detail) if part) or None,
         )
+        self.telemetry.record(record)
+
+        if self.inspector is not None:
+            try:
+                self.inspector.model_call(record, request, response)
+            except Exception:  # noqa: BLE001 - telemetry never fails a request
+                logger.warning(
+                    "model call inspector raised; dropping this call's live "
+                    "snapshot",
+                    exc_info=True,
+                )

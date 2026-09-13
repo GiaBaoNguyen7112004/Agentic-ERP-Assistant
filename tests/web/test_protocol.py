@@ -211,17 +211,21 @@ def test_clip_text_at_exactly_the_limit_is_not_truncated() -> None:
 
 
 def test_context_event_accepts_no_history_no_memory_and_an_unchecked_contract() -> None:
-    event = ContextEvent(request="hi", history=(), memories=(), contract=None)
+    event = ContextEvent(
+        request="hi", history=(), memories=(), contract=None, model_calls=()
+    )
 
     assert event.history == ()
     assert event.memories == ()
     assert event.contract is None
+    assert event.model_calls == ()
 
 
 def test_context_event_carries_a_declared_contract_with_no_needs() -> None:
     event = ContextEvent(
         request="hi", history=(), memories=(),
         contract=ContractOut(needs=(), document_query=None),
+        model_calls=(),
     )
 
     assert event.contract is not None

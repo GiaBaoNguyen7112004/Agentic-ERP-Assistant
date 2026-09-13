@@ -17,6 +17,9 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 
+from agentic_erp_assistant.llm.inspection import ModelRequestSnapshot, ModelResponseSnapshot
+from agentic_erp_assistant.llm.telemetry import ModelCallRecord
+from agentic_erp_assistant.rag.retriever import RetrievalOutcome
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
@@ -30,9 +33,16 @@ from agentic_erp_assistant.web.protocol import (
     EvidenceOut,
     HistoryTurnOut,
     MemoryOut,
+    MessageOut,
+    ModelCallOut,
+    ModelRequestOut,
+    ModelResponseOut,
     ResetEvent,
+    RetrievalHitOut,
+    RetrievalOut,
     ServerEvent,
     StepEvent,
+    TextOut,
     TokenEvent,
     ToolOutcomeOut,
     TraceRow,
@@ -95,6 +105,92 @@ def _observation_out(outcome: ToolOutcome) -> ToolOutcomeOut:
     )
 
 
+def _request_out(snapshot: ModelRequestSnapshot) -> ModelRequestOut:
+    """``llm/inspection.py`` already clipped each message's content to its
+    own (smaller) bound; this rebuilds ``TextOut`` from the clipped text and
+    the snapshot's separately-carried real length, rather than clipping a
+    second time against a different limit."""
+    return ModelRequestOut(
+        kind=snapshot.kind,
+        messages=tuple(
+            MessageOut(role=role, content=_text_out_from_clipped(content, chars))
+            for (role, content), chars in zip(
+                snapshot.messages, snapshot.message_chars, strict=True
+            )
+        ),
+        tools=snapshot.tools,
+        tool_choice=snapshot.tool_choice,
+        temperature=snapshot.temperature,
+    )
+
+
+def _response_out(snapshot: ModelResponseSnapshot) -> ModelResponseOut:
+    content = (
+        _text_out_from_clipped(snapshot.content, snapshot.content_chars or 0)
+        if snapshot.content is not None
+        else None
+    )
+    return ModelResponseOut(
+        content=content,
+        tool_name=snapshot.tool_name,
+        arguments=dict(snapshot.arguments) if snapshot.arguments is not None else None,
+        stop_reason=snapshot.stop_reason,
+    )
+
+
+def _text_out_from_clipped(clipped: str, real_chars: int) -> TextOut:
+    """Build a :class:`TextOut` from text a caller already clipped
+    elsewhere, and the real length it was clipped from -- never re-clips."""
+    return TextOut(text=clipped, truncated=real_chars > len(clipped), chars=real_chars)
+
+
+def _model_call_out(
+    record: ModelCallRecord,
+    request: ModelRequestSnapshot | None,
+    response: ModelResponseSnapshot | None,
+) -> ModelCallOut:
+    return ModelCallOut(
+        model=record.model,
+        outcome=record.outcome,
+        estimated_input_tokens=record.estimated_input_tokens,
+        input_tokens=record.input_tokens,
+        output_tokens=record.output_tokens,
+        cost_usd=record.cost_usd,
+        latency_seconds=record.latency_seconds,
+        attempts=record.attempts,
+        occurred_at=record.occurred_at,
+        detail=record.detail,
+        request=_request_out(request) if request is not None else None,
+        response=_response_out(response) if response is not None else None,
+    )
+
+
+def _retrieval_out(
+    query: str, limit: int, outcome: RetrievalOutcome, minimum_similarity: float
+) -> RetrievalOut:
+    return RetrievalOut(
+        query=query,
+        limit=limit,
+        hits=tuple(
+            RetrievalHitOut(
+                chunk_id=hit.chunk.chunk_id,
+                document_id=hit.chunk.document_id,
+                locator=hit.chunk.locator,
+                title=hit.chunk.title,
+                score=hit.score,
+                ranks=dict(hit.ranks),
+                scores=dict(hit.scores),
+            )
+            for hit in outcome.hits
+        ),
+        best_similarity=outcome.best_similarity,
+        minimum_similarity=minimum_similarity,
+        dense_candidates=outcome.dense_candidates,
+        lexical_candidates=outcome.lexical_candidates,
+        gated=outcome.gated,
+    )
+
+
 class TurnStream:
     """Implements :class:`~agentic_erp_assistant.composition.turn.
     TurnStreamLike` and adds the plumbing a request handler needs on top of
@@ -126,6 +222,18 @@ class TurnStream:
         by :meth:`context` and by every :meth:`step` call, so each step
         reports the wall clock since the *previous* one (or since the
         context was attached, for the first)."""
+        self._pending_model_calls: list[ModelCallOut] = []
+        """Calls recorded since the last :meth:`context`/:meth:`step` drained
+        this. A model call is recorded (``LLMGateway._record``) the instant
+        it finishes, which can be *before* the next node's own batch of
+        trace rows has flushed -- the declaration call, in particular,
+        finishes before :meth:`context` is even called at all (see
+        ``engine/orchestrator.py``: recall, then declare, then the engine).
+        Draining on whichever of the two fires next, rather than requiring
+        one specific order, is what lets both attribute correctly."""
+        self._pending_retrieval: RetrievalOut | None = None
+        """The one search this turn's current node made, if any, since the
+        last :meth:`step` drained this."""
 
     def _put(self, event: ServerEvent | None) -> None:
         """Hand one event (or the closing ``None``) to the loop, from
@@ -164,12 +272,15 @@ class TurnStream:
                 needs=tuple(sorted(state.contract.needs)),
                 document_query=state.contract.document_query,
             )
+        model_calls = tuple(self._pending_model_calls)
+        self._pending_model_calls = []
         self._put(
             ContextEvent(
                 request=state.request,
                 history=tuple(_history_out(turn) for turn in state.history),
                 memories=tuple(_memory_out(memory) for memory in state.memories),
                 contract=contract,
+                model_calls=model_calls,
             )
         )
         self._last = state
@@ -214,6 +325,11 @@ class TurnStream:
             else ()
         )
 
+        model_calls = tuple(self._pending_model_calls)
+        self._pending_model_calls = []
+        retrieval = self._pending_retrieval
+        self._pending_retrieval = None
+
         self._put(
             StepEvent(
                 route=state.route,
@@ -233,6 +349,8 @@ class TurnStream:
                 draft=state.draft,
                 redirected_needs=tuple(sorted(state.redirected_needs)),
                 retry_count=state.retry_count,
+                retrieval=retrieval,
+                model_calls=model_calls,
             )
         )
         self._last = state
@@ -258,6 +376,39 @@ class TurnStream:
                 step=(self._last.step_count if self._last is not None else 0) + 1,
             )
         )
+
+    def model_call(
+        self,
+        record: ModelCallRecord,
+        request: ModelRequestSnapshot | None,
+        response: ModelResponseSnapshot | None,
+    ) -> None:
+        """Satisfies :class:`~agentic_erp_assistant.llm.inspection.
+        ModelCallInspector` -- bound to ``LLMGateway.inspector``
+        (``composition/turn.py``) for the answering gateway, which is also
+        the planner's own model, so a routing decision, an answer, and the
+        reply contract's declaration call all arrive here.
+
+        Buffered rather than put on the queue directly: a call finishes
+        mid-node (or, for the declaration, before :meth:`context` has even
+        been called), and only :meth:`context`/:meth:`step` know which
+        event this call's snapshot belongs on.
+        """
+        self._pending_model_calls.append(_model_call_out(record, request, response))
+
+    def retrieval(
+        self, query: str, limit: int, outcome: RetrievalOutcome, minimum_similarity: float
+    ) -> None:
+        """Called by ``composition/turn.py``'s ``InspectedRetriever`` right
+        after a search, with the same :class:`~agentic_erp_assistant.rag.
+        retriever.RetrievalOutcome` the retriever computed for its own
+        return value -- nothing here re-runs the search.
+
+        Buffered like :meth:`model_call`, for the same reason: the search
+        happens inside ``retrieve_and_answer``, mid-node, and only the
+        `step()` that closes that node knows to attach it.
+        """
+        self._pending_retrieval = _retrieval_out(query, limit, outcome, minimum_similarity)
 
     def delta(self, text: str) -> None:
         """More reply text has arrived. See

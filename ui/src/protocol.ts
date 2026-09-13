@@ -86,6 +86,47 @@ export interface MemoryAuditOut {
   statement_summary: string
 }
 
+export interface MessageOut {
+  role: string
+  content: TextOut
+}
+
+export interface ModelRequestOut {
+  kind: 'answer' | 'tools'
+  messages: MessageOut[]
+  tools: string[]
+  tool_choice: string | null
+  temperature: number
+}
+
+export interface ModelResponseOut {
+  content: TextOut | null
+  tool_name: string | null
+  arguments: Record<string, unknown> | null
+  stop_reason: string | null
+}
+
+export interface RetrievalHitOut {
+  chunk_id: string
+  document_id: string
+  locator: string
+  title: string
+  score: number
+  ranks: Record<string, number>
+  scores: Record<string, number>
+}
+
+export interface RetrievalOut {
+  query: string
+  limit: number
+  hits: RetrievalHitOut[]
+  best_similarity: number | null
+  minimum_similarity: number
+  dense_candidates: number
+  lexical_candidates: number
+  gated: boolean
+}
+
 export interface ModelCallOut {
   model: string
   outcome: string
@@ -97,6 +138,8 @@ export interface ModelCallOut {
   attempts: number
   occurred_at: string
   detail: string | null
+  request: ModelRequestOut | null
+  response: ModelResponseOut | null
 }
 
 export interface ModelCallTotals {
@@ -122,6 +165,7 @@ export interface ContextEvent {
   history: HistoryTurnOut[]
   memories: MemoryOut[]
   contract: ContractOut | null
+  model_calls: ModelCallOut[]
 }
 
 export interface TraceRow {
@@ -153,6 +197,8 @@ export interface StepEvent {
   draft: string | null
   redirected_needs: string[]
   retry_count: number
+  retrieval: RetrievalOut | null
+  model_calls: ModelCallOut[]
 }
 
 export interface TokenEvent {

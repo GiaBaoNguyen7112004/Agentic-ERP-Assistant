@@ -11,7 +11,13 @@ broken, these tests would hang or lose events, not just fail an assertion.
 import asyncio
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 
+from agentic_erp_assistant.llm.inspection import snapshot_request, snapshot_response
+from agentic_erp_assistant.llm.telemetry import ModelCallRecord
+from agentic_erp_assistant.rag.chunking import Chunk
+from agentic_erp_assistant.rag.fusion import FusedHit
+from agentic_erp_assistant.rag.retriever import RetrievalOutcome
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
@@ -395,3 +401,162 @@ def test_events_stops_after_close_with_nothing_produced() -> None:
     events = run_and_collect(lambda s: None)
 
     assert events == []
+
+
+# --------------------------------------------------------------------------
+# model_call() / retrieval(): buffered until the next context()/step() drains
+# --------------------------------------------------------------------------
+
+
+def a_model_call_record(**overrides) -> ModelCallRecord:
+    fields: dict = {
+        "model": "gpt-4o",
+        "outcome": "routed",
+        "estimated_input_tokens": 100,
+        "input_tokens": 90,
+        "output_tokens": 10,
+        "cost_usd": 0.01,
+        "latency_seconds": 0.5,
+        "attempts": 1,
+        "occurred_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "detail": None,
+    }
+    fields.update(overrides)
+    return ModelCallRecord(**fields)
+
+
+def a_chunk(chunk_id: str = "doc-1#p.1") -> Chunk:
+    document_id, locator = chunk_id.split("#", 1)
+    return Chunk(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        locator=locator,
+        text="a passage",
+        title="Document",
+        document_type="status_report",
+        project_code="atlas",
+        required_scope="project.docs.read",
+        classification="internal",
+        content_hash="hash-1",
+        position=0,
+    )
+
+
+def a_retrieval_outcome(**overrides) -> RetrievalOutcome:
+    fields: dict = {
+        "hits": (FusedHit(chunk=a_chunk(), score=1.5, ranks={"vector": 1}, scores={"vector": 0.9}),),
+        "best_similarity": 0.9,
+        "dense_candidates": 1,
+        "lexical_candidates": 0,
+    }
+    fields.update(overrides)
+    return RetrievalOutcome(**fields)
+
+
+def test_model_call_is_buffered_and_drained_by_the_next_context_call() -> None:
+    record = a_model_call_record()
+
+    def produce(s: TurnStream) -> None:
+        s.model_call(record, None, None)
+        s.context(state())
+
+    (event,) = [e for e in run_and_collect(produce) if isinstance(e, ContextEvent)]
+
+    assert len(event.model_calls) == 1
+    assert event.model_calls[0].model == "gpt-4o"
+
+
+def test_model_call_is_buffered_and_drained_by_the_next_step_call() -> None:
+    record = a_model_call_record(outcome="answered")
+    only = state(events=(TraceEvent(node="think", kind="node_entered"),), step_count=1)
+
+    def produce(s: TurnStream) -> None:
+        s.model_call(record, None, None)
+        s.step(only)
+
+    step_event = next(e for e in run_and_collect(produce) if isinstance(e, StepEvent))
+
+    assert len(step_event.model_calls) == 1
+    assert step_event.model_calls[0].outcome == "answered"
+
+
+def test_model_call_carries_no_request_or_response_when_none_were_given() -> None:
+    def produce(s: TurnStream) -> None:
+        s.model_call(a_model_call_record(), None, None)
+        s.context(state())
+
+    (event,) = [e for e in run_and_collect(produce) if isinstance(e, ContextEvent)]
+
+    assert event.model_calls[0].request is None
+    assert event.model_calls[0].response is None
+
+
+def test_model_call_carries_the_request_and_response_snapshots_when_given() -> None:
+    request = snapshot_request("answer", [{"role": "user", "content": "hi"}])
+    response = snapshot_response(content="hello", stop_reason="stop")
+
+    def produce(s: TurnStream) -> None:
+        s.model_call(a_model_call_record(), request, response)
+        s.context(state())
+
+    (event,) = [e for e in run_and_collect(produce) if isinstance(e, ContextEvent)]
+
+    call = event.model_calls[0]
+    assert call.request is not None
+    assert call.request.messages[0].content.text == "hi"
+    assert call.response is not None
+    assert call.response.content.text == "hello"
+    assert call.response.stop_reason == "stop"
+
+
+def test_two_model_calls_before_a_step_both_reach_it() -> None:
+    only = state(events=(TraceEvent(node="think", kind="node_entered"),), step_count=1)
+
+    def produce(s: TurnStream) -> None:
+        s.model_call(a_model_call_record(detail="first"), None, None)
+        s.model_call(a_model_call_record(detail="second"), None, None)
+        s.step(only)
+
+    step_event = next(e for e in run_and_collect(produce) if isinstance(e, StepEvent))
+
+    assert [call.detail for call in step_event.model_calls] == ["first", "second"]
+
+
+def test_retrieval_is_buffered_and_drained_by_the_next_step_call() -> None:
+    outcome = a_retrieval_outcome()
+    only = state(events=(TraceEvent(node="retrieve_project_documents", kind="node_entered"),), step_count=1)
+
+    def produce(s: TurnStream) -> None:
+        s.retrieval("why is M2 late", 4, outcome, 0.3)
+        s.step(only)
+
+    step_event = next(e for e in run_and_collect(produce) if isinstance(e, StepEvent))
+
+    assert step_event.retrieval is not None
+    assert step_event.retrieval.query == "why is M2 late"
+    assert step_event.retrieval.minimum_similarity == 0.3
+    assert step_event.retrieval.hits[0].chunk_id == "doc-1#p.1"
+    assert step_event.retrieval.hits[0].ranks == {"vector": 1}
+
+
+def test_a_step_with_no_pending_retrieval_carries_none() -> None:
+    only = state(events=(TraceEvent(node="start", kind="node_entered"),), step_count=1)
+
+    step_event = next(e for e in run_and_collect(lambda s: s.step(only)) if isinstance(e, StepEvent))
+
+    assert step_event.retrieval is None
+
+
+def test_a_gated_retrieval_outcome_reaches_the_wire_honestly() -> None:
+    outcome = a_retrieval_outcome(hits=(), best_similarity=0.29, dense_candidates=0, lexical_candidates=0)
+    only = state(events=(TraceEvent(node="retrieve_project_documents", kind="node_entered"),), step_count=1)
+
+    def produce(s: TurnStream) -> None:
+        s.retrieval("weather in Hanoi", 4, outcome, 0.3)
+        s.step(only)
+
+    step_event = next(e for e in run_and_collect(produce) if isinstance(e, StepEvent))
+
+    assert step_event.retrieval.gated is True
+    assert step_event.retrieval.hits == ()
+    assert step_event.retrieval.best_similarity == 0.29

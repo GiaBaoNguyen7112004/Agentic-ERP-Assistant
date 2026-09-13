@@ -218,7 +218,11 @@ Not yet chosen; ask before assuming, and update this file once settled.
   the `DEV_*` toggles (`DEV_TOOL_RATE_LIMIT`, `DEV_FLAKY_STATUS`, `DEV_MAX_STEPS`,
   `DEV_HISTORY_TURN_LIMIT`) exist only so a browser session can reach paths a
   scripted test reaches with a fake clock instead — see `.env.example` and
-  `composition/settings.py`.
+  `composition/settings.py`. `DEV_TRACE_MODEL_IO` is a fifth, differently-shaped
+  toggle (`docs/trace-inspector-plan.md`): it streams a turn's model call
+  prompts and replies to the trace panel live, through
+  `llm/inspection.py::ModelCallInspector` — never persisted, off by default,
+  and unrelated to any budget a person could otherwise exhaust by hand.
 - ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
   `llm/adapters/openai_chat.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
   repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there

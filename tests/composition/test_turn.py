@@ -12,7 +12,12 @@ import pytest
 
 from agentic_erp_assistant.composition.resources import AppResources
 from agentic_erp_assistant.composition.settings import Settings
-from agentic_erp_assistant.composition.turn import build_turn, initial_state, offered_tools
+from agentic_erp_assistant.composition.turn import (
+    build_turn,
+    initial_state,
+    InspectedRetriever,
+    offered_tools,
+)
 from agentic_erp_assistant.composition.users import User
 from agentic_erp_assistant.llm.tools import (
     GET_PROJECT_STATUS_FLAKY_TOOL,
@@ -207,6 +212,91 @@ def test_the_retriever_context_comes_from_the_same_user_the_state_does() -> None
     assert seen[0].actor == user.actor == state.actor
     assert seen[0].project_code == user.project_code == state.project_code
     assert seen[0].scopes == user.scopes
+
+
+def test_the_retriever_is_wrapped_to_report_its_diagnostics_when_a_stream_is_present() -> None:
+    resources = a_resources()
+    stream = RecordingStream()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=stream,
+    )
+
+    retriever = turn.orchestrator.runtime.retriever
+    assert isinstance(retriever, InspectedRetriever)
+    assert retriever.stream is stream
+
+
+def test_the_retriever_is_unwrapped_without_a_stream() -> None:
+    resources = a_resources()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=None,
+    )
+
+    assert not isinstance(turn.orchestrator.runtime.retriever, InspectedRetriever)
+
+
+def test_the_answering_gateways_inspector_is_the_stream() -> None:
+    resources = a_resources()
+    stream = RecordingStream()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=stream,
+    )
+
+    assert turn.orchestrator.runtime.composer.inspector is stream
+
+
+def test_the_memory_gateways_inspector_is_none_even_with_a_stream() -> None:
+    """The narrower scope this phase settled for: a memory proposal's
+    calls never stream, and their live I/O is not captured either."""
+    resources = a_resources()
+    stream = RecordingStream()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=stream,
+    )
+
+    proposer = turn.orchestrator.memory.service.proposer
+    assert proposer is not None
+    assert proposer.model.inspector is None
+
+
+def test_dev_trace_model_io_reaches_the_answering_gateway() -> None:
+    resources = a_resources(settings=Settings(model="gpt-4o", context_window=128_000, dev_trace_model_io=True))
+    stream = RecordingStream()
+
+    turn = build_turn(
+        resources,
+        user=a_user(),
+        session_id="sess-1",
+        trace_id="run-1",
+        connection=object(),
+        stream=stream,
+    )
+
+    assert turn.orchestrator.runtime.composer.inspect_io is True
 
 
 def test_the_tool_gateway_gets_the_shared_limiter_and_the_per_turn_hook() -> None:
