@@ -16,12 +16,16 @@ from agentic_erp_assistant.composition.resources import AppResources
 from agentic_erp_assistant.composition.settings import Settings
 from agentic_erp_assistant.composition.users import User, UserDirectory
 from agentic_erp_assistant.persistence.connection import StoreConnectionError
+from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.web import app as app_module
 from agentic_erp_assistant.web.app import create_app
 from agentic_erp_assistant.web.protocol import (
     AnswerEvent,
+    AnswerOut,
     ErrorEvent,
     ModelCallTotalsOut,
+    RunOut,
+    RunReportOut,
     TokenEvent,
     TurnFinishedEvent,
     TurnStartedEvent,
@@ -84,6 +88,10 @@ class FakeService:
         self.precheck_result: PendingDecision | None = None
         self.resume_turn_script = None
         self.run_turn_calls: list[dict] = []
+        self.run_report: RunReportOut | None = None
+
+    def get_run_report(self, *, trace_id: str) -> RunReportOut | None:
+        return self.run_report
 
     def run_turn(self, *, actor: str, session_id, message: str, stream: TurnStream) -> None:
         self.run_turn_calls.append(
@@ -316,3 +324,64 @@ def test_a_valid_decision_streams_the_resumed_turn() -> None:
 
     assert response.status_code == 200
     assert read_sse_events(response) == ["turn_started"]
+
+
+# --------------------------------------------------------------------------
+# /api/runs/{trace_id} (Phase 4: the typed read model hydration hydrates)
+# --------------------------------------------------------------------------
+
+
+def a_run_report(trace_id: str = "run-1") -> RunReportOut:
+    return RunReportOut(
+        run=RunOut(
+            trace_id=trace_id,
+            actor="priya",
+            project_code="atlas",
+            outcome="terminal",
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            finished_at=datetime(2026, 1, 1, tzinfo=UTC),
+            state=AgentState(
+                request="What is the status of M2?",
+                actor="priya",
+                project_code="atlas",
+                trace_id=trace_id,
+                scopes=SCOPES,
+                route="answer",
+                response="M2 is on track.",
+                terminal=True,
+            ),
+        ),
+        events=(),
+        audit_rows=(),
+        model_calls=ModelCallTotalsOut(
+            count=0, input_tokens=0, output_tokens=0, cost_usd=0.0, unpriced=0, records=()
+        ),
+        memory_audit=(),
+        answer=AnswerOut(text="M2 is on track.", citations=()),
+    )
+
+
+def test_a_filed_run_is_returned_typed() -> None:
+    service = FakeService()
+    service.run_report = a_run_report()
+
+    with a_client(a_resources(), service) as client:
+        response = client.get("/api/runs/run-1")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run"]["trace_id"] == "run-1"
+    assert body["run"]["state"]["response"] == "M2 is on track."
+    assert body["answer"]["text"] == "M2 is on track."
+    assert body["model_calls"]["count"] == 0
+    assert body["memory_audit"] == []
+
+
+def test_an_unfiled_run_is_404() -> None:
+    service = FakeService()
+    service.run_report = None
+
+    with a_client(a_resources(), service) as client:
+        response = client.get("/api/runs/run-404")
+
+    assert response.status_code == 404

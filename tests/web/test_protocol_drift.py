@@ -13,8 +13,16 @@ from pathlib import Path
 
 import pytest
 
+from agentic_erp_assistant.tools.models import AuditRow
+from agentic_erp_assistant.state.agent_state import AgentState
+from agentic_erp_assistant.state.conversation import ConversationTurn
+from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.events import TraceEvent
+from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.web.protocol import (
     AnswerEvent,
+    AnswerOut,
     ApprovalRequiredEvent,
     CitationOut,
     ContextEvent,
@@ -28,6 +36,8 @@ from agentic_erp_assistant.web.protocol import (
     ModelCallOut,
     ModelCallTotalsOut,
     ObservationOut,
+    RunOut,
+    RunReportOut,
     StepEvent,
     TextOut,
     ToolOutcomeOut,
@@ -121,6 +131,18 @@ _MIRRORED_MODELS = {
     "ToolOutcomeOut": ToolOutcomeOut,
     "MemoryAuditOut": MemoryAuditOut,
     "ModelCallOut": ModelCallOut,
+    # The filed-run read model (Phase 4): the state models it embeds are
+    # mirrored too, so hydrating one cannot read a field the run never filed.
+    "RunReport": RunReportOut,
+    "RunOut": RunOut,
+    "RunAnswerOut": AnswerOut,
+    "AgentStateSnapshot": AgentState,
+    "AuditRow": AuditRow,
+    "TraceEvent": TraceEvent,
+    "EvidenceSnippet": EvidenceSnippet,
+    "MemoryRecord": MemoryRecord,
+    "ConversationTurn": ConversationTurn,
+    "ReplyContract": ReplyContract,
 }
 
 

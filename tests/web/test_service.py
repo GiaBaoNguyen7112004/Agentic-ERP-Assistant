@@ -59,7 +59,25 @@ class FakeOrchestrator:
         return self.resume_result
 
 
+def a_terminal_state(trace_id: str = "run-1", response: str = "M2 is on track.") -> AgentState:
+    return AgentState(
+        request="What is the status of M2?",
+        actor="priya",
+        project_code="atlas",
+        trace_id=trace_id,
+        scopes=SCOPES,
+        route="answer",
+        response=response,
+        terminal=True,
+    )
+
+
 class FakeQueries:
+    def __init__(self, state: AgentState | None = None):
+        # ``state`` is what run() files back for get_run_report; None means
+        # "the default terminal answer state" -- _emit_tail never reads it.
+        self._state = state
+
     def model_calls(self, trace_id: str):
         return (), ModelCallTotals(count=1, input_tokens=10, output_tokens=5, cost_usd=0.01, unpriced=0)
 
@@ -72,10 +90,16 @@ class FakeQueries:
             outcome="terminal",
             started_at=stamp,
             finished_at=stamp,
-            state=None,  # _emit_tail never reads this field
+            state=self._state or a_terminal_state(trace_id),
         )
 
     def memory_audit(self, trace_id: str):
+        return ()
+
+    def events(self, trace_id: str):
+        return ()
+
+    def audit_rows(self, trace_id: str):
         return ()
 
 
@@ -318,6 +342,76 @@ def test_precheck_a_pending_pause_resolves_the_original_requester() -> None:
     assert decision.approver.actor == "priya"
     assert decision.session_id == "sess-1"
     assert decision.events_already_seen == 2
+
+
+# --------------------------------------------------------------------------
+# get_run_report -- GET /api/runs/{trace_id}'s body, typed (Phase 4)
+# --------------------------------------------------------------------------
+
+
+def test_get_run_report_builds_the_typed_report() -> None:
+    queries = FakeQueries()
+    original = service_module.EvidenceQueries
+    service_module.EvidenceQueries = lambda connection: queries
+    try:
+        service = ChatService(a_resources())
+        report = service.get_run_report(trace_id="run-1")
+    finally:
+        service_module.EvidenceQueries = original
+
+    assert report is not None
+    assert report.run.trace_id == "run-1"
+    assert report.run.outcome == "terminal"
+    assert report.run.state.response == "M2 is on track."
+    assert report.events == ()
+    assert report.audit_rows == ()
+    assert report.model_calls.count == 1
+    assert report.model_calls.input_tokens == 10
+    assert report.memory_audit == ()
+    assert report.answer.text == "M2 is on track."
+    assert report.answer.citations == ()
+
+
+def test_get_run_report_parses_the_sources_trailer_into_citations() -> None:
+    from agentic_erp_assistant.state.evidence import EvidenceSnippet
+
+    state = a_terminal_state(
+        response="M2 is two days late.\n\nSources: [sprint-12-report.md#3.2], milestone-m2"
+    ).evolve(
+        evidence=(
+            EvidenceSnippet(
+                source_id="sprint-12-report.md", locator="3.2", text="M2 slipped."
+            ),
+        )
+    )
+    queries = FakeQueries(state=state)
+    original = service_module.EvidenceQueries
+    service_module.EvidenceQueries = lambda connection: queries
+    try:
+        service = ChatService(a_resources())
+        report = service.get_run_report(trace_id="run-1")
+    finally:
+        service_module.EvidenceQueries = original
+
+    assert report is not None
+    assert report.answer.text == "M2 is two days late."
+    assert report.answer.citations[0].kind == "document"
+    assert report.answer.citations[0].tag == "[sprint-12-report.md#3.2]"
+    assert report.answer.citations[1].kind == "erp"
+
+
+def test_get_run_report_of_an_unfiled_run_is_none() -> None:
+    class NoRunQueries(FakeQueries):
+        def run(self, trace_id: str):
+            return None
+
+    original = service_module.EvidenceQueries
+    service_module.EvidenceQueries = lambda connection: NoRunQueries()
+    try:
+        service = ChatService(a_resources())
+        assert service.get_run_report(trace_id="never-filed") is None
+    finally:
+        service_module.EvidenceQueries = original
 
 
 # --------------------------------------------------------------------------

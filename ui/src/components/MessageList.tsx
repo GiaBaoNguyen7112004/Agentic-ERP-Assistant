@@ -11,12 +11,14 @@ export function MessageList({
   canApprove,
   decidingId,
   onDecide,
+  onInspect,
 }: {
   messages: Message[]
   actor: string
   canApprove: boolean
   decidingId: string | null
   onDecide: (id: string, approved: boolean) => void
+  onInspect?: (id: string) => void
 }) {
   const endRef = useRef<HTMLDivElement>(null)
 
@@ -46,6 +48,7 @@ export function MessageList({
               canApprove={canApprove}
               deciding={decidingId === message.id}
               onDecide={(approved) => onDecide(message.id, approved)}
+              onInspect={onInspect ? () => onInspect(message.id) : undefined}
             />
           </li>
         ),

@@ -27,7 +27,7 @@ from agentic_erp_assistant.persistence.connection import StoreConnectionError
 from agentic_erp_assistant.persistence.postgres_queries import EvidenceQueries
 from agentic_erp_assistant.rag.access import RetrievalContext, is_authorized
 from agentic_erp_assistant.rag.manifest import DEFAULT_MANIFEST_PATH
-from agentic_erp_assistant.web.protocol import EVENT_TYPES, encode_sse
+from agentic_erp_assistant.web.protocol import EVENT_TYPES, encode_sse, RunReportOut
 from agentic_erp_assistant.web.service import ChatService, Conflict, Forbidden, NotFound
 from agentic_erp_assistant.web.stream import TurnStream
 
@@ -286,28 +286,9 @@ def create_app(
     # -- reading the evidence back -----------------------------------------
 
     @app.get("/api/runs/{trace_id}")
-    async def get_run(trace_id: str, request: Request) -> dict:
-        res = get_resources(request)
-
-        def query():
-            connection = res.connect()
-            try:
-                queries = EvidenceQueries(connection)
-                run = queries.run(trace_id)
-                if run is None:
-                    return None
-                records, totals = queries.model_calls(trace_id)
-                return {
-                    "run": run,
-                    "events": queries.events(trace_id),
-                    "audit_rows": queries.audit_rows(trace_id),
-                    "model_calls": {"records": records, "totals": totals},
-                    "memory_audit": queries.memory_audit(trace_id),
-                }
-            finally:
-                connection.close()
-
-        result = await _run_blocking(query)
+    async def get_run(trace_id: str, request: Request) -> RunReportOut:
+        svc = get_service(request)
+        result = await _run_blocking(svc.get_run_report, trace_id=trace_id)
         if result is None:
             raise HTTPException(404, f"no run {trace_id!r}")
         return result

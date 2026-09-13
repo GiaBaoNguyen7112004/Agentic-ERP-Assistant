@@ -13,12 +13,18 @@ export function AssistantMessage({
   canApprove,
   deciding,
   onDecide,
+  onInspect,
 }: {
   turn: TurnView
   actor: string
   canApprove: boolean
   deciding: boolean
   onDecide: (approved: boolean) => void
+  /** Clicking the bubble inspects this turn in the trace panel -- a plain
+   * convenience, not an interactive control: buttons and links inside the
+   * bubble keep their own behavior, and the panel still shows the newest
+   * turn by default without it. */
+  onInspect?: () => void
 }) {
   // D4: the authoritative answer replaces the streamed preview the instant
   // it arrives; before that, the preview is all there is to show.
@@ -26,7 +32,20 @@ export function AssistantMessage({
   const observations = turn.summary?.observations ?? []
 
   return (
-    <div className="flex gap-2.5">
+    <div
+      className={cn('flex gap-2.5', onInspect && 'cursor-pointer')}
+      onClick={
+        onInspect
+          ? (event) => {
+              // The bubble carries real controls (approval actions, citation
+              // chips); only a click on the bubble itself selects it.
+              if ((event.target as HTMLElement).closest('button, a')) return
+              onInspect()
+            }
+          : undefined
+      }
+      title={onInspect ? 'Inspect this turn in the trace panel' : undefined}
+    >
       <div className="mt-1 flex size-7 shrink-0 items-center justify-center rounded-lg border bg-card">
         <Bot className="size-4 text-muted-foreground" aria-hidden />
       </div>

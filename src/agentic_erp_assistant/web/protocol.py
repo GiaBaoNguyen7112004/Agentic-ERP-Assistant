@@ -14,21 +14,28 @@ event may contain.
 """
 
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from agentic_erp_assistant.engine.nodes import SOURCES_PREFIX
+from agentic_erp_assistant.llm.telemetry import ModelCallRecord
+from agentic_erp_assistant.memory.audit import MemoryAuditRow
 from agentic_erp_assistant.memory.models import MemoryDecisionKind, RejectionReason
+from agentic_erp_assistant.persistence.postgres_queries import ModelCallTotals
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, FailureMode
 from agentic_erp_assistant.state.agent_state import AgentState, ApprovalDecision
+from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.memory import MemoryKind
 from agentic_erp_assistant.state.reply_contract import ReplyNeed
 from agentic_erp_assistant.state.tool_outcome import ToolStatus
+from agentic_erp_assistant.tools.models import AuditRow
 
 __all__ = [
     "AnswerEvent",
+    "AnswerOut",
     "ApprovalRequiredEvent",
     "CitationOut",
     "clip_text",
@@ -39,9 +46,11 @@ __all__ = [
     "EVENT_TYPES",
     "EvidenceOut",
     "HistoryTurnOut",
+    "memory_audit_out",
     "MemoryAuditOut",
     "MemoryOut",
     "MessageOut",
+    "model_call_totals_out",
     "ModelCallOut",
     "ModelCallTotalsOut",
     "ModelRequestOut",
@@ -51,6 +60,8 @@ __all__ = [
     "ResetEvent",
     "RetrievalHitOut",
     "RetrievalOut",
+    "RunOut",
+    "RunReportOut",
     "ServerEvent",
     "StepEvent",
     "TEXT_MAX_CHARS",
@@ -619,3 +630,100 @@ def parse_citations(
             )
 
     return body, tuple(citations)
+
+
+# --------------------------------------------------------------------------
+# GET /api/runs/{trace_id} -- a typed read model over a filed run, for
+# Phase 4's hydration (docs/trace-inspector-plan.md): the same evidence a
+# live turn already streamed, reconstructed for a client that never saw it
+# live (a session loaded from history, an approval decided from the queue).
+# Not part of ServerEvent/EVENT_TYPES -- this is a REST response body, never
+# an SSE frame.
+# --------------------------------------------------------------------------
+
+
+def model_call_totals_out(
+    records: Sequence[ModelCallRecord], totals: ModelCallTotals
+) -> ModelCallTotalsOut:
+    """The one place ``ModelCallRecord`` rows become the wire's
+    ``ModelCallTotalsOut`` -- shared by the live tail
+    (``web/service.py::_emit_tail``) and this module's own
+    :class:`RunReportOut`, so a run's totals read the same way whether they
+    arrived live or were read back afterward."""
+    return ModelCallTotalsOut(
+        count=totals.count,
+        input_tokens=totals.input_tokens,
+        output_tokens=totals.output_tokens,
+        cost_usd=totals.cost_usd,
+        unpriced=totals.unpriced,
+        records=tuple(
+            ModelCallOut(
+                model=record.model,
+                outcome=record.outcome,
+                estimated_input_tokens=record.estimated_input_tokens,
+                input_tokens=record.input_tokens,
+                output_tokens=record.output_tokens,
+                cost_usd=record.cost_usd,
+                latency_seconds=record.latency_seconds,
+                attempts=record.attempts,
+                occurred_at=record.occurred_at,
+                detail=record.detail,
+            )
+            for record in records
+        ),
+    )
+
+
+def memory_audit_out(rows: Sequence[MemoryAuditRow]) -> tuple[MemoryAuditOut, ...]:
+    """The same conversion :attr:`model_call_totals_out` is -- shared by the
+    live tail and :class:`RunReportOut`."""
+    return tuple(
+        MemoryAuditOut(
+            occurred_at=row.occurred_at,
+            memory_id=row.memory_id,
+            kind=row.kind,
+            decision=row.decision,
+            rejection=row.rejection,
+            reason=row.reason,
+            statement_summary=row.statement_summary,
+        )
+        for row in rows
+    )
+
+
+class RunOut(_Event):
+    """A run's own columns, plus its revalidated state --
+    :class:`~agentic_erp_assistant.persistence.postgres_queries.RunRow`, as
+    filed."""
+
+    trace_id: str
+    actor: str
+    project_code: str | None
+    outcome: str
+    started_at: datetime
+    finished_at: datetime
+    state: AgentState
+
+
+class AnswerOut(_Event):
+    """The reply this run ended with, and its parsed citations -- the same
+    reading :func:`parse_citations` gives a live turn's :class:`AnswerEvent`,
+    so a hydrated turn's citation chips work identically to a live one's."""
+
+    text: str
+    citations: tuple[CitationOut, ...]
+
+
+class RunReportOut(_Event):
+    """Everything ``GET /api/runs/{trace_id}`` returns -- the same evidence
+    :class:`~agentic_erp_assistant.persistence.postgres_queries.
+    EvidenceQueries` reads, typed once so ``ui/src/protocol.ts`` has a fixed
+    shape to hydrate a filed run's execution tree from, rather than the
+    untyped dict this endpoint returned before Phase 4."""
+
+    run: RunOut
+    events: tuple[TraceEvent, ...]
+    audit_rows: tuple[AuditRow, ...]
+    model_calls: ModelCallTotalsOut
+    memory_audit: tuple[MemoryAuditOut, ...]
+    answer: AnswerOut

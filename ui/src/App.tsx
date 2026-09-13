@@ -197,9 +197,16 @@ export default function App() {
           onSend={(message) => void sendMessage(message)}
           onStop={stop}
           onDecide={(id, approved) => void decideFromMessage(id, approved)}
+          onInspect={(id) => dispatch({ type: 'turn_selected', id })}
         />
       }
-      aside={<TracePanel messages={state.messages} />}
+      aside={
+        <TracePanel
+          messages={state.messages}
+          inspectedId={state.inspectedId}
+          onInspect={(id) => dispatch({ type: 'turn_selected', id })}
+        />
+      }
     />
   )
 }

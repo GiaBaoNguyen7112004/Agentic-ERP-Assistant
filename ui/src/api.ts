@@ -1,4 +1,4 @@
-import type { PendingApproval, SessionSummary, SessionTurn, UserSummary } from './protocol'
+import type { PendingApproval, RunReport, SessionSummary, SessionTurn, UserSummary } from './protocol'
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
@@ -40,7 +40,7 @@ export function listApprovals(actor?: string): Promise<PendingApproval[]> {
   return getJson(`/api/approvals${query}`)
 }
 
-export function getRun(traceId: string): Promise<unknown> {
+export function getRun(traceId: string): Promise<RunReport> {
   return getJson(`/api/runs/${encodeURIComponent(traceId)}`)
 }
 

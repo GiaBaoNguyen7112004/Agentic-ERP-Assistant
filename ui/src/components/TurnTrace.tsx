@@ -1,4 +1,4 @@
-import { Activity, ExternalLink } from 'lucide-react'
+import { Activity, ExternalLink, History } from 'lucide-react'
 import { buildExecutionTree } from '@/lib/executionTree'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { MonoId } from '@/components/shared/MonoId'
@@ -9,17 +9,37 @@ import { NodeCard } from './trace/NodeCard'
 import { PhaseCard } from './trace/PhaseCard'
 import { RawEventsTable } from './trace/RawEventsTable'
 import { TurnSummary } from './TurnSummary'
+import type { ToolOutcomeOut } from '../protocol'
+import type { TurnView } from '../turnReducer'
 import type { Message } from '../appState'
 
 /**
  * The execution inspector: a run's node executions, in order, with what each
  * one received, did, and produced -- built from the same stream the old flat
  * event table read, grouped by `lib/executionTree.ts`. See
- * `docs/trace-inspector-plan.md` for the design this implements and the
- * later phases that widen what a node card can show.
+ * `docs/trace-inspector-plan.md` for the design this implements.
+ *
+ * A view may also be *hydrated* from a filed run (`hydrate.ts`) -- a turn
+ * loaded from history, or a queue-resumed decision's fresh bubble -- in which
+ * case `turn` carries the reconstructed view and `reconstructed` makes the
+ * panel say so: its attribution is best-effort, not the stream's word.
  */
-export function TurnTrace({ message }: { message: Extract<Message, { role: 'assistant' }> }) {
-  const { turn, traceId } = message
+export function TurnTrace({
+  message,
+  turn: hydrated,
+  reconstructed = false,
+  unattributed = [],
+}: {
+  message: Extract<Message, { role: 'assistant' }>
+  /** A reconstructed view from the filed run, when the panel hydrated one
+   * (Phase 4); `undefined` inspects the message's own streamed view. */
+  turn?: TurnView
+  reconstructed?: boolean
+  /** Outcomes the reconstruction could not place on any span. */
+  unattributed?: ToolOutcomeOut[]
+}) {
+  const view = hydrated ?? message.turn
+  const { turn, traceId } = { turn: view, traceId: view.traceId }
   const runUrl = traceId ? `/api/runs/${traceId}` : null
 
   // A turn restored from session history carries no live trace events --
@@ -51,6 +71,18 @@ export function TurnTrace({ message }: { message: Extract<Message, { role: 'assi
       </div>
 
       {turn.summary && <TurnSummary summary={turn.summary} />}
+
+      {reconstructed && (
+        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+          <History className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span>
+            Reconstructed from the filed run -- node attribution is best-effort, never
+            the stream's word (docs/trace-inspector-plan.md §6.3).
+            {unattributed.length > 0 &&
+              ` ${unattributed.length} tool result${unattributed.length === 1 ? '' : 's'} could not be attributed to a node.`}
+          </span>
+        </p>
+      )}
 
       {!historyOnly && (tree.prelude.length > 0 || tree.entries.length > 0 || tree.consolidation.length > 0 || turn.context || turn.events.length > 0) && (
         <div className="space-y-2">

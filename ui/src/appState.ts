@@ -13,6 +13,10 @@ export interface AppState {
   sessions: SessionSummary[]
   messages: Message[]
   approvals: PendingApproval[]
+  /** The assistant message the trace panel is inspecting, when the user
+   * clicked an older bubble; `null` = "the newest one" (the panel's default).
+   * Only a convenience of selection -- no turn data lives here. */
+  inspectedId: string | null
 }
 
 export const initialAppState: AppState = {
@@ -22,6 +26,7 @@ export const initialAppState: AppState = {
   sessions: [],
   messages: [],
   approvals: [],
+  inspectedId: null,
 }
 
 export type AppAction =
@@ -36,6 +41,7 @@ export type AppAction =
   | { type: 'user_message_sent'; id: string; text: string }
   | { type: 'assistant_message_started'; id: string }
   | { type: 'turn_event'; id: string; event: ServerEvent }
+  | { type: 'turn_selected'; id: string | null }
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -50,12 +56,13 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         sessionId: null,
         messages: [],
         approvals: [],
+        inspectedId: null,
       }
 
     case 'session_selected':
       // A user picked a different (or the same) session from the list --
       // its history replaces whatever is showing.
-      return { ...state, sessionId: action.sessionId, messages: [] }
+      return { ...state, sessionId: action.sessionId, messages: [], inspectedId: null }
 
     case 'session_id_captured':
       // The server generated a session id for the chat already on screen
@@ -64,7 +71,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, sessionId: action.sessionId }
 
     case 'new_chat':
-      return { ...state, sessionId: null, messages: [] }
+      return { ...state, sessionId: null, messages: [], inspectedId: null }
 
     case 'sessions_loaded':
       return { ...state, sessions: action.sessions }
@@ -73,7 +80,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       return { ...state, approvals: action.approvals }
 
     case 'history_loaded':
-      return { ...state, messages: action.messages }
+      return { ...state, messages: action.messages, inspectedId: null }
 
     case 'user_message_sent':
       return {
@@ -88,6 +95,9 @@ export function appReducer(state: AppState, action: AppAction): AppState {
           ...state.messages,
           { role: 'assistant', id: action.id, traceId: null, turn: initialTurn },
         ],
+        // A new turn becomes the thing to inspect, like the panel's own
+        // "newest" default -- an older selection would pin the panel behind.
+        inspectedId: null,
       }
 
     case 'turn_event':
@@ -103,6 +113,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
             : message,
         ),
       }
+
+    case 'turn_selected':
+      // The user clicked a bubble (or a newer turn started, via the null
+      // resets above): the panel inspects it. `null` returns to "newest".
+      return { ...state, inspectedId: action.id }
 
     default:
       return state

@@ -313,3 +313,132 @@ export interface PendingApproval {
   created_at: string
   session_id: string | null
 }
+
+// -- the filed-run report, mirroring web/protocol.py's RunReportOut (and the
+// state models it embeds), so a filed run hydrates into the same TurnView a
+// live turn built from the stream -- see ui/src/hydrate.ts. Every interface
+// below is drift-tested field-for-field against its Python model in
+// tests/web/test_protocol_drift.py. -----------------------------------------
+
+export interface TraceEvent {
+  node: string
+  kind: string
+  detail: string
+}
+
+export interface EvidenceSnippet {
+  source_id: string
+  locator: string
+  text: string
+}
+
+export interface MemoryRecord {
+  memory_id: string
+  kind: string
+  key: string
+  statement: string
+  project_code: string
+  required_scope: string
+  actor: string
+  session_id: string
+  recorded_in_run: string
+  recorded_at: string
+  confidence: number
+  supersedes: string[]
+  superseded_at: string | null
+  links: string[]
+}
+
+export interface ConversationTurn {
+  trace_id: string
+  session_id: string
+  actor: string
+  request: string
+  response: string | null
+  route: string | null
+  failure: string
+  tool_name: string | null
+  approval: string
+  started_at: string
+  finished_at: string
+}
+
+export interface ReplyContract {
+  needs: string[]
+  document_query: string | null
+}
+
+export interface ToolOutcome {
+  tool_name: string
+  arguments_summary: string
+  status: string
+  summary: string
+  source_ids: string[]
+  error: string | null
+  attempts: number
+  retry_after_seconds: number | null
+}
+
+export interface AgentStateSnapshot {
+  request: string
+  actor: string
+  project_code: string
+  scopes: string[]
+  trace_id: string
+  session_id: string | null
+  route: string | null
+  evidence: EvidenceSnippet[]
+  memories: MemoryRecord[]
+  history: ConversationTurn[]
+  contract: ReplyContract | null
+  redirected_needs: string[]
+  draft: string | null
+  observations: ToolOutcome[]
+  tool_name: string | null
+  tool_arguments: Record<string, unknown> | null
+  tool_mutating: boolean
+  approval: string
+  response: string | null
+  failure: string
+  error_detail: string | null
+  terminal: boolean
+  step_count: number
+  retry_count: number
+  events: TraceEvent[]
+  state_version: number
+}
+
+export interface AuditRow {
+  trace_id: string
+  occurred_at: string
+  actor: string
+  tool_name: string
+  arguments_summary: string
+  approval: string
+  status: string
+  source_ids: string[]
+}
+
+export interface RunOut {
+  trace_id: string
+  actor: string
+  project_code: string | null
+  outcome: string
+  started_at: string
+  finished_at: string
+  state: AgentStateSnapshot
+}
+
+export interface RunAnswerOut {
+  text: string
+  citations: Citation[]
+}
+
+export interface RunReport {
+  run: RunOut
+  events: TraceEvent[]
+  audit_rows: AuditRow[]
+  model_calls: ModelCallTotals
+  memory_audit: MemoryAuditOut[]
+  answer: RunAnswerOut
+}

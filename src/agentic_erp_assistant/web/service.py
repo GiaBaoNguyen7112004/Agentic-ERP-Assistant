@@ -18,19 +18,22 @@ from agentic_erp_assistant.composition.users import UnknownUser, User
 from agentic_erp_assistant.engine.orchestrator import ApprovalAlreadySettled
 from agentic_erp_assistant.engine.workflow import is_paused
 from agentic_erp_assistant.persistence.postgres_pause import PostgresPauseStore
+from agentic_erp_assistant.persistence.postgres_queries import EvidenceQueries
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.tools.models import ARGUMENTS_SUMMARY_MAX_CHARS
 from agentic_erp_assistant.web.protocol import (
     AnswerEvent,
+    AnswerOut,
     ApprovalRequiredEvent,
     ErrorEvent,
-    MemoryAuditOut,
-    ModelCallOut,
-    ModelCallTotalsOut,
+    memory_audit_out,
+    model_call_totals_out,
     ObservationOut,
+    parse_citations,
+    RunOut,
+    RunReportOut,
     TurnFinishedEvent,
     TurnStartedEvent,
-    parse_citations,
 )
 from agentic_erp_assistant.web.stream import TurnStream
 
@@ -306,41 +309,52 @@ class ChatService:
                     ObservationOut(tool=o.tool_name, status=o.status, attempts=o.attempts)
                     for o in final.observations
                 ),
-                model_calls=ModelCallTotalsOut(
-                    count=totals.count,
-                    input_tokens=totals.input_tokens,
-                    output_tokens=totals.output_tokens,
-                    cost_usd=totals.cost_usd,
-                    unpriced=totals.unpriced,
-                    records=tuple(
-                        ModelCallOut(
-                            model=record.model,
-                            outcome=record.outcome,
-                            estimated_input_tokens=record.estimated_input_tokens,
-                            input_tokens=record.input_tokens,
-                            output_tokens=record.output_tokens,
-                            cost_usd=record.cost_usd,
-                            latency_seconds=record.latency_seconds,
-                            attempts=record.attempts,
-                            occurred_at=record.occurred_at,
-                            detail=record.detail,
-                        )
-                        for record in records
-                    ),
-                ),
-                memory_audit=tuple(
-                    MemoryAuditOut(
-                        occurred_at=row.occurred_at,
-                        memory_id=row.memory_id,
-                        kind=row.kind,
-                        decision=row.decision,
-                        rejection=row.rejection,
-                        reason=row.reason,
-                        statement_summary=row.statement_summary,
-                    )
-                    for row in audit_rows
-                ),
+                model_calls=model_call_totals_out(records, totals),
+                memory_audit=memory_audit_out(audit_rows),
                 started_at=run_row.started_at,
                 finished_at=run_row.finished_at,
             )
         )
+
+    # -- reading a filed run back, for Phase 4's hydration -------------------
+
+    def get_run_report(self, *, trace_id: str) -> RunReportOut | None:
+        """Everything ``GET /api/runs/{trace_id}`` returns, or ``None`` when
+        no such run was ever filed -- the route turns that into a 404.
+
+        A plain method over :class:`~agentic_erp_assistant.persistence.
+        postgres_queries.EvidenceQueries`, the same read-only assembly the
+        route used to build inline. Pulled out here, rather than left as a
+        closure inside the route, so it can be exercised with
+        :class:`FakeQueries` exactly like :meth:`_emit_tail` already is --
+        the shared conversions (:func:`~agentic_erp_assistant.web.protocol.
+        model_call_totals_out`, :func:`~agentic_erp_assistant.web.protocol.
+        memory_audit_out`) mean the two never describe one run's totals two
+        different ways.
+        """
+        connection = self.resources.connect()
+        try:
+            queries = EvidenceQueries(connection)
+            run = queries.run(trace_id)
+            if run is None:
+                return None
+            records, totals = queries.model_calls(trace_id)
+            text, citations = parse_citations(run.state.response, run.state)
+            return RunReportOut(
+                run=RunOut(
+                    trace_id=run.trace_id,
+                    actor=run.actor,
+                    project_code=run.project_code,
+                    outcome=run.outcome,
+                    started_at=run.started_at,
+                    finished_at=run.finished_at,
+                    state=run.state,
+                ),
+                events=queries.events(trace_id),
+                audit_rows=queries.audit_rows(trace_id),
+                model_calls=model_call_totals_out(records, totals),
+                memory_audit=memory_audit_out(queries.memory_audit(trace_id)),
+                answer=AnswerOut(text=text or "", citations=citations),
+            )
+        finally:
+            connection.close()
