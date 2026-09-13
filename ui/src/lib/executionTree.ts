@@ -14,14 +14,20 @@ export interface ExecutionEntry {
   /** `step.step_count` when this entry closed with a step; best-effort
    * (one past the last closed entry) while still streaming. */
   ordinal: number
-  /** The `node_entered` row's `node` for a node entry; the first row's
-   * `node` for a bare engine entry with at least one row; `null` for one
-   * with none (nothing to name it by). */
+  /** `step.node` for a real node span -- the `node_entered` row's own
+   * name, read directly off the field the server stamps it with, never
+   * guessed from row order. A bare engine entry has no node to be named
+   * by that way, so it falls back to its own first row's `node` (e.g.
+   * `approval_recorded`'s row says "approval"), or `null` when it has no
+   * rows at all. For a still-streaming entry (no step yet) this falls
+   * back further, to searching its own rows for a `node_entered` row --
+   * the one case nothing has told the client the name yet. */
   nodeName: string | null
-  /** Every row this entry owns, in arrival order -- live gateway rows first
-   * (they are produced, and therefore arrive, before the node they belong
-   * to has flushed anything -- see the module doc below), then the node's
-   * own persisted rows. */
+  /** Every row this entry owns, in arrival order -- live gateway rows
+   * first (attached by their own `step` stamp -- see `TraceRow.step` --
+   * because they are produced, and therefore arrive, *during* the node
+   * they belong to, before that node's own rows have flushed), then the
+   * node's own persisted rows. */
   rows: TraceRow[]
   /** The step that closed this entry, or `null` while it is still the one
    * being streamed (no `node_exited`/closing step has arrived yet). */
@@ -33,7 +39,11 @@ export interface ExecutionTree {
    * `memory_recalled`, `contract_declared`. Emitted by the orchestrator
    * before the engine is touched, so they arrive folded into the very first
    * batch this module ever sees, ahead of that batch's own `node_entered`
-   * row -- split off here rather than left as part of node 1. */
+   * row -- split off here rather than left as part of node 1. A richer
+   * reading of the same prelude is `TurnView.context` (the `ContextEvent`),
+   * when the stream carried one -- these flat rows are the fallback for a
+   * view that never got one (an old session, a caller with no `on_start`
+   * wired) and always what the raw events table shows regardless. */
   prelude: TraceRow[]
   /** One entry per node execution or bare engine-level step, in run order. */
   entries: ExecutionEntry[]
@@ -51,14 +61,13 @@ function isNodeEntered(row: TraceRow): boolean {
   return row.source === 'engine' && row.kind === NODE_ENTERED
 }
 
-/** The name this span is known by: the `node_entered` row's own `node`, when
+/** The name a still-streaming entry is known by, before it has a step of
+ * its own to read `.node` off: the `node_entered` row's own name, when
  * there is one -- never `rows[0]`, which is often a live gateway row that
- * arrived ahead of the node it belongs to (see the module doc) and would
- * otherwise misname the whole span after its gateway prefix. Falls back to
- * the first row's `node` only for a bare engine entry, which has no
- * `node_entered` row to name it by at all. */
-function nodeNameOf(rows: readonly TraceRow[]): string | null {
-  return rows.find(isNodeEntered)?.node ?? rows[0]?.node ?? null
+ * arrived ahead of the node it belongs to and would otherwise misname the
+ * whole span after its gateway prefix. */
+function openEntryNodeName(rows: readonly TraceRow[]): string | null {
+  return rows.find(isNodeEntered)?.node ?? null
 }
 
 /** The three kinds the orchestrator files before the engine ever runs (see
@@ -112,32 +121,39 @@ export function entryToolCall(
  * Group a turn's interleaved trace rows and step events into the spans a
  * developer reads as "what the graph did, in order".
  *
- * This is a *heuristic* over the wire shape the engine and the web layer
- * already produce (see `engine/workflow.py::WorkflowRuntime.run` and
- * `web/stream.py::TurnStream.step`), not a new contract: a node's whole
- * batch of trace rows -- its own `node_entered`, everything it did, and its
- * `node_exited` -- is flushed in one `step()` call, immediately followed by
- * exactly one `StepEvent`, so the row batch accumulated since the previous
- * step closes when the next step arrives. A live gateway row (no `seq`) is
- * pushed to the stream the instant it happens, which is *during* the node
- * that produced it -- before that node's own rows have flushed -- so it
- * always lands in `timeline` ahead of the batch it belongs to, never inside
- * a prior, already-closed one.
+ * Node identity now comes straight off the wire: `StepEvent.node` names the
+ * span a step closes, and `TraceRow.step` names which node execution a live
+ * gateway row (no `seq`) was produced during -- both stamped server-side
+ * (`web/stream.py`), so this module no longer *infers* either one the way
+ * its first version had to (see git history / `docs/trace-inspector-plan.md`
+ * §7.2 for what that heuristic was and why it was replaced: a gateway row
+ * always arrives before the node it belongs to has flushed anything, which
+ * made "attach it to the next span to open" the only heuristic available
+ * before `step` existed, and briefly a source of real bugs -- naming a span
+ * after a gateway row that happened to arrive first).
  *
- * `docs/trace-inspector-plan.md` §7.2 replaces this grouping with an
- * explicit `StepEvent.node` / `TraceRow.step` once the protocol carries
- * them; nothing here should get more elaborate than this doc explains.
+ * What is still inferred, and has to be: prelude rows (no `ContextEvent` to
+ * read structured history/memory/contract from -- see `ExecutionTree.
+ * prelude`'s own doc) and a still-open node's name (no step has arrived for
+ * it yet to read `.node` off).
  */
 export function buildExecutionTree(view: TurnView): ExecutionTree {
   let prelude: TraceRow[] = []
   const entries: ExecutionEntry[] = []
   let pending: TraceRow[] = []
+  const gatewayByStep = new Map<number, TraceRow[]>()
   let sawFirstBatch = false
   let sawAnyStep = false
 
   for (const item of view.timeline) {
     if (item.kind === 'row') {
-      pending.push(item.row)
+      if (item.row.source === 'tool_gateway' && item.row.step !== null) {
+        const bucket = gatewayByStep.get(item.row.step)
+        if (bucket) bucket.push(item.row)
+        else gatewayByStep.set(item.row.step, [item.row])
+      } else {
+        pending.push(item.row)
+      }
       continue
     }
 
@@ -153,9 +169,14 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
     }
 
     entries.push({
-      kind: rows.some(isNodeEntered) ? 'node' : 'engine',
+      kind: item.step.node !== null ? 'node' : 'engine',
       ordinal: item.step.step_count,
-      nodeName: nodeNameOf(rows),
+      // A real node span is named by the step itself, always correctly now
+      // (no more guessing from row order). A bare entry has no node to be
+      // named by -- fall back to its own first row's `node`, e.g.
+      // `approval_recorded`'s row says "approval" even though nothing
+      // about it is a graph node execution.
+      nodeName: item.step.node ?? rows[0]?.node ?? null,
       rows,
       step: item.step,
     })
@@ -174,19 +195,37 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
       // still be split off.
       const split = splitPrelude(pending)
       prelude = split.prelude
-      entries.push({ kind: 'node', ordinal: 1, nodeName: nodeNameOf(split.rest), rows: split.rest, step: null })
+      entries.push({
+        kind: 'node',
+        ordinal: 1,
+        nodeName: openEntryNodeName(split.rest),
+        rows: split.rest,
+        step: null,
+      })
     } else if (pending.some(isNodeEntered)) {
       const lastOrdinal = entries.length > 0 ? entries[entries.length - 1].ordinal : 0
       entries.push({
         kind: 'node',
         ordinal: lastOrdinal + 1,
-        nodeName: nodeNameOf(pending),
+        nodeName: openEntryNodeName(pending),
         rows: pending,
         step: null,
       })
     } else {
       consolidation = pending
     }
+  }
+
+  // Attach every live gateway row to the node execution it was stamped
+  // for -- always a `node` entry (the tool gateway only ever runs
+  // synchronously inside `call_tool`'s own node, never during a bare
+  // engine-level step), matched by step_count rather than array position
+  // so a bare engine entry sitting between two nodes can never shift the
+  // match.
+  for (const entry of entries) {
+    if (entry.kind !== 'node') continue
+    const bucket = gatewayByStep.get(entry.ordinal)
+    if (bucket) entry.rows = [...bucket, ...entry.rows]
   }
 
   return { prelude, entries, consolidation }

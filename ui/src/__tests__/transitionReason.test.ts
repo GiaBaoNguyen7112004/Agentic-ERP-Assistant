@@ -3,7 +3,7 @@ import { transitionReason } from '../lib/transitionReason'
 import type { TraceRow } from '../protocol'
 
 function row(kind: string, detail: string): TraceRow {
-  return { type: 'trace', seq: 0, node: 'think', kind, detail, source: 'engine' }
+  return { type: 'trace', seq: 0, node: 'think', kind, detail, source: 'engine', step: null }
 }
 
 describe('transitionReason', () => {

@@ -2,11 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { PhaseCard } from '../components/trace/PhaseCard'
-import type { TraceRow } from '../protocol'
-
-function row(overrides: Partial<TraceRow>): TraceRow {
-  return { type: 'trace', seq: 0, node: 'memory', kind: 'memory_written', detail: '', source: 'engine', ...overrides }
-}
+import { row } from './fixtures'
 
 describe('PhaseCard', () => {
   it('renders nothing when there are no rows and nothing extra to show', () => {

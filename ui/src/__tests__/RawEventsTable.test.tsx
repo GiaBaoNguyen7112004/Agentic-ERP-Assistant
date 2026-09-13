@@ -2,11 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { RawEventsTable } from '../components/trace/RawEventsTable'
-import type { TraceRow } from '../protocol'
-
-function row(overrides: Partial<TraceRow>): TraceRow {
-  return { type: 'trace', seq: 0, node: 'think', kind: 'route_selected', detail: '', source: 'engine', ...overrides }
-}
+import { row } from './fixtures'
 
 describe('RawEventsTable', () => {
   it('renders nothing for an empty event list', () => {

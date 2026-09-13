@@ -3,25 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { NodeCard } from '../components/trace/NodeCard'
 import type { ExecutionEntry } from '../lib/executionTree'
-import type { StepEvent, TraceRow } from '../protocol'
-
-function row(overrides: Partial<TraceRow>): TraceRow {
-  return { type: 'trace', seq: 0, node: 'think', kind: 'route_selected', detail: '', source: 'engine', ...overrides }
-}
-
-function step(overrides: Partial<StepEvent>): StepEvent {
-  return {
-    type: 'step',
-    route: null,
-    tool_name: null,
-    tool_arguments: null,
-    tool_mutating: null,
-    approval: 'not_required',
-    step_count: 1,
-    terminal: false,
-    ...overrides,
-  }
-}
+import { row, step } from './fixtures'
 
 describe('NodeCard', () => {
   it('renders a numbered node entry with its label, raw name, and rows, open by default', () => {

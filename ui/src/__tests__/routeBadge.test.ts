@@ -55,7 +55,12 @@ describe('routeBadge', () => {
             memories_recalled: 0,
             history_shown: 0,
             observations: [{ tool: 'get_status', status: 'ok', attempts: 1 }],
-            model_calls: { count: 1, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0 },
+            model_calls: {
+              count: 1, input_tokens: 0, output_tokens: 0, cost_usd: null, unpriced: 0, records: [],
+            },
+            memory_audit: [],
+            started_at: '2026-01-01T00:00:00Z',
+            finished_at: '2026-01-01T00:00:00Z',
           },
         }),
       ),

@@ -20,6 +20,17 @@ export function formatCost(costUsd: number | null): string {
   return costUsd === null ? 'unknown' : `$${costUsd.toFixed(4)}`
 }
 
+/** How long a run took, from its filed `started_at`/`finished_at` --
+ * `1.2s`, or `340ms` under a second. An approximation the same way a
+ * step's own `elapsed_ms` is: it includes recall, declaration, and every
+ * node's own bookkeeping, not model latency alone. */
+export function formatDuration(startedAt: string, finishedAt: string): string {
+  const ms = new Date(finishedAt).getTime() - new Date(startedAt).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '—'
+  if (ms < 1000) return `${Math.round(ms)}ms`
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
 /**
  * A tool argument for display: objects and arrays as JSON (the old card
  * rendered `[object Object]` for these), anything scalar as its String.

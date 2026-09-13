@@ -1,6 +1,7 @@
 import type {
   AnswerEvent,
   ApprovalRequiredEvent,
+  ContextEvent,
   ServerEvent,
   StepEvent,
   TraceRow,
@@ -32,6 +33,11 @@ export interface TurnView {
   streamed: string
   answer: AnswerEvent | null
   approval: ApprovalRequiredEvent | null
+  /** What the orchestrator attached before the engine ran -- history,
+   * memory, the declared reply contract. `null` until the event arrives
+   * (a turn just starting) and for a view built from a filed run rather
+   * than a live stream, until hydration reads it back some other way. */
+  context: ContextEvent | null
   /** Every trace row, engine and gateway, in arrival order. */
   events: TraceRow[]
   /** Every `step` event, in arrival order -- not deduplicated by route (the
@@ -50,6 +56,7 @@ export const initialTurn: TurnView = {
   streamed: '',
   answer: null,
   approval: null,
+  context: null,
   events: [],
   steps: [],
   timeline: [],
@@ -74,6 +81,9 @@ export function turnReducer(view: TurnView, event: ServerEvent): TurnView {
         status: 'running',
         approval: event.resumed ? null : view.approval,
       }
+
+    case 'context':
+      return { ...view, context: event }
 
     case 'trace':
       return {

@@ -7,7 +7,9 @@ import { nodeLabel } from '@/lib/nodeLabel'
 import { traceTone } from '@/lib/traceTone'
 import type { Tone } from '@/lib/routeBadge'
 import { entryToolCall, type ExecutionEntry } from '@/lib/executionTree'
+import { EvidenceBlock } from './EvidenceBlock'
 import { RowLine } from './RowLine'
+import { ToolOutcomeBlock } from './ToolOutcomeBlock'
 import { TransitionRow } from './TransitionRow'
 
 const TONE_RANK: Record<Tone, number> = {
@@ -84,6 +86,18 @@ export function NodeCard({ entry }: { entry: ExecutionEntry }) {
           </div>
         ) : (
           <p className="text-xs text-muted-foreground">no new trace rows</p>
+        )}
+        {entry.step?.evidence && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Evidence</p>
+            <EvidenceBlock evidence={entry.step.evidence} />
+          </div>
+        )}
+        {entry.step && entry.step.observations.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Result</p>
+            <ToolOutcomeBlock observations={entry.step.observations} />
+          </div>
         )}
         {toolCall?.arguments && (
           <div className="space-y-1">

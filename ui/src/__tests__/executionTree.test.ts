@@ -2,24 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExecutionTree, entryToolCall, type ExecutionEntry } from '../lib/executionTree'
 import { initialTurn, type TimelineEntry, type TurnView } from '../turnReducer'
 import type { StepEvent, TraceRow } from '../protocol'
-
-function row(overrides: Partial<TraceRow>): TraceRow {
-  return { type: 'trace', seq: 0, node: 'think', kind: 'route_selected', detail: '', source: 'engine', ...overrides }
-}
-
-function step(overrides: Partial<StepEvent>): StepEvent {
-  return {
-    type: 'step',
-    route: null,
-    tool_name: null,
-    tool_arguments: null,
-    tool_mutating: null,
-    approval: 'not_required',
-    step_count: 1,
-    terminal: false,
-    ...overrides,
-  }
-}
+import { row, step } from './fixtures'
 
 const r = (partial: Partial<TraceRow>): TimelineEntry => ({ kind: 'row', row: row(partial) })
 const s = (partial: Partial<StepEvent>): TimelineEntry => ({ kind: 'step', step: step(partial) })
@@ -37,17 +20,17 @@ describe('buildExecutionTree', () => {
       r({ seq: 0, node: 'start', kind: 'node_entered', detail: '' }),
       r({ seq: 1, node: 'think', kind: 'route_selected', detail: 'call_tool: called get_project_status' }),
       r({ seq: 2, node: 'start', kind: 'node_exited', detail: '' }),
-      s({ route: 'call_tool', tool_name: 'get_project_status', step_count: 1 }),
+      s({ route: 'call_tool', tool_name: 'get_project_status', step_count: 1, node: 'start' }),
 
       r({ seq: 3, node: 'call_tool', kind: 'node_entered', detail: '' }),
       r({ seq: 4, node: 'execute_tool', kind: 'tool_called', detail: 'get_project_status -> ok' }),
       r({ seq: 5, node: 'call_tool', kind: 'node_exited', detail: '' }),
-      s({ route: 'think', step_count: 2 }),
+      s({ route: 'think', step_count: 2, node: 'call_tool' }),
 
       r({ seq: 6, node: 'think', kind: 'node_entered', detail: '' }),
       r({ seq: 7, node: 'think', kind: 'route_selected', detail: 'answer: answered without calling a tool' }),
       r({ seq: 8, node: 'think', kind: 'node_exited', detail: '' }),
-      s({ route: 'answer', step_count: 3, terminal: true }),
+      s({ route: 'answer', step_count: 3, terminal: true, node: 'think' }),
     ]
 
     const tree = buildExecutionTree(viewOf(timeline))
@@ -72,13 +55,20 @@ describe('buildExecutionTree', () => {
       r({ seq: 0, node: 'start', kind: 'node_entered' }),
       r({ seq: 1, node: 'think', kind: 'route_selected', detail: 'call_tool: called get_project_status' }),
       r({ seq: 2, node: 'start', kind: 'node_exited' }),
-      s({ route: 'call_tool', step_count: 1 }),
+      s({ route: 'call_tool', step_count: 1, node: 'start' }),
 
-      r({ seq: null, node: 'tool_gateway', kind: 'tool_called', detail: 'get_project_status -> ok', source: 'tool_gateway' }),
+      r({
+        seq: null,
+        node: 'tool_gateway',
+        kind: 'tool_called',
+        detail: 'get_project_status -> ok',
+        source: 'tool_gateway',
+        step: 2, // stamped for the node execution about to close as step_count 2
+      }),
       r({ seq: 3, node: 'call_tool', kind: 'node_entered' }),
       r({ seq: 4, node: 'execute_tool', kind: 'tool_called', detail: 'get_project_status -> ok' }),
       r({ seq: 5, node: 'call_tool', kind: 'node_exited' }),
-      s({ route: 'think', step_count: 2 }),
+      s({ route: 'think', step_count: 2, node: 'call_tool' }),
     ]
 
     const tree = buildExecutionTree(viewOf(timeline))
@@ -101,7 +91,7 @@ describe('buildExecutionTree', () => {
       r({ seq: 3, node: 'start', kind: 'node_entered' }),
       r({ seq: 4, node: 'think', kind: 'route_selected', detail: 'answer: answered without calling a tool' }),
       r({ seq: 5, node: 'start', kind: 'node_exited' }),
-      s({ route: 'answer', step_count: 1, terminal: true }),
+      s({ route: 'answer', step_count: 1, terminal: true, node: 'start' }),
     ]
 
     const tree = buildExecutionTree(viewOf(timeline))
@@ -120,7 +110,7 @@ describe('buildExecutionTree', () => {
       r({ seq: 0, node: 'start', kind: 'node_entered' }),
       r({ seq: 1, node: 'think', kind: 'route_selected', detail: 'answer: answered without calling a tool' }),
       r({ seq: 2, node: 'start', kind: 'node_exited' }),
-      s({ route: 'answer', step_count: 1, terminal: true }),
+      s({ route: 'answer', step_count: 1, terminal: true, node: 'start' }),
       // flush_events streams these with no step of its own.
       r({ seq: 3, node: 'memory', kind: 'memory_written', detail: 'write (…)' }),
       r({ seq: 4, node: 'history', kind: 'history_promoted', detail: '1 turn(s) folded into the session summary' }),
@@ -137,15 +127,15 @@ describe('buildExecutionTree', () => {
       r({ seq: 0, node: 'start', kind: 'node_entered' }),
       r({ seq: 1, node: 'think', kind: 'approval_requested', detail: 'create_risk needs a human' }),
       r({ seq: 2, node: 'start', kind: 'node_exited' }),
-      s({ route: 'request_approval', approval: 'pending', step_count: 1 }),
+      s({ route: 'request_approval', approval: 'pending', step_count: 1, node: 'start' }),
 
       r({ seq: 3, node: 'approval', kind: 'approval_recorded', detail: 'create_risk approved by priya' }),
-      s({ route: 'request_approval', approval: 'approved', step_count: 1 }),
+      s({ route: 'request_approval', approval: 'approved', step_count: 1, node: null }),
 
       r({ seq: 4, node: 'call_tool', kind: 'node_entered' }),
       r({ seq: 5, node: 'execute_tool', kind: 'tool_called', detail: 'create_risk -> ok' }),
       r({ seq: 6, node: 'call_tool', kind: 'node_exited' }),
-      s({ route: 'think', step_count: 2 }),
+      s({ route: 'think', step_count: 2, node: 'call_tool' }),
     ]
 
     const tree = buildExecutionTree(viewOf(timeline))
@@ -161,8 +151,8 @@ describe('buildExecutionTree', () => {
     // new trace row at all before its step fires.
     const timeline: TimelineEntry[] = [
       r({ seq: 0, node: 'approval', kind: 'approval_recorded', detail: 'create_risk denied by priya' }),
-      s({ route: 'request_approval', approval: 'denied', step_count: 1 }),
-      s({ route: 'refuse', step_count: 1, terminal: true }),
+      s({ route: 'request_approval', approval: 'denied', step_count: 1, node: null }),
+      s({ route: 'refuse', step_count: 1, terminal: true, node: null }),
     ]
 
     const tree = buildExecutionTree(viewOf(timeline))
@@ -180,7 +170,7 @@ describe('buildExecutionTree', () => {
       r({ seq: 0, node: 'start', kind: 'node_entered' }),
       r({ seq: 1, node: 'think', kind: 'route_selected', detail: 'call_tool: called get_project_status' }),
       r({ seq: 2, node: 'start', kind: 'node_exited' }),
-      s({ route: 'call_tool', step_count: 1 }),
+      s({ route: 'call_tool', step_count: 1, node: 'start' }),
 
       r({ seq: 3, node: 'call_tool', kind: 'node_entered' }),
       // no node_exited/step yet -- the tool call is still running

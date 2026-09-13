@@ -6,7 +6,15 @@ describe('EventRow', () => {
   it('renders an engine row with its seq', () => {
     render(
       <EventRow
-        event={{ type: 'trace', seq: 3, node: 'think', kind: 'route_selected', detail: 'answer', source: 'engine' }}
+        event={{
+          type: 'trace',
+          seq: 3,
+          node: 'think',
+          kind: 'route_selected',
+          detail: 'answer',
+          source: 'engine',
+          step: null,
+        }}
       />,
     )
     expect(screen.getByText('3')).toBeInTheDocument()
@@ -26,6 +34,7 @@ describe('EventRow', () => {
           kind: 'retry_scheduled',
           detail: 'attempt 2',
           source: 'tool_gateway',
+          step: 1,
         }}
       />,
     )

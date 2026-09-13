@@ -2,25 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { TransitionRow } from '../components/trace/TransitionRow'
 import type { ExecutionEntry } from '../lib/executionTree'
-import type { StepEvent, TraceRow } from '../protocol'
-
-function row(overrides: Partial<TraceRow>): TraceRow {
-  return { type: 'trace', seq: 0, node: 'think', kind: 'route_selected', detail: '', source: 'engine', ...overrides }
-}
-
-function step(overrides: Partial<StepEvent>): StepEvent {
-  return {
-    type: 'step',
-    route: null,
-    tool_name: null,
-    tool_arguments: null,
-    tool_mutating: null,
-    approval: 'not_required',
-    step_count: 1,
-    terminal: false,
-    ...overrides,
-  }
-}
+import { row, step } from './fixtures'
 
 describe('TransitionRow', () => {
   it('renders the route and the best-matching reason', () => {

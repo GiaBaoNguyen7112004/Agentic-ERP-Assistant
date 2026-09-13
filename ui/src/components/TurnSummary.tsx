@@ -1,6 +1,6 @@
 import { ToneBadge } from '@/components/shared/ToneBadge'
 import { KeyValueList } from '@/components/shared/KeyValueList'
-import { formatCost } from '@/lib/format'
+import { formatCost, formatDuration } from '@/lib/format'
 import type { TurnFinishedEvent } from '../protocol'
 
 export function TurnSummary({ summary }: { summary: TurnFinishedEvent }) {
@@ -20,6 +20,10 @@ export function TurnSummary({ summary }: { summary: TurnFinishedEvent }) {
         },
         { key: 'route', value: <span className="font-mono">{summary.route ?? '—'}</span> },
         { key: 'steps', value: <span className="tabular-nums">{summary.step_count}</span> },
+        {
+          key: 'duration',
+          value: <span className="tabular-nums">{formatDuration(summary.started_at, summary.finished_at)}</span>,
+        },
         {
           key: 'evidence',
           value: (

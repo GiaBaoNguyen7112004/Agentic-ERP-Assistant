@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { initialTurn, turnReducer } from '../turnReducer'
 import type { ServerEvent } from '../protocol'
+import { row, step as stepFixture } from './fixtures'
 
 function apply(events: ServerEvent[]) {
   return events.reduce(turnReducer, initialTurn)
@@ -50,16 +51,7 @@ describe('answer replaces the streamed preview (D4)', () => {
 })
 
 describe('steps', () => {
-  const step = (route: string, stepCount = 1): ServerEvent => ({
-    type: 'step',
-    route,
-    tool_name: null,
-    tool_arguments: null,
-    tool_mutating: null,
-    approval: 'not_required',
-    step_count: stepCount,
-    terminal: false,
-  })
+  const step = (route: string, stepCount = 1): ServerEvent => stepFixture({ route, step_count: stepCount })
 
   it('keeps every step, including repeats of the same route', () => {
     // Unlike the old deduplicated `decisions` list, the execution tree needs
@@ -76,26 +68,33 @@ describe('steps', () => {
 
 describe('timeline', () => {
   it('interleaves trace rows and steps in exact arrival order', () => {
-    const row = (seq: number): ServerEvent => ({
-      type: 'trace',
-      seq,
-      node: 'think',
-      kind: 'route_selected',
-      detail: 'answer',
-      source: 'engine',
-    })
-    const step: ServerEvent = {
-      type: 'step',
-      route: 'answer',
-      tool_name: null,
-      tool_arguments: null,
-      tool_mutating: null,
-      approval: 'not_required',
-      step_count: 1,
-      terminal: true,
-    }
-    const view = apply([row(0), row(1), step, row(2)])
+    const tick = (seq: number): ServerEvent => row({ seq, detail: 'answer' })
+    const closing: ServerEvent = stepFixture({ route: 'answer', terminal: true })
+    const view = apply([tick(0), tick(1), closing, tick(2)])
     expect(view.timeline.map((entry) => entry.kind)).toEqual(['row', 'row', 'step', 'row'])
+  })
+})
+
+describe('context', () => {
+  it('sets view.context', () => {
+    const view = apply([
+      {
+        type: 'context',
+        request: 'Why is milestone M2 late?',
+        history: [],
+        memories: [],
+        contract: { needs: ['document_passage'], document_query: 'why milestone M2 is late' },
+      },
+    ])
+    expect(view.context?.contract?.needs).toEqual(['document_passage'])
+  })
+
+  it('a second context event (a resumed stream) overwrites the first', () => {
+    const view = apply([
+      { type: 'context', request: 'first', history: [], memories: [], contract: null },
+      { type: 'context', request: 'second', history: [], memories: [], contract: null },
+    ])
+    expect(view.context?.request).toBe('second')
   })
 })
 
@@ -120,7 +119,7 @@ describe('turn_started: paused then resumed', () => {
   it('a second turn_started with resumed:true keeps the earlier events and decisions', () => {
     const view = apply([
       { type: 'turn_started', trace_id: 'run-1', session_id: 's1', actor: 'priya', resumed: false },
-      { type: 'trace', seq: 0, node: 'start', kind: 'node_entered', detail: '', source: 'engine' },
+      row({ seq: 0, node: 'start', kind: 'node_entered', detail: '' }),
       {
         type: 'approval_required',
         trace_id: 'run-1',
@@ -130,7 +129,7 @@ describe('turn_started: paused then resumed', () => {
         actor: 'priya',
       },
       { type: 'turn_started', trace_id: 'run-1', session_id: 's1', actor: 'priya', resumed: true },
-      { type: 'trace', seq: 1, node: 'approval', kind: 'approval_recorded', detail: 'approved by priya', source: 'engine' },
+      row({ seq: 1, node: 'approval', kind: 'approval_recorded', detail: 'approved by priya' }),
     ])
 
     expect(view.events).toHaveLength(2)
@@ -170,7 +169,12 @@ describe('turn_finished and error', () => {
         memories_recalled: 0,
         history_shown: 0,
         observations: [],
-        model_calls: { count: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01, unpriced: 0 },
+        model_calls: {
+          count: 1, input_tokens: 10, output_tokens: 5, cost_usd: 0.01, unpriced: 0, records: [],
+        },
+        memory_audit: [],
+        started_at: '2026-01-01T00:00:00Z',
+        finished_at: '2026-01-01T00:00:00Z',
       },
     ])
     expect(view.status).toBe('done')
