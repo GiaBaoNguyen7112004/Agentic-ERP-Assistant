@@ -3,6 +3,7 @@ import type { ContextEvent } from '../../protocol'
 import { ContractBlock } from './ContractBlock'
 import { HistoryBlock } from './HistoryBlock'
 import { MemoryBlock } from './MemoryBlock'
+import { ModelCallBlock } from './ModelCallBlock'
 
 /** What the orchestrator attached to the state before the engine ever ran:
  * the session's recent turns, recalled memory, and the declared reply
@@ -24,6 +25,16 @@ export function ContextBlock({ context }: { context: ContextEvent }) {
         <SectionHeading>Contract</SectionHeading>
         <ContractBlock contract={context.contract} />
       </div>
+      {context.model_calls.length > 0 && (
+        <div className="space-y-1.5">
+          <SectionHeading count={context.model_calls.length}>Declaration call</SectionHeading>
+          <div className="space-y-1.5">
+            {context.model_calls.map((call, index) => (
+              <ModelCallBlock key={index} call={call} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

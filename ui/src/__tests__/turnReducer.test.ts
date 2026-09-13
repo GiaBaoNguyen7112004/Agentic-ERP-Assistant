@@ -84,6 +84,7 @@ describe('context', () => {
         history: [],
         memories: [],
         contract: { needs: ['document_passage'], document_query: 'why milestone M2 is late' },
+        model_calls: [],
       },
     ])
     expect(view.context?.contract?.needs).toEqual(['document_passage'])
@@ -91,8 +92,8 @@ describe('context', () => {
 
   it('a second context event (a resumed stream) overwrites the first', () => {
     const view = apply([
-      { type: 'context', request: 'first', history: [], memories: [], contract: null },
-      { type: 'context', request: 'second', history: [], memories: [], contract: null },
+      { type: 'context', request: 'first', history: [], memories: [], contract: null, model_calls: [] },
+      { type: 'context', request: 'second', history: [], memories: [], contract: null, model_calls: [] },
     ])
     expect(view.context?.request).toBe('second')
   })

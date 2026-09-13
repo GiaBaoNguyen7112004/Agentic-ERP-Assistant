@@ -4,7 +4,10 @@ import { ContextBlock } from '../components/trace/ContextBlock'
 import type { ContextEvent } from '../protocol'
 
 function context(overrides: Partial<ContextEvent> = {}): ContextEvent {
-  return { type: 'context', request: 'hi', history: [], memories: [], contract: null, ...overrides }
+  return {
+    type: 'context', request: 'hi', history: [], memories: [], contract: null, model_calls: [],
+    ...overrides,
+  }
 }
 
 describe('ContextBlock', () => {

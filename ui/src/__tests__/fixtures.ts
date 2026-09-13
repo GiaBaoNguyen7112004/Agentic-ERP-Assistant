@@ -37,6 +37,8 @@ export function step(overrides: Partial<StepEvent> = {}): StepEvent {
     draft: null,
     redirected_needs: [],
     retry_count: 0,
+    retrieval: null,
+    model_calls: [],
     ...overrides,
   }
 }

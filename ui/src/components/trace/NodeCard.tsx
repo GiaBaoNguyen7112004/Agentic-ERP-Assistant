@@ -8,6 +8,8 @@ import { traceTone } from '@/lib/traceTone'
 import type { Tone } from '@/lib/routeBadge'
 import { entryToolCall, type ExecutionEntry } from '@/lib/executionTree'
 import { EvidenceBlock } from './EvidenceBlock'
+import { ModelCallBlock } from './ModelCallBlock'
+import { RetrievalBlock } from './RetrievalBlock'
 import { RowLine } from './RowLine'
 import { ToolOutcomeBlock } from './ToolOutcomeBlock'
 import { TransitionRow } from './TransitionRow'
@@ -70,6 +72,11 @@ export function NodeCard({ entry }: { entry: ExecutionEntry }) {
         )}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">
           {streaming && <LoaderCircle className="size-3.5 animate-spin text-muted-foreground" aria-hidden />}
+          {entry.step && entry.step.model_calls.length > 0 && (
+            <span className="text-[10px] text-muted-foreground">
+              {entry.step.model_calls.length} LLM call{entry.step.model_calls.length === 1 ? '' : 's'}
+            </span>
+          )}
           {tone !== 'neutral' && !streaming && (
             <ToneBadge tone={tone} className="text-[10px]">
               {entry.rows.length} row{entry.rows.length === 1 ? '' : 's'}
@@ -87,6 +94,12 @@ export function NodeCard({ entry }: { entry: ExecutionEntry }) {
         ) : (
           <p className="text-xs text-muted-foreground">no new trace rows</p>
         )}
+        {entry.step?.retrieval && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Retrieval</p>
+            <RetrievalBlock retrieval={entry.step.retrieval} />
+          </div>
+        )}
         {entry.step?.evidence && (
           <div className="space-y-1">
             <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Evidence</p>
@@ -97,6 +110,18 @@ export function NodeCard({ entry }: { entry: ExecutionEntry }) {
           <div className="space-y-1">
             <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Result</p>
             <ToolOutcomeBlock observations={entry.step.observations} />
+          </div>
+        )}
+        {entry.step && entry.step.model_calls.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              LLM call{entry.step.model_calls.length === 1 ? '' : 's'}
+            </p>
+            <div className="space-y-1.5">
+              {entry.step.model_calls.map((call, index) => (
+                <ModelCallBlock key={index} call={call} />
+              ))}
+            </div>
           </div>
         )}
         {toolCall?.arguments && (
