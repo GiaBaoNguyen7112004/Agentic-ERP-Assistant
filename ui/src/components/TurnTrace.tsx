@@ -1,63 +1,51 @@
 import { Activity, ExternalLink } from 'lucide-react'
-import { DecisionList } from './DecisionList'
-import { EventRow } from './EventRow'
-import { TurnSummary } from './TurnSummary'
+import { buildExecutionTree } from '@/lib/executionTree'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { MonoId } from '@/components/shared/MonoId'
 import { RouteBadge } from '@/components/shared/RouteBadge'
-import { SectionHeading } from '@/components/shared/SectionHeading'
-import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { NodeCard } from './trace/NodeCard'
+import { PhaseCard } from './trace/PhaseCard'
+import { RawEventsTable } from './trace/RawEventsTable'
+import { TurnSummary } from './TurnSummary'
 import type { Message } from '../appState'
 
+/**
+ * The execution inspector: a run's node executions, in order, with what each
+ * one received, did, and produced -- built from the same stream the old flat
+ * event table read, grouped by `lib/executionTree.ts`. See
+ * `docs/trace-inspector-plan.md` for the design this implements and the
+ * later phases that widen what a node card can show.
+ */
 export function TurnTrace({ message }: { message: Extract<Message, { role: 'assistant' }> }) {
   const { turn, traceId } = message
   const runUrl = traceId ? `/api/runs/${traceId}` : null
 
   // A turn restored from session history carries no live trace events --
-  // say so instead of showing an empty table (SessionTurn has no events).
+  // say so instead of showing an empty tree (SessionTurn has no events).
   const historyOnly = turn.events.length === 0 && turn.status !== 'starting'
+  const tree = buildExecutionTree(turn)
 
   return (
     <section className="space-y-4">
-      <div className="space-y-2">
-        <SectionHeading>Trace</SectionHeading>
-        <div className="flex flex-wrap items-center gap-2">
-          <RouteBadge turn={turn} />
-          {traceId ? (
-            <MonoId value={traceId} href={runUrl ?? undefined} copy />
-          ) : (
-            <span className="font-mono text-xs text-muted-foreground">(starting…)</span>
-          )}
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <RouteBadge turn={turn} />
+        {traceId ? (
+          <MonoId value={traceId} copy />
+        ) : (
+          <span className="font-mono text-xs text-muted-foreground">(starting…)</span>
+        )}
       </div>
 
-      {turn.decisions.length > 0 && (
-        <div className="space-y-2">
-          <SectionHeading count={turn.decisions.length}>Decisions</SectionHeading>
-          <DecisionList decisions={turn.decisions} />
-        </div>
-      )}
+      {turn.summary && <TurnSummary summary={turn.summary} />}
 
-      {turn.events.length > 0 && (
+      {!historyOnly && (tree.prelude.length > 0 || tree.entries.length > 0 || tree.consolidation.length > 0 || turn.events.length > 0) && (
         <div className="space-y-2">
-          <SectionHeading count={turn.events.length}>Events</SectionHeading>
-          <div className="rounded-lg border">
-            <Table className="text-xs [&_th]:py-1.5 [&_td]:py-1">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-8 pl-2">#</TableHead>
-                  <TableHead>node</TableHead>
-                  <TableHead>kind</TableHead>
-                  <TableHead>detail</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {turn.events.map((event, index) => (
-                  <EventRow key={`${event.seq ?? 'gw'}-${index}`} event={event} />
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <PhaseCard title="Context" rows={tree.prelude} />
+          {tree.entries.map((entry, index) => (
+            <NodeCard key={index} entry={entry} />
+          ))}
+          <PhaseCard title="Consolidation" rows={tree.consolidation} />
+          <RawEventsTable events={turn.events} />
         </div>
       )}
 
@@ -80,8 +68,6 @@ export function TurnTrace({ message }: { message: Extract<Message, { role: 'assi
           }
         />
       )}
-
-      {turn.summary && <TurnSummary summary={turn.summary} />}
     </section>
   )
 }

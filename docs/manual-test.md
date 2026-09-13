@@ -144,8 +144,14 @@ arrives (the grounding check runs on the full reply). Citation chips:
 `[document#locator]` chips open the source document; `milestone-m2`-style chips
 are ERP record ids from `Sources:`.
 
-**Trace panel** (one section per turn, headed by the `trace_id`, with a link to
-`/api/runs/<trace_id>`):
+**Trace panel** (one section per turn, headed by a route badge and the
+`trace_id`, mono with a copy button): the run's node executions, grouped into
+cards in the order they ran (see `docs/trace-inspector-plan.md`) -- a card
+per `node_entered`/`node_exited` span, plus bare engine-level cards for
+things like a recorded approval decision. Each card lists its own rows and
+the row that explains why the graph moved on to the next route. A raw,
+flat table of every row (the pre-redesign view) stays available, collapsed,
+below the cards.
 
 | Event kind | Emitted by | Meaning |
 |---|---|---|
@@ -167,9 +173,9 @@ Italic, muted rows marked ↳ have no `seq`: they come from the tool gateway's
 hook and are live only (the row's own tooltip says so); the persisted trace
 holds the node-level rows (the code plan lists this as known gap #3).
 
-**Decisions** sub-list: every route change with the tool and its arguments.
-**Summary** line after `turn_finished`: steps, model calls, tokens, cost,
-evidence count, memories/history shown.
+Each node card shows the tool it called and its arguments, when there was
+one, open by default. **Summary** strip under the header: steps, model
+calls, tokens, cost, evidence count, memories/history shown.
 
 Expected model-call counts per turn (`model_calls` rows): document question =
 1 `routed` (planner) + 1 `answered` (composer); tool question = 2 `routed`
@@ -233,7 +239,7 @@ do). The reply ends with `Sources: <record ids>` (deduped, in call order).
 
 | ID | Actor | Request | Expected | Verify |
 |---|---|---|---|---|
-| T1 | priya | `What is the status of milestone M2?` | `get_project_status(milestone_id=M2)`; reply: at risk, 2 days late, due 2026-09-11; `Sources: milestone-m2`. Decision row shows the arguments before the tool runs. | `observations`: 1 row, `ok`, attempts 1; `model_calls`: 2 `routed`. |
+| T1 | priya | `What is the status of milestone M2?` | `get_project_status(milestone_id=M2)`; reply: at risk, 2 days late, due 2026-09-11; `Sources: milestone-m2`. The first node card shows the call and its arguments before the tool runs. | `observations`: 1 row, `ok`, attempts 1; `model_calls`: 2 `routed`. |
 | T2 | priya | `How is sprint SPR-13 going?` | `get_sprint_progress(sprint_id=SPR-13)`; 22 of 40 points, 4 days remaining; `Sources: sprint-13-report`. | — |
 | T3 | priya | `What is the budget position for atlas, including the forecast?` | `get_budget_summary(project_id=atlas, include_forecast=true)`; 292,800 of 480,000 (61%), forecast 515,000; `Sources: budget-summary-q3`. | Note the ERP id `budget-summary-q3` equals the document id: the manifest reuses it on purpose. |
 | T4 | priya | `What are the open risks on atlas?` | `list_risks(project_id=atlas)`; R-1 high, R-2 medium; `Sources: project-atlas, risk-r-1, risk-r-2`. | `source_ids` in the observation = 3. |

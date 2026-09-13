@@ -49,25 +49,53 @@ describe('answer replaces the streamed preview (D4)', () => {
   })
 })
 
-describe('decision de-duplication', () => {
-  const step = (route: string): ServerEvent => ({
+describe('steps', () => {
+  const step = (route: string, stepCount = 1): ServerEvent => ({
     type: 'step',
     route,
     tool_name: null,
     tool_arguments: null,
     tool_mutating: null,
     approval: 'not_required',
-    step_count: 1,
+    step_count: stepCount,
     terminal: false,
   })
 
-  it('keeps only the steps whose route differs from the previous one kept', () => {
-    const view = apply([step('think'), step('think'), step('call_tool'), step('call_tool'), step('answer')])
-    expect(view.decisions.map((d) => d.route)).toEqual(['think', 'call_tool', 'answer'])
+  it('keeps every step, including repeats of the same route', () => {
+    // Unlike the old deduplicated `decisions` list, the execution tree needs
+    // one entry per node execution -- two consecutive `think` steps are two
+    // different node runs, not one decision shown twice.
+    const view = apply([step('think', 1), step('think', 2), step('call_tool', 3)])
+    expect(view.steps.map((s) => s.route)).toEqual(['think', 'think', 'call_tool'])
   })
 
-  it('an empty stream has no decisions', () => {
-    expect(apply([]).decisions).toEqual([])
+  it('an empty stream has no steps', () => {
+    expect(apply([]).steps).toEqual([])
+  })
+})
+
+describe('timeline', () => {
+  it('interleaves trace rows and steps in exact arrival order', () => {
+    const row = (seq: number): ServerEvent => ({
+      type: 'trace',
+      seq,
+      node: 'think',
+      kind: 'route_selected',
+      detail: 'answer',
+      source: 'engine',
+    })
+    const step: ServerEvent = {
+      type: 'step',
+      route: 'answer',
+      tool_name: null,
+      tool_arguments: null,
+      tool_mutating: null,
+      approval: 'not_required',
+      step_count: 1,
+      terminal: true,
+    }
+    const view = apply([row(0), row(1), step, row(2)])
+    expect(view.timeline.map((entry) => entry.kind)).toEqual(['row', 'row', 'step', 'row'])
   })
 })
 

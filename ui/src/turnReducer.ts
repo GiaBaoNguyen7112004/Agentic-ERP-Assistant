@@ -9,6 +9,21 @@ import type {
 
 export type TurnStatus = 'starting' | 'running' | 'paused' | 'done' | 'error'
 
+/**
+ * One arrival on the trace half of the stream, in the exact order it was
+ * received. `events` and `steps` below are convenience projections of this
+ * same sequence -- kept because the raw events table and the reducer's own
+ * tests read them directly -- but `timeline` is the one array that still
+ * says which trace rows arrived *before* a given step event, which a flat
+ * `events`/`steps` split cannot: a node's own rows and any live gateway rows
+ * around it interleave with the `step` events that close each node
+ * execution, and `lib/executionTree.ts` groups rows into node spans by
+ * walking exactly this interleaving (see that module for why: a step can
+ * close a batch of zero new trace rows, e.g. a denied approval's refusal,
+ * and nothing about `events.length` at that point says so on its own).
+ */
+export type TimelineEntry = { kind: 'row'; row: TraceRow } | { kind: 'step'; step: StepEvent }
+
 export interface TurnView {
   traceId: string | null
   status: TurnStatus
@@ -19,9 +34,12 @@ export interface TurnView {
   approval: ApprovalRequiredEvent | null
   /** Every trace row, engine and gateway, in arrival order. */
   events: TraceRow[]
-  /** `step` events kept only when the route changed from the previous one
-   * kept -- the decision sequence, not every intermediate observation. */
-  decisions: StepEvent[]
+  /** Every `step` event, in arrival order -- not deduplicated by route (the
+   * execution tree needs one entry per node execution, not one per distinct
+   * route reached). */
+  steps: StepEvent[]
+  /** `events` and `steps`, interleaved as they arrived. See the type doc. */
+  timeline: TimelineEntry[]
   summary: TurnFinishedEvent | null
   error: string | null
 }
@@ -33,7 +51,8 @@ export const initialTurn: TurnView = {
   answer: null,
   approval: null,
   events: [],
-  decisions: [],
+  steps: [],
+  timeline: [],
   summary: null,
   error: null,
 }
@@ -57,15 +76,18 @@ export function turnReducer(view: TurnView, event: ServerEvent): TurnView {
       }
 
     case 'trace':
-      return { ...view, events: [...view.events, event] }
-
-    case 'step': {
-      const last = view.decisions[view.decisions.length - 1]
-      if (last && last.route === event.route) {
-        return view
+      return {
+        ...view,
+        events: [...view.events, event],
+        timeline: [...view.timeline, { kind: 'row', row: event }],
       }
-      return { ...view, decisions: [...view.decisions, event] }
-    }
+
+    case 'step':
+      return {
+        ...view,
+        steps: [...view.steps, event],
+        timeline: [...view.timeline, { kind: 'step', step: event }],
+      }
 
     case 'token':
       return { ...view, streamed: view.streamed + event.text }
