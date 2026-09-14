@@ -1,4 +1,4 @@
-import type { StepEvent, TraceRow } from '../protocol'
+import type { AgentStateSnapshot, StepEvent, TraceRow } from '../protocol'
 import type { TurnView } from '../turnReducer'
 
 /**
@@ -32,6 +32,13 @@ export interface ExecutionEntry {
   /** The step that closed this entry, or `null` while it is still the one
    * being streamed (no `node_exited`/closing step has arrived yet). */
   step: StepEvent | null
+  /** The state this entry started from: the previous closed entry's
+   * `step.state`, or the context's `state` for the first entry, or `null`
+   * when neither is known (no `ContextEvent` arrived -- a caller with no
+   * `on_start`, or a hydrated view). Computed here, once, so the "before"
+   * side of every State block's diff is one pure, tested rule rather than
+   * something each card works out for itself. */
+  stateBefore: AgentStateSnapshot | null
 }
 
 export interface ExecutionTree {
@@ -144,6 +151,12 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
   const gatewayByStep = new Map<number, TraceRow[]>()
   let sawFirstBatch = false
   let sawAnyStep = false
+  // The running "state before the next entry" baseline: the context's own
+  // state to start, then whichever entry's step most recently carried one.
+  // A hydrated `null` step state (every span but the last -- see
+  // `hydrate.ts`) must not erase a known baseline, so this only ever moves
+  // forward on a non-null state.
+  let lastState: AgentStateSnapshot | null = view.context?.state ?? null
 
   for (const item of view.timeline) {
     if (item.kind === 'row') {
@@ -179,7 +192,9 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
       nodeName: item.step.node ?? rows[0]?.node ?? null,
       rows,
       step: item.step,
+      stateBefore: lastState,
     })
+    if (item.step.state !== null) lastState = item.step.state
   }
 
   // Whatever is left in `pending` never got closed by a step. Two honest
@@ -201,6 +216,7 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
         nodeName: openEntryNodeName(split.rest),
         rows: split.rest,
         step: null,
+        stateBefore: lastState,
       })
     } else if (pending.some(isNodeEntered)) {
       const lastOrdinal = entries.length > 0 ? entries[entries.length - 1].ordinal : 0
@@ -210,6 +226,7 @@ export function buildExecutionTree(view: TurnView): ExecutionTree {
         nodeName: openEntryNodeName(pending),
         rows: pending,
         step: null,
+        stateBefore: lastState,
       })
     } else {
       consolidation = pending

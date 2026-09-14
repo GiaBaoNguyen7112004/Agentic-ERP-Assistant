@@ -11,6 +11,7 @@ import { EvidenceBlock } from './EvidenceBlock'
 import { ModelCallBlock } from './ModelCallBlock'
 import { RetrievalBlock } from './RetrievalBlock'
 import { RowLine } from './RowLine'
+import { StateBlock } from './StateBlock'
 import { ToolOutcomeBlock } from './ToolOutcomeBlock'
 import { TransitionRow } from './TransitionRow'
 
@@ -130,6 +131,7 @@ export function NodeCard({ entry }: { entry: ExecutionEntry }) {
             <JsonBlock value={toolCall.arguments} />
           </div>
         )}
+        {entry.step && <StateBlock state={entry.step.state} previous={entry.stateBefore} />}
         <TransitionRow entry={entry} />
       </CollapsibleContent>
     </Collapsible>

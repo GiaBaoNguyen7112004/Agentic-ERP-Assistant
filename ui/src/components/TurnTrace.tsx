@@ -77,7 +77,8 @@ export function TurnTrace({
           <History className="mt-0.5 size-3 shrink-0" aria-hidden />
           <span>
             Reconstructed from the filed run -- node attribution is best-effort, never
-            the stream's word (docs/trace-inspector-plan.md §6.3).
+            the stream's word (docs/trace-inspector-plan.md §6.3). Only the final state
+            is filed; earlier nodes show no state.
             {unattributed.length > 0 &&
               ` ${unattributed.length} tool result${unattributed.length === 1 ? '' : 's'} could not be attributed to a node.`}
           </span>

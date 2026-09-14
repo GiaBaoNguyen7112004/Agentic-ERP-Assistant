@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { NodeCard } from '../components/trace/NodeCard'
 import type { ExecutionEntry } from '../lib/executionTree'
-import { row, step } from './fixtures'
+import { agentState, row, step } from './fixtures'
 
 describe('NodeCard', () => {
   it('renders a numbered node entry with its label, raw name, and rows, open by default', () => {
@@ -13,6 +13,7 @@ describe('NodeCard', () => {
       nodeName: 'call_tool',
       rows: [row({ kind: 'tool_called', detail: 'get_project_status -> ok' })],
       step: step({ route: 'think', tool_name: 'get_project_status', step_count: 2 }),
+      stateBefore: null,
     }
     render(<NodeCard entry={entry} />)
 
@@ -34,6 +35,7 @@ describe('NodeCard', () => {
       nodeName: 'approval',
       rows: [row({ node: 'approval', kind: 'approval_recorded', detail: 'create_risk approved by priya' })],
       step: step({ route: 'request_approval', approval: 'approved' }),
+      stateBefore: null,
     }
     render(<NodeCard entry={entry} />)
 
@@ -52,6 +54,7 @@ describe('NodeCard', () => {
         tool_name: 'create_risk',
         tool_arguments: { project_id: 'atlas', severity: 'high' },
       }),
+      stateBefore: null,
     }
     render(<NodeCard entry={entry} />)
 
@@ -59,10 +62,34 @@ describe('NodeCard', () => {
   })
 
   it('shows a "no new trace rows" note and a spinner for a still-streaming node with no rows yet', () => {
-    const entry: ExecutionEntry = { kind: 'node', ordinal: 3, nodeName: 'call_tool', rows: [], step: null }
+    const entry: ExecutionEntry = { kind: 'node', ordinal: 3, nodeName: 'call_tool', rows: [], step: null, stateBefore: null }
     render(<NodeCard entry={entry} />)
 
     expect(screen.getByText('no new trace rows')).toBeInTheDocument()
+  })
+
+  it('shows a State trigger with the changed-field count when the step carries a state', () => {
+    const previous = agentState({ route: null })
+    const next = agentState({ route: 'call_tool', step_count: 1 })
+    const entry: ExecutionEntry = {
+      kind: 'node',
+      ordinal: 1,
+      nodeName: 'think',
+      rows: [],
+      step: step({ route: 'call_tool', step_count: 1, state: next }),
+      stateBefore: previous,
+    }
+    render(<NodeCard entry={entry} />)
+
+    expect(screen.getByText('2 changed')).toBeInTheDocument()
+  })
+
+  it('shows no State trigger for a still-streaming entry with no step yet', () => {
+    const entry: ExecutionEntry = { kind: 'node', ordinal: 1, nodeName: 'think', rows: [], step: null, stateBefore: null }
+    render(<NodeCard entry={entry} />)
+
+    expect(screen.queryByText(/State not carried/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^State/ })).not.toBeInTheDocument()
   })
 
   it('collapses on click, hiding its rows', async () => {
@@ -73,6 +100,7 @@ describe('NodeCard', () => {
       nodeName: 'think',
       rows: [row({ detail: 'answer: answered without calling a tool' })],
       step: step({ route: 'answer', terminal: true }),
+      stateBefore: null,
     }
     render(<NodeCard entry={entry} />)
 

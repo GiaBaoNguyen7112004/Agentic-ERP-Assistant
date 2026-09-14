@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ContextBlock } from '../components/trace/ContextBlock'
 import type { ContextEvent } from '../protocol'
+import { agentState } from './fixtures'
 
 function context(overrides: Partial<ContextEvent> = {}): ContextEvent {
   return {
@@ -67,5 +68,15 @@ describe('ContextBlock', () => {
     expect(screen.getByText('Prefers replies in Vietnamese.')).toBeInTheDocument()
     expect(screen.getByText('document_passage')).toBeInTheDocument()
     expect(screen.getByText('why milestone M2 is late')).toBeInTheDocument()
+  })
+
+  it('shows "State not carried" when the context has no state', () => {
+    render(<ContextBlock context={context()} />)
+    expect(screen.getByText(/State not carried/)).toBeInTheDocument()
+  })
+
+  it('renders the initial-state block when the context carries one', () => {
+    render(<ContextBlock context={context({ state: agentState() })} />)
+    expect(screen.getByText('initial')).toBeInTheDocument()
   })
 })

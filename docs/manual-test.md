@@ -174,8 +174,17 @@ hook and are live only (the row's own tooltip says so); the persisted trace
 holds the node-level rows (the code plan lists this as known gap #3).
 
 Each node card shows the tool it called and its arguments, when there was
-one, open by default. **Summary** strip under the header: steps, model
-calls, tokens, cost, evidence count, memories/history shown.
+one, open by default. Each card also carries a collapsed **State** row
+listing the fields that node changed (`route`, `tool_name`, `evidence
++n appended`, …); expanding it shows the whole `AgentState` after that
+node, diffed against the state before it, with a `changed only` / `all
+fields` toggle and a copy-JSON button. The Context card's own State row
+(labelled "Initial state") shows what the orchestrator handed the engine
+before the first node ran. A run reconstructed from history (no live
+trace) carries a state only on its last card — the record files the final
+`AgentState` only, and the banner says so. **Summary** strip under the
+header: steps, model calls, tokens, cost, evidence count, memories/history
+shown.
 
 Expected model-call counts per turn (`model_calls` rows): document question =
 1 `routed` (planner) + 1 `answered` (composer); tool question = 2 `routed`

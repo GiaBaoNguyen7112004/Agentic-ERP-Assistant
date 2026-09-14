@@ -319,4 +319,14 @@ describe('hydrateTurn', () => {
       document_query: 'M2 delay',
     })
   })
+
+  it('carries the filed state only on the last step; context and every earlier step get null', () => {
+    const state = aState({ response: 'M2 is two days late.' })
+    const { turn } = hydrateTurn(aReport({ state, events: aToolTurnEvents() }))
+
+    expect(turn.context?.state).toBeNull()
+    expect(turn.steps.length).toBeGreaterThan(1)
+    expect(turn.steps.slice(0, -1).every((s) => s.state === null)).toBe(true)
+    expect(turn.steps.at(-1)?.state).toEqual(state)
+  })
 })

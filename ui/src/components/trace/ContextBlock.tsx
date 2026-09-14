@@ -4,6 +4,7 @@ import { ContractBlock } from './ContractBlock'
 import { HistoryBlock } from './HistoryBlock'
 import { MemoryBlock } from './MemoryBlock'
 import { ModelCallBlock } from './ModelCallBlock'
+import { StateBlock } from './StateBlock'
 
 /** What the orchestrator attached to the state before the engine ever ran:
  * the session's recent turns, recalled memory, and the declared reply
@@ -35,6 +36,7 @@ export function ContextBlock({ context }: { context: ContextEvent }) {
           </div>
         </div>
       )}
+      <StateBlock state={context.state} previous={null} title="Initial state" />
     </div>
   )
 }

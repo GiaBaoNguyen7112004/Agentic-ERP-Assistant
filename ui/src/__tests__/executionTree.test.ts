@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildExecutionTree, entryToolCall, type ExecutionEntry } from '../lib/executionTree'
 import { initialTurn, type TimelineEntry, type TurnView } from '../turnReducer'
 import type { StepEvent, TraceRow } from '../protocol'
-import { row, step } from './fixtures'
+import { agentState, context as contextFixture, row, step } from './fixtures'
 
 const r = (partial: Partial<TraceRow>): TimelineEntry => ({ kind: 'row', row: row(partial) })
 const s = (partial: Partial<StepEvent>): TimelineEntry => ({ kind: 'step', step: step(partial) })
@@ -192,7 +192,7 @@ describe('buildExecutionTree', () => {
 
 describe('entryToolCall', () => {
   function entry(overrides: Partial<ExecutionEntry>): ExecutionEntry {
-    return { kind: 'node', ordinal: 1, nodeName: null, rows: [], step: null, ...overrides }
+    return { kind: 'node', ordinal: 1, nodeName: null, rows: [], step: null, stateBefore: null, ...overrides }
   }
 
   it('is relevant for the node that executed the call, whatever route it produced', () => {
@@ -248,5 +248,71 @@ describe('entryToolCall', () => {
 
   it('is null while the entry is still streaming (no step yet)', () => {
     expect(entryToolCall(entry({ nodeName: 'call_tool', step: null }))).toBeNull()
+  })
+})
+
+describe('stateBefore', () => {
+  it('seeds the first entry from the context state, and each later entry from the previous step state', () => {
+    const s0 = agentState({ step_count: 0 })
+    const s1 = agentState({ step_count: 1, route: 'call_tool' })
+    const s2 = agentState({ step_count: 2, route: 'think' })
+
+    const timeline: TimelineEntry[] = [
+      r({ seq: 0, node: 'start', kind: 'node_entered' }),
+      s({ route: 'call_tool', step_count: 1, node: 'start', state: s1 }),
+      r({ seq: 1, node: 'call_tool', kind: 'node_entered' }),
+      s({ route: 'think', step_count: 2, node: 'call_tool', state: s2 }),
+    ]
+
+    const tree = buildExecutionTree({ ...viewOf(timeline), context: contextFixture({ state: s0 }) })
+
+    expect(tree.entries).toHaveLength(2)
+    expect(tree.entries[0].stateBefore).toBe(s0)
+    expect(tree.entries[1].stateBefore).toBe(s1)
+  })
+
+  it('is null for the first entry when no context (or no context state) arrived', () => {
+    const timeline: TimelineEntry[] = [
+      r({ seq: 0, node: 'start', kind: 'node_entered' }),
+      s({ route: 'answer', step_count: 1, node: 'start', terminal: true }),
+    ]
+    const tree = buildExecutionTree(viewOf(timeline))
+    expect(tree.entries[0].stateBefore).toBeNull()
+  })
+
+  it('a hydrated null step state does not erase the baseline for the next entry', () => {
+    const s0 = agentState({ step_count: 0 })
+    const s2 = agentState({ step_count: 2, terminal: true })
+
+    const timeline: TimelineEntry[] = [
+      r({ seq: 0, node: 'start', kind: 'node_entered' }),
+      s({ route: 'call_tool', step_count: 1, node: 'start', state: null }),
+      r({ seq: 1, node: 'call_tool', kind: 'node_entered' }),
+      s({ route: 'answer', step_count: 2, node: 'call_tool', terminal: true, state: s2 }),
+    ]
+
+    const tree = buildExecutionTree({ ...viewOf(timeline), context: contextFixture({ state: s0 }) })
+
+    // Entry 0 (null step state) never overwrote the running baseline, so
+    // entry 1 still sees the context's own state, not a lost one.
+    expect(tree.entries[0].stateBefore).toBe(s0)
+    expect(tree.entries[1].stateBefore).toBe(s0)
+  })
+
+  it('carries the running baseline into a still-streaming trailing entry', () => {
+    const s0 = agentState({ step_count: 0 })
+    const s1 = agentState({ step_count: 1, route: 'call_tool' })
+
+    const timeline: TimelineEntry[] = [
+      r({ seq: 0, node: 'start', kind: 'node_entered' }),
+      s({ route: 'call_tool', step_count: 1, node: 'start', state: s1 }),
+      r({ seq: 1, node: 'call_tool', kind: 'node_entered' }),
+    ]
+
+    const tree = buildExecutionTree({ ...viewOf(timeline), context: contextFixture({ state: s0 }) })
+
+    expect(tree.entries).toHaveLength(2)
+    expect(tree.entries[1].step).toBeNull()
+    expect(tree.entries[1].stateBefore).toBe(s1)
   })
 })
