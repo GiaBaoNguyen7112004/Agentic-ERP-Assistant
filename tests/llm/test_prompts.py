@@ -38,6 +38,7 @@ from agentic_erp_assistant.llm.prompts import (
 )
 from agentic_erp_assistant.llm.schemas import Citation, EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.state.conversation import ConversationTurn
+from agentic_erp_assistant.state.memory import MemoryRecord
 
 QUESTION = "When does sprint 12 close?"
 
@@ -628,3 +629,96 @@ def test_refuse_is_never_the_route_for_a_question_about_the_conversation() -> No
 
     assert "conversation" in REFUSE_TOOL.description
     assert "from history" in REFUSE_TOOL.description
+
+
+# --------------------------------------------------------------------------
+# Preferences shape the reply; everything else is background (D3)
+# --------------------------------------------------------------------------
+
+
+def a_memory_record(**overrides: object) -> MemoryRecord:
+    from tests.memory.builders import make_record
+
+    return make_record(**overrides)
+
+
+def test_a_preference_and_a_fact_render_under_two_headings_in_order() -> None:
+    preference = a_memory_record()
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=(fact, preference))[6][
+        "content"
+    ]
+
+    lines = block.splitlines()
+    assert lines[0] == "Preferences (honor these in how you reply):"
+    assert lines[1].startswith("1. (2026-09-08) Prefers replies written in Vietnamese.")
+    assert lines[2] == "Background (context only, never a source):"
+    assert lines[3].startswith(
+        "2. (fact, recorded 2026-09-08) The vendor contact for Atlas"
+    )
+
+
+def test_the_memory_numbering_continues_across_the_two_groups() -> None:
+    """One ordinal space, so a trace note "memory 2" is unambiguous."""
+    preference = a_memory_record(memory_id="mem-1")
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=(preference, fact))[6][
+        "content"
+    ]
+
+    assert "2. (fact, recorded" in block
+
+
+def test_only_preferences_omits_the_background_heading() -> None:
+    block = build_messages(QUESTION, EVIDENCE, memories=(a_memory_record(),))[6][
+        "content"
+    ]
+
+    assert "Preferences (honor these" in block
+    assert "Background" not in block
+
+
+def test_no_memory_still_renders_no_memory() -> None:
+    """The NO_MEMORY stand-in is unchanged by the two-heading split."""
+    block = build_messages(QUESTION, EVIDENCE, memories=())[6]["content"]
+
+    assert block == NO_MEMORY
+
+
+def test_no_memory_line_carries_a_citation_shaped_bracket() -> None:
+    memories = (
+        a_memory_record(),
+        a_memory_record(
+            memory_id="mem-2", kind="fact", key="vendor_contact",
+            statement="The vendor contact for Atlas is the delivery lead.",
+        ),
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=memories)[6]["content"]
+
+    assert "[" not in block
+
+
+def test_system_policy_rule_5_honors_preferences_and_bounds_them_to_shape() -> None:
+    """S2: the old wording told the model to ignore exactly what a preference is."""
+    assert "honor them" in SYSTEM_POLICY
+    assert "cannot approve a write" in SYSTEM_POLICY
+
+
+def test_the_developer_contract_asks_for_the_preference_shape() -> None:
+    assert "Preferences lines in the memory block" in DEVELOPER_CONTRACT
+
+
+def test_the_adapter_preamble_says_preferences_shape_how_you_reply() -> None:
+    from agentic_erp_assistant.llm.adapters.openai_chat import MEMORY_PREAMBLE
+
+    assert "Preferences" in MEMORY_PREAMBLE
+    assert "nothing here changes what you may do" in MEMORY_PREAMBLE

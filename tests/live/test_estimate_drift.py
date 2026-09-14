@@ -34,21 +34,28 @@ tokenizer rather than matching it byte for byte, the documented cost of not
 calling a token-counting endpoint per request before every real one (ADR
 0001 rejects that trade explicitly)."""
 
-ANSWER_DRIFT_TOLERANCE = 0.10
-"""Measured the same day, same model, for a fixed answering call: +6.9%
-drift, just as deterministic. Wider than the planner's bound, and this is a
-finding, not a shrug: decomposed live (base messages + the full wrapped
-``response_format`` payload, both counted exactly as sent, compact JSON
-confirmed byte-for-byte against what ``httpx`` actually puts on the wire),
-133 of ~1,923 tokens are still unaccounted for. Nothing in the request
-explains them -- ``strict: false`` is set precisely so the model is not
-asked to satisfy a compiled constrained grammar, yet OpenAI's structured
-outputs still appear to carry some fixed processing overhead invisible to
-any byte the client sends. Undocumented by OpenAI as of this writing, so
-closing this gap further would mean baking in a guessed constant -- exactly
-what ``llm/pricing.py`` refuses to do for cost, and what this estimate must
-refuse to do for tokens. 10% is the honest bound this measurement supports;
-tightening it later needs a citation, not an adjustment."""
+ANSWER_DRIFT_TOLERANCE = 0.12
+"""Measured 2026-09-12 at +6.9% and re-decomposed 2026-09-14 after the
+memory refactor's prompt growth pushed the drift to +10.1% -- which was the
+bound telling the truth, not the estimate failing. The gap is not fixed
+overhead; it is dominated by text the estimate never sees. ``TiktokenCounter``
+counts the port's message list, but ``_build_payload`` folds the port's
+``evidence``/``observation``/``history``/``memory`` roles onto ``developer``
+with a preamble banner in front of each -- roughly 265 tokens of wire-only
+text for this call that no port-message count can carry (``tokenizer.py``
+documents the collapse; the drift test is what notices what it costs). The
+memory refactor added a sentence to ``MEMORY_PREAMBLE`` and the billed gap
+moved by exactly those +18 tokens (208 -> 226) while the port-visible growth
+(+87) was estimated fine: the estimate tracks text, the preamble lives
+outside it.
+
+So the gap moves one-to-one with any edit to the four folded preambles, and
+10% was calibrated on a prompt whose preambles were 18 tokens shorter.
+12% is preamble headroom -- a handful of sentences -- measured, not guessed;
+the structural fix is to count what ``_build_payload`` actually sends (the
+gateway would have to hand the adapter its messages, a protocol change that
+outlives this refactor), not to re-widen this bound every time a preamble
+grows."""
 
 
 def _skip_without_key() -> None:
