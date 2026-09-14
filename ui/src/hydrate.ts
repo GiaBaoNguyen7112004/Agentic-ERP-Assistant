@@ -25,6 +25,10 @@
 //                   `call_tool` span and nothing else
 //   response     -> the filed reply closes the LAST span, terminal, exactly
 //                   where a live terminal step closes the turn
+//   state        -> the filed (final) state on the LAST span only; every
+//                   other step and the context carry null -- nothing
+//                   intermediate is filed (docs/agent-state-inspector-plan.md
+//                   D4)
 //
 // Rows the engine files outside any span (prelude recall/declaration rows,
 // consolidation write/reject rows) stay stepless on purpose:
@@ -153,6 +157,7 @@ function baseStep(stepCount: number, overrides: Partial<StepEvent>): StepEvent {
     retry_count: 0,
     retrieval: null,
     model_calls: [],
+    state: null,
     ...overrides,
   }
 }
@@ -277,13 +282,15 @@ export function hydrateTurn(report: RunReport): HydratedTurn {
   }
 
   // The filed reply closes the last span, terminal -- where a live terminal
-  // step closes the turn.
+  // step closes the turn. The filed run holds only the final AgentState, so
+  // only this span's State block gets one -- every earlier card says so.
   const lastIndex = spans.length - 1
   if (lastIndex >= 0) {
     steps[lastIndex].response = report.answer.text || state.response
     steps[lastIndex].failure = state.failure
     steps[lastIndex].error_detail = state.error_detail
     steps[lastIndex].terminal = state.terminal
+    steps[lastIndex].state = state
   }
 
   const context: ContextEvent = {
@@ -298,6 +305,9 @@ export function hydrateTurn(report: RunReport): HydratedTurn {
     // node that made it, so none is claimed here -- the records ride the
     // summary (`summary.model_calls`), which is where "run level" shows.
     model_calls: [],
+    // A filed run holds no state from before the first node ran -- only
+    // the LAST span carries a state (the run's final one, set below).
+    state: null,
   }
 
   const answer: AnswerEvent = {

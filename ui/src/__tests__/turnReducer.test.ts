@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { initialTurn, turnReducer } from '../turnReducer'
 import type { ServerEvent } from '../protocol'
-import { row, step as stepFixture } from './fixtures'
+import { context as contextFixture, row, step as stepFixture } from './fixtures'
 
 function apply(events: ServerEvent[]) {
   return events.reduce(turnReducer, initialTurn)
@@ -78,22 +78,18 @@ describe('timeline', () => {
 describe('context', () => {
   it('sets view.context', () => {
     const view = apply([
-      {
-        type: 'context',
+      contextFixture({
         request: 'Why is milestone M2 late?',
-        history: [],
-        memories: [],
         contract: { needs: ['document_passage'], document_query: 'why milestone M2 is late' },
-        model_calls: [],
-      },
+      }),
     ])
     expect(view.context?.contract?.needs).toEqual(['document_passage'])
   })
 
   it('a second context event (a resumed stream) overwrites the first', () => {
     const view = apply([
-      { type: 'context', request: 'first', history: [], memories: [], contract: null, model_calls: [] },
-      { type: 'context', request: 'second', history: [], memories: [], contract: null, model_calls: [] },
+      contextFixture({ request: 'first' }),
+      contextFixture({ request: 'second' }),
     ])
     expect(view.context?.request).toBe('second')
   })

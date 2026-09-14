@@ -212,7 +212,8 @@ def test_clip_text_at_exactly_the_limit_is_not_truncated() -> None:
 
 def test_context_event_accepts_no_history_no_memory_and_an_unchecked_contract() -> None:
     event = ContextEvent(
-        request="hi", history=(), memories=(), contract=None, model_calls=()
+        request="hi", history=(), memories=(), contract=None, model_calls=(),
+        state=state(),
     )
 
     assert event.history == ()
@@ -226,7 +227,48 @@ def test_context_event_carries_a_declared_contract_with_no_needs() -> None:
         request="hi", history=(), memories=(),
         contract=ContractOut(needs=(), document_query=None),
         model_calls=(),
+        state=state(),
     )
 
     assert event.contract is not None
     assert event.contract.needs == ()
+
+
+def test_context_event_requires_a_state() -> None:
+    with pytest.raises(ValidationError):
+        ContextEvent(request="hi", history=(), memories=(), contract=None, model_calls=())
+
+
+def test_step_event_carries_the_state_and_round_trips_through_json() -> None:
+    turn_state = state(
+        tool_name="get_project_status",
+        tool_arguments={"milestone_id": "M2"},
+        evidence=(EvidenceSnippet(source_id="doc-1", locator="p.1", text="hi"),),
+    )
+    event = StepEvent(
+        route="call_tool",
+        tool_name="get_project_status",
+        tool_arguments={"milestone_id": "M2"},
+        tool_mutating=False,
+        approval="not_required",
+        step_count=1,
+        terminal=False,
+        node="think",
+        elapsed_ms=1.0,
+        evidence=None,
+        observations=(),
+        response=None,
+        failure="none",
+        error_detail=None,
+        draft=None,
+        redirected_needs=(),
+        retry_count=0,
+        retrieval=None,
+        model_calls=(),
+        state=turn_state,
+    )
+
+    round_tripped = AgentState.model_validate(
+        json.loads(event.model_dump_json())["state"]
+    )
+    assert round_tripped == turn_state

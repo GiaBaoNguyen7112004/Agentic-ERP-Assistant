@@ -166,6 +166,11 @@ export interface ContextEvent {
   memories: MemoryOut[]
   contract: ContractOut | null
   model_calls: ModelCallOut[]
+  // Always sent live -- the state the engine is about to run from. `null`
+  // only on a view hydrated from a filed run, which files no starting
+  // state (docs/agent-state-inspector-plan.md D4/D5); the server-side
+  // field is required (never actually null on the wire).
+  state: AgentStateSnapshot | null
 }
 
 export interface TraceRow {
@@ -199,6 +204,11 @@ export interface StepEvent {
   retry_count: number
   retrieval: RetrievalOut | null
   model_calls: ModelCallOut[]
+  // Always sent live -- the whole state this node returned. `null` only on
+  // a step hydrated from a filed run other than the last one (the record
+  // holds the final state only -- see hydrate.ts); the server-side field
+  // is required (never actually null on the wire).
+  state: AgentStateSnapshot | null
 }
 
 export interface TokenEvent {

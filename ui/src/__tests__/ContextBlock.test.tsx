@@ -6,6 +6,7 @@ import type { ContextEvent } from '../protocol'
 function context(overrides: Partial<ContextEvent> = {}): ContextEvent {
   return {
     type: 'context', request: 'hi', history: [], memories: [], contract: null, model_calls: [],
+    state: null,
     ...overrides,
   }
 }

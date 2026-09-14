@@ -338,6 +338,13 @@ class ContextEvent(_Event):
     happens before this event is even built (see ``engine/orchestrator.py``
     -- recall, then declare, then the engine), so a call made here would
     otherwise have nowhere on the wire to be attributed to at all."""
+    state: AgentState
+    """The state the engine is about to run from -- history, memories and
+    contract already attached, no node executed yet (or, on a resume, the
+    paused state exactly as the pause store returned it). The baseline
+    every later :class:`StepEvent.state` is read against on the client, and
+    the same object :class:`~agentic_erp_assistant.web.stream.TurnStream`
+    seeds ``_last`` with (see ``docs/agent-state-inspector-plan.md``)."""
 
 
 class TraceRow(_Event):
@@ -370,9 +377,13 @@ class TraceRow(_Event):
 class StepEvent(_Event):
     """Sent after every node execution -- the engine's own observer hook.
 
-    Named ``step`` rather than ``state`` on the wire: it is a projection of
-    the state a screen needs, not the state itself, which is neither small
-    nor stable across engine changes.
+    Named ``step`` rather than ``state`` on the wire for historical reasons
+    (the earlier, delta-only shape this event started as); it now carries
+    both: the delta fields below, kept because the existing blocks read them
+    cheaply, and :attr:`state` itself -- the whole object the engine's
+    observer was handed for this node, so a reader never has to sum earlier
+    deltas to know what a node actually saw or produced (``docs/
+    agent-state-inspector-plan.md`` D1).
     """
 
     type: Literal["step"] = "step"
@@ -416,6 +427,12 @@ class StepEvent(_Event):
     model_calls: tuple[ModelCallOut, ...]
     """Model calls made during this node's own execution -- a planner
     decision, a composer call. Empty on a step that made none."""
+    state: AgentState
+    """The whole state this node returned -- the exact object the engine's
+    observer was handed, events included. The delta fields above are
+    projections of this one for the blocks that already read them; this is
+    the record itself, sent whole on every step (``docs/
+    agent-state-inspector-plan.md`` D1/D2)."""
 
 
 class TokenEvent(_Event):

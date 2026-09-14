@@ -281,6 +281,7 @@ class TurnStream:
                 memories=tuple(_memory_out(memory) for memory in state.memories),
                 contract=contract,
                 model_calls=model_calls,
+                state=state,
             )
         )
         self._last = state
@@ -351,6 +352,7 @@ class TurnStream:
                 retry_count=state.retry_count,
                 retrieval=retrieval,
                 model_calls=model_calls,
+                state=state,
             )
         )
         self._last = state

@@ -126,6 +126,65 @@ def test_context_seeds_the_delta_baseline_for_the_first_step() -> None:
     assert step_event.observations == ()
 
 
+def test_context_carries_the_state_the_engine_starts_from() -> None:
+    declared = state(history=(make_turn(),))
+
+    (event,) = run_and_collect(lambda s: s.context(declared))
+
+    assert event.state == declared
+
+
+def test_a_resumed_streams_context_state_is_the_paused_state() -> None:
+    paused = state(
+        tool_name="create_risk",
+        tool_arguments={"project_id": "atlas"},
+        tool_mutating=True,
+        approval="pending",
+    )
+
+    (event,) = run_and_collect(lambda s: s.context(paused))
+
+    assert event.state.approval == "pending"
+    assert event.state.tool_name == "create_risk"
+
+
+def test_step_carries_the_whole_state_the_observer_was_handed() -> None:
+    s0 = state()
+    s1 = s0.evolve(
+        events=(TraceEvent(node="start", kind="node_entered"),),
+        step_count=1,
+    )
+    s2 = s1.evolve(
+        observations=(
+            ToolOutcome(
+                tool_name="get_project_status",
+                arguments_summary="milestone_id=M2",
+                status="ok",
+                summary="M2 is on track",
+                source_ids=("m2",),
+                attempts=1,
+            ),
+        ),
+        events=(
+            *s1.events,
+            TraceEvent(node="call_tool", kind="node_entered"),
+            TraceEvent(node="call_tool", kind="node_exited"),
+        ),
+        step_count=2,
+    )
+
+    def produce(s: TurnStream) -> None:
+        s.context(s0)
+        s.step(s1)
+        s.step(s2)
+
+    steps = [e for e in run_and_collect(produce) if isinstance(e, StepEvent)]
+    assert steps[0].state == s1
+    assert steps[1].state == s2
+    assert len(steps[1].state.observations) == 1
+    assert len(steps[1].observations) == 1
+
+
 # --------------------------------------------------------------------------
 # step(): trace rows for new events, then a StepEvent
 # --------------------------------------------------------------------------

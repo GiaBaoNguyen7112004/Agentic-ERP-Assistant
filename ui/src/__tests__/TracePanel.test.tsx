@@ -56,6 +56,7 @@ function liveTurn(traceId: string): TurnView {
     retry_count: 0,
     retrieval: null,
     model_calls: [],
+    state: null,
   } satisfies StepEvent)
 }
 
