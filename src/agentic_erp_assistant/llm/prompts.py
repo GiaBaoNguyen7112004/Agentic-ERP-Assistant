@@ -268,11 +268,11 @@ would look like either.
 """
 
 
-def _render_memory(memories: Sequence[MemoryRecord]) -> str:
+def _render_memory(memories: Sequence[MemoryRecord], *, with_keys: bool = False) -> str:
     """Render memories under two headings: preferences first, then background.
 
-    Three decisions carried over from the single-list version, and one new
-    one, all of them about what the model must not be able to do with this
+    Three decisions carried over from the single-list version, and two new
+    ones, all of them about what the model must not be able to do with this
     block.
 
     **Two headings.** D3 of the memory refactor: a ``preference`` shapes how
@@ -298,9 +298,22 @@ def _render_memory(memories: Sequence[MemoryRecord]) -> str:
     ordinal is for a human reading the trace, and a citation of "2" resolves to
     nothing -- which is the correct outcome, because a memory must never be a
     citation at all.
+
+    **The key is shown only when ``with_keys`` is set.** :func:`build_memory_messages`
+    is the one caller that passes it, because it is the one prompt where showing
+    the key has a purpose: the proposer can only reuse a memory's key -- so a
+    changed preference replaces it instead of drifting to a new one, see
+    ``memory.policy.TOPIC_OVERLAP_RATIO`` for what happens when it does not --
+    if it is told what that key is. An answer must never mention a key (it is
+    not a source, and reciting one would look like a citation of nothing), so
+    :func:`build_messages`, :func:`build_planner_messages` and the promotion
+    builder all keep calling this with the default.
     """
     if not memories:
         return NO_MEMORY
+
+    def _key_suffix(record: MemoryRecord) -> str:
+        return f", key: {record.key}" if with_keys else ""
 
     preferences = [record for record in memories if record.kind == "preference"]
     background = [record for record in memories if record.kind != "preference"]
@@ -309,15 +322,15 @@ def _render_memory(memories: Sequence[MemoryRecord]) -> str:
     if preferences:
         lines.append("Preferences (honor these in how you reply):")
         lines.extend(
-            f"{index}. ({record.recorded_at.date().isoformat()}) "
+            f"{index}. ({record.recorded_at.date().isoformat()}{_key_suffix(record)}) "
             f"{' '.join(record.statement.split())}"
             for index, record in enumerate(preferences, start=1)
         )
     if background:
         lines.append("Background (context only, never a source):")
         lines.extend(
-            f"{index}. ({record.kind}, recorded {record.recorded_at.date().isoformat()}) "
-            f"{' '.join(record.statement.split())}"
+            f"{index}. ({record.kind}, recorded {record.recorded_at.date().isoformat()}"
+            f"{_key_suffix(record)}) {' '.join(record.statement.split())}"
             for index, record in enumerate(background, start=len(preferences) + 1)
         )
     return "\n".join(lines)
@@ -593,8 +606,10 @@ propose the empty list.
 Write each statement as one self-contained sentence a stranger could read next \
 month without this conversation in front of them. Give it a short, stable key \
 naming what it is about, so a later version of the same fact replaces it rather \
-than sitting beside it. Set confidence to what you actually believe: when you \
-are unsure, propose nothing.\
+than sitting beside it. If what this turn established is a newer version of a \
+memory listed below, propose it under that memory's key, exactly as shown, so \
+it replaces the old one; invent a new key only for something not listed. Set \
+confidence to what you actually believe: when you are unsure, propose nothing.\
 """
 """What the model is asked at the end of a turn, in the role that instructs.
 
@@ -610,6 +625,13 @@ steered, and the policy is what happens when steering fails. Item 7 is guidance
 given to a model that may at that moment be reading an instruction somebody
 planted, so it is stated here and then enforced somewhere the planted text
 cannot reach.
+
+The "propose it under that memory's key" sentence is the same pairing for a
+different failure: it is steering, aimed at a cooperative model that can see
+the keys (:func:`build_memory_messages` renders them, uniquely among this
+module's builders), and ``policy.decide``'s ``TOPIC_OVERLAP_RATIO`` check is
+what happens when a model reuses the wrong key, or invents one for a
+preference that already has one, anyway.
 """
 
 
@@ -658,7 +680,11 @@ def build_memory_messages(
             stored, and an instruction to avoid duplicates given without showing
             the existing memories is an instruction nobody could follow. The
             policy still catches a duplicate that gets through; this is what
-            keeps most of them from being proposed in the first place.
+            keeps most of them from being proposed in the first place. Rendered
+            with each record's key (``_render_memory(..., with_keys=True)``,
+            unique to this builder) so a *changed* preference can be proposed
+            under the key it is replacing rather than a new one the policy's
+            ``TOPIC_OVERLAP_RATIO`` check has to catch after the fact.
         principal: Who this turn is for, appended to the system block. The
             proposer must know "the user" is a person, not the assistant --
             ``None`` sends :data:`SYSTEM_POLICY` alone.
@@ -679,7 +705,7 @@ def build_memory_messages(
         {"role": "user", "content": request},
         {"role": "evidence", "content": _render_evidence(evidence)},
         {"role": "observation", "content": _render_observations(observations)},
-        {"role": "memory", "content": _render_memory(memories)},
+        {"role": "memory", "content": _render_memory(memories, with_keys=True)},
         {"role": "assistant", "content": response if response else NO_REPLY},
     ]
 

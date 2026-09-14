@@ -288,6 +288,26 @@ def test_the_turns_own_memories_reach_the_proposer(monkeypatch: pytest.MonkeyPat
     assert seen["memories"] == (memory,)
 
 
+def test_the_rendered_key_reaches_the_proposers_prompt() -> None:
+    """Not mocked this time: the real ``build_memory_messages`` renders each
+    recalled memory's key, so the model can reuse it for a changed preference
+    instead of inventing a new one (see ``memory.policy.TOPIC_OVERLAP_RATIO``
+    for what happens when it does)."""
+    memory = make_record(key="budget_reporting_format")
+    model = FakeModel(called())
+
+    LLMMemoryProposer(model=model).propose(
+        state(memories=(memory,)), required_scope="project.docs.read"
+    )
+
+    memory_block = next(
+        message["content"]
+        for message in model.messages[0]
+        if message["role"] == "memory"
+    )
+    assert "key: budget_reporting_format" in memory_block
+
+
 def test_the_candidate_carries_the_turns_own_words() -> None:
     """The policy's not_established checks need them: a stated preference has
     to be found in the request, and a fact must not merely restate the reply."""

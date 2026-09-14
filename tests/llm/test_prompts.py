@@ -313,6 +313,43 @@ def test_every_role_a_memory_prompt_uses_is_one_the_port_declares() -> None:
     assert roles <= set(get_args(Role))
 
 
+def test_the_memory_prompt_shows_each_recalled_memorys_key() -> None:
+    """The proposer can only reuse a key it is shown -- see
+    ``memory.policy.TOPIC_OVERLAP_RATIO`` for what happens when it invents a
+    new one for a preference that already has one."""
+    preference = a_memory_record(key="budget_reporting_format")
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    messages = build_memory_messages(QUESTION, memories=(preference, fact))
+    block = messages[5]["content"]
+
+    assert "key: budget_reporting_format" in block
+    assert "key: vendor_contact" in block
+
+
+def test_the_memory_contract_asks_to_reuse_the_key_shown() -> None:
+    assert "propose it under that memory's key, exactly as shown" in MEMORY_CONTRACT
+
+
+def test_only_the_memory_prompt_shows_keys() -> None:
+    """An answer or a routing decision must never mention a key -- it is not a
+    source, and reciting one would look like a citation of nothing."""
+    memory = a_memory_record(key="budget_reporting_format")
+
+    answering_block = build_messages(QUESTION, EVIDENCE, memories=(memory,))[6][
+        "content"
+    ]
+    planner_block = build_planner_messages(QUESTION, memories=(memory,))[6][
+        "content"
+    ]
+
+    assert "key:" not in answering_block
+    assert "key:" not in planner_block
+
+
 # --------------------------------------------------------------------------
 # build_planner_messages: seven blocks, history between observation and memory
 # --------------------------------------------------------------------------
