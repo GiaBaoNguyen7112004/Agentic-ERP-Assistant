@@ -257,6 +257,17 @@ CREATE INDEX IF NOT EXISTS memory_audit_by_run ON memory_audit (trace_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_session ON memory_audit (session_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_decision ON memory_audit (decision);
 
+-- RejectionReason grew on a database that already existed (not_established,
+-- 2026-09, the memory refactor). Same reasoning as trace_events_kind_check
+-- above: the inline CHECK names the constraint implicitly
+-- (memory_audit_rejection_check), a guarded table creation never touches it,
+-- and memory consolidation logs an audit-insert failure rather than raising --
+-- exactly the combination that would let the old CHECK keep refusing the new
+-- reason forever while every turn looked fine.
+ALTER TABLE memory_audit DROP CONSTRAINT IF EXISTS memory_audit_rejection_check;
+ALTER TABLE memory_audit ADD CONSTRAINT memory_audit_rejection_check
+    CHECK (rejection IS NULL OR rejection IN ({_sql_list(REJECTION_REASONS)}));
+
 CREATE TABLE IF NOT EXISTS session_turns (
     trace_id text PRIMARY KEY,
     session_id text NOT NULL,

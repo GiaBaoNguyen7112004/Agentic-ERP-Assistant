@@ -126,6 +126,9 @@ RejectionReason = Literal[
     "instruction_like",  # it tries to steer future behaviour
     "sensitive",         # a secret, or personal data storing does not require
     "low_confidence",    # the proposer was not sure, and unsure means no
+    "not_established",   # the turn did not establish it: an absence, a
+                         # self-description, a restated reply, or a preference
+                         # the user never stated
     "not_relevant",      # there is nothing in it a later turn could act on
     "not_durable",       # true now, false shortly
     "belongs_to_rag",    # the documents already say this, and can be re-read
@@ -136,7 +139,10 @@ RejectionReason = Literal[
 
 Closed, and ordered as the policy evaluates it -- see
 :mod:`agentic_erp_assistant.memory.policy` for why that order is the security
-property and not a formality. Distinct members rather than one ``rejected``
+property and not a formality. ``not_established`` sits between the confidence
+floor and the content rules: it is a mistake about *whether this turn produced
+anything to store at all*, which outranks how durable or how relevant the
+proposed text would have been. Distinct members rather than one ``rejected``
 because they call for opposite responses: ``instruction_like`` is somebody
 attacking the assistant, ``belongs_to_rag`` is the assistant working correctly,
 and a reviewer counting the first must not be counting the second.
