@@ -255,7 +255,13 @@ Not yet chosen; ask before assuming, and update this file once settled.
   only what the user established — the pure policy refuses absence claims,
   self-descriptions, restated replies and unstated preferences under the
   `not_established` rejection reason (ADR 0023), and a turn that refused,
-  clarified or failed is never asked to propose at all.
+  clarified or failed is never asked to propose at all. A `preference` is
+  additionally replaced by *topic*, not only by the exact `(kind, key)` match
+  every other kind uses: the proposer's `key` is not enforced stable across
+  turns, so `_resolve_conflict` supersedes a live preference whose statement
+  shares enough content words with a new one (`TOPIC_OVERLAP_RATIO`,
+  preference-only) and keeps the record under the key already stored rather
+  than the one just proposed (ADR 0024).
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
   are driven by the caller. The `think -> answer` route is held to the reply

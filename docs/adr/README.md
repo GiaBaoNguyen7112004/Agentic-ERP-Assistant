@@ -33,6 +33,9 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0019](0019-a-repeated-call-is-refused-a-re-run-and-forced-to-answer.md) | A repeated call is refused a re-run, and the planner is forced to answer instead | Accepted |
 | [0020](0020-the-planner-contract-is-chosen-by-a-recorded-comparison.md) | The planner contract is chosen by a recorded comparison | Accepted |
 | [0021](0021-the-planner-declares-what-a-reply-needs-and-the-graph-holds-it-to-that.md) | The planner declares what a reply needs, and the graph holds it to that | Accepted |
+| [0022](0022-the-model-is-told-the-principal-and-history-is-the-authority-on-the-conversation.md) | The model is told the principal, and history is the authority on the conversation | Accepted |
+| [0023](0023-memory-is-what-the-user-established.md) | Memory is what the user established; a turn that established nothing writes nothing | Accepted |
+| [0024](0024-a-preference-is-replaced-by-topic-not-by-key.md) | A preference is replaced by topic, not only by key | Accepted |
 
 ## Format
 
@@ -41,5 +44,3 @@ Numbered `NNNN-kebab-case-title.md`, never renumbered. Sections: **Status**,
 is `Proposed`, `Accepted`, or `Superseded by NNNN` — an ADR is never deleted or
 edited into a different decision, because the point of the record is that it
 remains readable after the decision changes.
-| [0022](0022-the-model-is-told-the-principal-and-history-is-the-authority-on-the-conversation.md) | The model is told the principal, and history is the authority on the conversation | Accepted |
-| [0023](0023-memory-is-what-the-user-established.md) | Memory is what the user established; a turn that established nothing writes nothing | Accepted |
