@@ -1155,3 +1155,56 @@ def test_telemetry_still_records_when_an_inspector_is_also_bound() -> None:
     gateway.answer(QUESTION, EVIDENCE)
 
     assert [record.outcome for record in telemetry.records] == ["answered"]
+
+
+# --------------------------------------------------------------------------
+# The principal block: bound at construction, like stream and inspector (D1)
+# --------------------------------------------------------------------------
+
+
+def test_a_gateway_without_a_principal_sends_the_policy_byte_for_byte() -> None:
+    """The other half of the ADR 0020 baseline: the system block is
+    SYSTEM_POLICY exactly, so a comparison gateway sends no principal."""
+    from agentic_erp_assistant.llm.prompts import SYSTEM_POLICY
+
+    recorder = Recorder(httpx.Response(200, json=tool_call_reply(
+        "declare_reply_contract", {"needs": [], "document_query": None}
+    )))
+    gateway, _, _ = make_gateway(recorder)
+
+    gateway.declare("What was my previous question?")
+
+    body = json.loads(recorder.requests[0].content)
+    system_block = body["messages"][0]["content"]
+    assert system_block == SYSTEM_POLICY
+
+
+def test_a_gateway_with_a_principal_sends_it_in_every_first_message() -> None:
+    from agentic_erp_assistant.llm.prompts import Principal, system_content
+
+    principal = Principal(
+        actor="priya",
+        display_name="Priya Raman",
+        role="Delivery lead",
+        project_code="atlas",
+        project_name="Atlas ERP rollout",
+    )
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply(
+            "declare_reply_contract", {"needs": [], "document_query": None}
+        )),
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"})),
+        httpx.Response(200, json=reply()),
+    )
+    gateway, _, _ = make_gateway(recorder, principal=principal)
+
+    gateway.answer(QUESTION, EVIDENCE)
+    gateway.decide("What could go wrong on atlas?")
+    gateway.declare("What could go wrong on atlas?")
+
+    expected = system_content(principal)
+    for request in recorder.requests:
+        body = json.loads(request.content)
+        assert body["messages"][0]["role"] == "system"
+        assert body["messages"][0]["content"] == expected
+        assert "Priya Raman" in body["messages"][0]["content"]

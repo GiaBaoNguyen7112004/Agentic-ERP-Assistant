@@ -25,6 +25,7 @@ from agentic_erp_assistant.engine.ports import DocumentRetrieverPort
 from agentic_erp_assistant.engine.workflow import MAX_STEPS, WorkflowRuntime
 from agentic_erp_assistant.llm.gateway import LLMGateway
 from agentic_erp_assistant.llm.inspection import ModelRequestSnapshot, ModelResponseSnapshot
+from agentic_erp_assistant.llm.prompts import Principal
 from agentic_erp_assistant.llm.streaming import AnswerStreamSink
 from agentic_erp_assistant.llm.telemetry import ModelCallRecord
 from agentic_erp_assistant.llm.tools import (
@@ -224,6 +225,19 @@ def build_turn(
     traces = PostgresTraceStore(connection)
     telemetry = RunTelemetry(trace_id=trace_id, store=traces)
 
+    # D1 (the memory refactor): the model is told who it is talking to and
+    # which project, in the system role. The gateway's project check (ADR
+    # 0017) stays exactly as it is -- the block makes the model *right*, the
+    # gateway still makes it *safe*.
+    project = resources.erp.project(user.project_code)
+    principal = Principal(
+        actor=user.actor,
+        display_name=user.display_name,
+        role=user.role,
+        project_code=user.project_code,
+        project_name=project.name if project is not None else None,
+    )
+
     answer_sink: AnswerStreamSink | None = stream if stream is not None else None
     answering = LLMGateway(
         resources.chat_client,
@@ -233,16 +247,20 @@ def build_turn(
         stream=answer_sink,
         inspector=stream if stream is not None else None,
         inspect_io=settings.dev_trace_model_io,
+        principal=principal,
     )
     # A second gateway, same client and budget, no sink and no inspector:
     # memory work must never stream into the chat, and its calls' I/O is a
     # narrower scope than this phase covers -- see
-    # docs/trace-inspector-plan.md's own note on the simplification.
+    # docs/trace-inspector-plan.md's own note on the simplification. It does
+    # get the principal: the proposer must know "the user" is Priya, not
+    # "the assistant".
     memory_model = LLMGateway(
         resources.chat_client,
         context_window=settings.context_window,
         output_reserve=settings.output_reserve,
         telemetry=telemetry,
+        principal=principal,
     )
 
     planner = Planner(answering, tools=offered_tools(resources))

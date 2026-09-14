@@ -39,6 +39,7 @@ the obligation this places on every adapter.
 
 import json
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from agentic_erp_assistant.llm.ports import Message
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
@@ -59,11 +60,14 @@ __all__ = [
     "PROMOTION_CONTRACT",
     "PROMOTION_QUESTION",
     "SYSTEM_POLICY",
+    "Principal",
     "build_declaration_messages",
     "build_memory_messages",
     "build_messages",
     "build_planner_messages",
     "build_promotion_messages",
+    "render_principal",
+    "system_content",
 ]
 
 
@@ -112,6 +116,53 @@ passage when the question asks for something that has to be quoted -- a \
 reason, a decision, a commitment: an observation can tell you a milestone is \
 two days late, never why.\
 """
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Who this turn is for, as the model is allowed to know it.
+
+    Rendered into the system role, never into user/evidence/memory: it is
+    standing context about the session, not data to read or a source to cite.
+    Everything here is already in ``AgentState`` or ``data/users.json``; the
+    gateway's project check (ADR 0017) is what keeps a wrong guess harmless,
+    this is what keeps the model from having to guess at all.
+    """
+
+    actor: str
+    display_name: str
+    role: str
+    project_code: str
+    project_name: str | None = None
+
+
+def render_principal(principal: Principal) -> str:
+    """The principal block, appended to :data:`SYSTEM_POLICY` at build time.
+
+    ``SYSTEM_POLICY`` itself stays a constant, so ``eval/routing.py`` (ADR
+    0020) keeps sending byte-identical prompts unless it opts in.
+    """
+    project = (
+        f"{principal.project_code} ({principal.project_name})"
+        if principal.project_name else principal.project_code
+    )
+    return (
+        "Who you are talking to:\n"
+        f"- User: {principal.display_name} (actor id '{principal.actor}'), {principal.role}.\n"
+        f"- Project: {project}. This user is bound to this one project for the whole "
+        f"conversation. Every tool argument named project_id must be '{principal.project_code}'. "
+        "Never ask which project is meant; never answer about another project.\n"
+        "You may state who the user is and which project this is without a citation: "
+        "that is session context, not a claim about the project's documents."
+    )
+
+
+def system_content(principal: Principal | None) -> str:
+    """``SYSTEM_POLICY`` alone when nobody is bound (a replay, the routing
+    comparison), otherwise the policy followed by the principal block."""
+    if principal is None:
+        return SYSTEM_POLICY
+    return f"{SYSTEM_POLICY}\n\n{render_principal(principal)}"
 
 
 DEVELOPER_CONTRACT = (
@@ -332,6 +383,7 @@ def build_planner_messages(
     history: Sequence[ConversationTurn] = (),
     *,
     contract: str = PLANNER_CONTRACT,
+    principal: Principal | None = None,
 ) -> list[Message]:
     """Build the seven role blocks for one routing decision.
 
@@ -361,6 +413,9 @@ def build_planner_messages(
             ``eval/routing.py``'s comparison (ADR 0020) can send a candidate
             through the exact same builder rather than a second one that
             could drift from it. Nothing in ``composition/`` overrides it.
+        principal: Who this turn is for, rendered into the system role after
+            the policy. ``None`` -- the default -- sends
+            :data:`SYSTEM_POLICY` byte-for-byte.
 
     Returns:
         Seven messages: system, developer, user, evidence, observation,
@@ -373,7 +428,7 @@ def build_planner_messages(
         raise ValueError("question must not be blank")
 
     return [
-        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "system", "content": system_content(principal)},
         {"role": "developer", "content": contract},
         {"role": "user", "content": question},
         {"role": "evidence", "content": _render_evidence(evidence)},
@@ -417,7 +472,10 @@ declaration a call ahead of what it is meant to check.
 
 
 def build_declaration_messages(
-    question: str, history: Sequence[ConversationTurn] = ()
+    question: str,
+    history: Sequence[ConversationTurn] = (),
+    *,
+    principal: Principal | None = None,
 ) -> list[Message]:
     """Build the four role blocks for one reply-contract declaration.
 
@@ -431,6 +489,8 @@ def build_declaration_messages(
         history: The session's recent turns, already clipped and budgeted --
             so "that milestone" can be resolved the same way a routing
             decision resolves it. Empty on the first turn of a session.
+        principal: Who this turn is for, appended to the system block.
+            ``None`` sends :data:`SYSTEM_POLICY` alone.
 
     Returns:
         Four messages: system, developer, user, history.
@@ -442,7 +502,7 @@ def build_declaration_messages(
         raise ValueError("question must not be blank")
 
     return [
-        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "system", "content": system_content(principal)},
         {"role": "developer", "content": DECLARATION_CONTRACT},
         {"role": "user", "content": question},
         {"role": "history", "content": _render_history(history)},
@@ -520,6 +580,8 @@ def build_memory_messages(
     evidence: Sequence[EvidenceSnippet] = (),
     observations: Sequence[ToolOutcome] = (),
     memories: Sequence[MemoryRecord] = (),
+    *,
+    principal: Principal | None = None,
 ) -> list[Message]:
     """Build the six role blocks for one memory proposal.
 
@@ -548,6 +610,9 @@ def build_memory_messages(
             the existing memories is an instruction nobody could follow. The
             policy still catches a duplicate that gets through; this is what
             keeps most of them from being proposed in the first place.
+        principal: Who this turn is for, appended to the system block. The
+            proposer must know "the user" is a person, not the assistant --
+            ``None`` sends :data:`SYSTEM_POLICY` alone.
 
     Returns:
         Seven messages, in the order system, developer, user, evidence,
@@ -560,7 +625,7 @@ def build_memory_messages(
         raise ValueError("request must not be blank")
 
     return [
-        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "system", "content": system_content(principal)},
         {"role": "developer", "content": MEMORY_CONTRACT},
         {"role": "user", "content": request},
         {"role": "evidence", "content": _render_evidence(evidence)},
@@ -576,6 +641,8 @@ def build_messages(
     memories: Sequence[MemoryRecord] = (),
     history: Sequence[ConversationTurn] = (),
     observations: Sequence[ToolOutcome] = (),
+    *,
+    principal: Principal | None = None,
 ) -> list[Message]:
     """Build the seven role blocks for one grounded-answer request.
 
@@ -621,6 +688,8 @@ def build_messages(
             be empty, and is on the first turn of a session.
         observations: What this turn's own tool calls returned, in order.
             Empty on a turn that never called one before retrieving.
+        principal: Who this turn is for, appended to the system block.
+            ``None`` sends :data:`SYSTEM_POLICY` alone.
 
     Returns:
         Exactly seven messages, in the order system, developer, user,
@@ -634,7 +703,7 @@ def build_messages(
         raise ValueError("question must not be blank")
 
     return [
-        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "system", "content": system_content(principal)},
         {"role": "developer", "content": DEVELOPER_CONTRACT},
         {"role": "user", "content": question},
         {"role": "evidence", "content": _render_evidence(evidence)},
@@ -699,6 +768,8 @@ rather than trusted from a model's summary of them.
 def build_promotion_messages(
     turns: Sequence[ConversationTurn],
     previous: MemoryRecord | None = None,
+    *,
+    principal: Principal | None = None,
 ) -> list[Message]:
     """Build the five role blocks asking what evicted turns are worth keeping.
 
@@ -712,6 +783,8 @@ def build_promotion_messages(
             there is nothing to ask about a promotion of nothing.
         previous: The session's current summary, if it has one. Shown so the
             model can extend or correct it rather than starting over.
+        principal: Who this turn is for, appended to the system block.
+            ``None`` sends :data:`SYSTEM_POLICY` alone.
 
     Returns:
         Five messages: system, developer, user, history, memory.
@@ -723,7 +796,7 @@ def build_promotion_messages(
         raise ValueError("turns must not be empty; there is nothing to promote")
 
     return [
-        {"role": "system", "content": SYSTEM_POLICY},
+        {"role": "system", "content": system_content(principal)},
         {"role": "developer", "content": PROMOTION_CONTRACT},
         {"role": "user", "content": PROMOTION_QUESTION},
         {"role": "history", "content": _render_history(turns)},

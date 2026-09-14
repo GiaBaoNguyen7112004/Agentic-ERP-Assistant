@@ -48,6 +48,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import (
     PLANNER_CONTRACT,
+    Principal,
     build_declaration_messages,
     build_messages,
     build_planner_messages,
@@ -250,6 +251,17 @@ class LLMGateway:
     :meth:`decide`.
     """
 
+    principal: Principal | None = None
+    """Who this turn is for, appended to the system block of every prompt
+    this gateway builds. ``None`` -- the default -- sends
+    :data:`~agentic_erp_assistant.llm.prompts.SYSTEM_POLICY` byte-for-byte.
+
+    Bound at construction, like :attr:`stream` and :attr:`inspector`, so
+    :meth:`decide` and the composer stay ignorant of it: the planner asks
+    for a decision, and who the turn is for is standing session context,
+    not something a decision carries. ``call_tools`` takes messages already
+    built, so it needs nothing here."""
+
     def answer(
         self,
         question: str,
@@ -301,7 +313,8 @@ class LLMGateway:
         """
         # 1. Build.
         messages = build_messages(
-            question, _as_snippets(evidence), memories, history, observations
+            question, _as_snippets(evidence), memories, history, observations,
+            principal=self.principal,
         )
 
         # 2. Budget, before anything is sent.
@@ -448,6 +461,7 @@ class LLMGateway:
                 memories,
                 history,
                 contract=self.planner_contract,
+                principal=self.principal,
             ),
             tools=tools,
             temperature=temperature,
@@ -490,7 +504,7 @@ class LLMGateway:
             ValueError: ``question`` is blank.
         """
         return self.call_tools(
-            build_declaration_messages(question, history),
+            build_declaration_messages(question, history, principal=self.principal),
             tools=(DECLARE_REPLY_CONTRACT_TOOL,),
             temperature=0.0,
             tool_choice="required",

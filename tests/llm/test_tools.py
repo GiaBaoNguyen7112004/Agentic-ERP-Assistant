@@ -325,3 +325,31 @@ def test_declare_reply_contract_document_query_is_required_and_nullable() -> Non
     assert "document_query" in schema["required"]
     types = {branch["type"] for branch in schema["properties"]["document_query"]["anyOf"]}
     assert types == {"string", "null"}
+
+
+# --------------------------------------------------------------------------
+# The project argument is session context, not a guess (D1)
+# --------------------------------------------------------------------------
+
+
+def test_ask_clarification_never_offers_the_project_as_a_reason_to_ask() -> None:
+    """The principal block names the project; asking for it is the refusal
+    loop the memory refactor exists to kill."""
+    from agentic_erp_assistant.llm.tools import ASK_CLARIFICATION_TOOL
+
+    assert "no project" not in ASK_CLARIFICATION_TOOL.description
+    assert "Never ask which project" in ASK_CLARIFICATION_TOOL.description
+
+
+def test_every_project_id_argument_points_at_the_system_context() -> None:
+    from agentic_erp_assistant.llm.tools import (
+        BudgetSummaryArguments,
+        CreateRiskArguments,
+        ListRisksArguments,
+    )
+
+    for model in (BudgetSummaryArguments, CreateRiskArguments,
+                  ListRisksArguments):
+        description = model.model_fields["project_id"].description or ""
+        assert "bound to" in description
+        assert "system context" in description

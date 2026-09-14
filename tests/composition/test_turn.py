@@ -19,6 +19,7 @@ from agentic_erp_assistant.composition.turn import (
     offered_tools,
 )
 from agentic_erp_assistant.composition.users import User
+from agentic_erp_assistant.erp.mock import Project
 from agentic_erp_assistant.llm.tools import (
     GET_PROJECT_STATUS_FLAKY_TOOL,
     GET_PROJECT_STATUS_TOOL,
@@ -79,6 +80,21 @@ class RecordingStream:
         self.resets += 1
 
 
+class FakeErp:
+    """Names the projects the real dev fixture names, and nothing else."""
+
+    def __init__(self, *known: str) -> None:
+        self._known = set(known) or {"atlas"}
+
+    def project(self, project_id: str):
+        if project_id not in self._known:
+            return None
+        return Project(
+            source_id=f"project-{project_id}", project_id=project_id,
+            name="Atlas ERP rollout",
+        )
+
+
 def a_user(**overrides) -> User:
     fields = {
         "actor": "priya",
@@ -99,7 +115,7 @@ def a_resources(**overrides) -> AppResources:
         "embeddings": object(),
         "retrieval": FakeRetrievalService(),
         "memory_index": object(),
-        "erp": object(),
+        "erp": FakeErp(),
         "registry": ToolRegistry(()),
         "limiter": object(),
         "manifest": {},
@@ -112,6 +128,42 @@ def a_resources(**overrides) -> AppResources:
 # --------------------------------------------------------------------------
 # build_turn: the wiring
 # --------------------------------------------------------------------------
+
+
+def test_the_memory_gateway_carries_the_same_principal_as_the_answering_one() -> None:
+    """The proposer must know "the user" is Priya, not "the assistant" --
+    the absence-claim junk the dev DB held came from a proposer reading the
+    turn as though it were about the assistant itself."""
+    resources = a_resources(erp=FakeErp())
+
+    turn = build_turn(
+        resources, user=a_user(), session_id="sess-1", trace_id="run-1",
+        connection=object(),
+    )
+
+    composer = turn.orchestrator.runtime.composer
+    proposer = turn.orchestrator.memory.service.proposer
+    assert composer is not None and proposer is not None
+    assert composer.principal is not None
+    assert composer.principal.actor == "priya"
+    assert composer.principal.display_name == "Priya Raman"
+    assert composer.principal.project_code == "atlas"
+    assert composer.principal.project_name == "Atlas ERP rollout"
+    assert proposer.model.principal is composer.principal
+
+
+def test_a_principal_for_a_code_the_erp_does_not_know_has_no_project_name() -> None:
+    resources = a_resources(erp=FakeErp())
+
+    turn = build_turn(
+        resources, user=a_user(project_code="orion"), session_id="sess-1",
+        trace_id="run-1", connection=object(),
+    )
+
+    principal = turn.orchestrator.runtime.composer.principal
+    assert principal is not None
+    assert principal.project_code == "orion"
+    assert principal.project_name is None
 
 
 def test_the_answering_gateway_carries_the_stream_sink() -> None:

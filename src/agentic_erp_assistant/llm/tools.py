@@ -208,7 +208,10 @@ class BudgetSummaryArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project to report on, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
     include_forecast: bool = Field(
         description=(
@@ -223,7 +226,10 @@ class ListRisksArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project whose open risks to list, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
 
 
@@ -273,7 +279,10 @@ class CreateRiskArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project to record the risk against, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
     title: str = Field(
         min_length=1,
@@ -398,10 +407,11 @@ execution shape.
 ASK_CLARIFICATION_TOOL = ToolSpec(
     name="ask_clarification",
     description=(
-        "Ask the user one question instead of answering. Use it when the "
-        "request does not name what it is about -- no milestone, no project, "
-        "no sprint -- and guessing would produce a confident answer about the "
-        "wrong thing."
+        "Ask the user one question instead of answering. Use it only when the "
+        "request does not name what it is about -- no milestone, no sprint, "
+        "no risk -- and neither the history block nor the project context "
+        "resolves it, and guessing would produce a confident answer about the "
+        "wrong thing. Never ask which project: the project is given."
     ),
     arguments=AskClarificationArguments,
     mutating=False,

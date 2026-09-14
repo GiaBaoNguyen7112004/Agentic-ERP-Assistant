@@ -27,11 +27,14 @@ from agentic_erp_assistant.llm.prompts import (
     PLANNER_CONTRACT,
     PROMOTION_CONTRACT,
     SYSTEM_POLICY,
+    Principal,
     build_declaration_messages,
     build_memory_messages,
     build_messages,
     build_planner_messages,
     build_promotion_messages,
+    render_principal,
+    system_content,
 )
 from agentic_erp_assistant.llm.schemas import Citation, EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.state.conversation import ConversationTurn
@@ -508,3 +511,85 @@ def test_every_role_a_declaration_prompt_uses_is_one_the_port_declares() -> None
     roles = {message["role"] for message in build_declaration_messages(QUESTION)}
 
     assert roles <= set(get_args(Role))
+
+
+# --------------------------------------------------------------------------
+# The principal block: who the turn is for, in the system role (D1)
+# --------------------------------------------------------------------------
+
+
+def a_principal(**overrides: object) -> Principal:
+    fields: dict[str, object] = {
+        "actor": "priya",
+        "display_name": "Priya Raman",
+        "role": "Delivery lead",
+        "project_code": "atlas",
+        "project_name": "Atlas ERP rollout",
+    }
+    fields.update(overrides)
+    return Principal(**fields)  # type: ignore[arg-type]
+
+
+def test_no_principal_sends_the_policy_byte_for_byte() -> None:
+    """A replay, the routing comparison, every existing test: unchanged."""
+    assert system_content(None) == SYSTEM_POLICY
+    assert build_messages(QUESTION, EVIDENCE)[0]["content"] == SYSTEM_POLICY
+
+
+def test_the_principal_block_is_appended_after_the_policy() -> None:
+    content = build_messages(QUESTION, EVIDENCE, principal=a_principal())[0]["content"]
+
+    assert content.startswith(SYSTEM_POLICY)
+    assert content[len(SYSTEM_POLICY):].startswith("\n\nWho you are talking to:")
+    assert "Priya Raman" in content
+    assert "Delivery lead" in content
+    assert "atlas" in content
+    assert "Atlas ERP rollout" in content
+    assert "project_id must be 'atlas'" in content
+
+
+def test_a_principal_without_a_project_name_names_the_code_alone() -> None:
+    content = system_content(a_principal(project_name=None))
+
+    assert "- Project: atlas." in content
+    assert "Atlas ERP rollout" not in content
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [build_planner_messages, build_declaration_messages, build_memory_messages],
+)
+def test_every_builder_that_takes_a_principal_appends_it(builder) -> None:
+    principal = a_principal()
+
+    messages = builder(QUESTION, principal=principal)  # type: ignore[call-arg]
+
+    assert messages[0]["content"] == system_content(principal)
+    assert messages[0]["content"] != SYSTEM_POLICY
+
+
+def test_promotion_messages_carry_the_principal_too() -> None:
+    principal = a_principal()
+
+    messages = build_promotion_messages((turn(),), principal=principal)
+
+    assert messages[0]["content"] == system_content(principal)
+
+
+def test_the_principal_block_appears_in_no_other_role() -> None:
+    """It is standing session context, so it is only ever the system block."""
+    principal = a_principal()
+
+    messages = build_messages(QUESTION, EVIDENCE, principal=principal)
+    others = [m["content"] for m in messages if m["role"] != "system"]
+
+    assert not any("Priya Raman" in content or "Who you are talking to" in content
+                   for content in others)
+
+
+def test_the_principal_block_carries_nothing_citation_shaped() -> None:
+    """The same rule the memory and history blocks hold: a block that could
+    not be cited is a block that cannot become a fake source."""
+    content = render_principal(a_principal())
+
+    assert "[" not in content
