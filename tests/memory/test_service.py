@@ -267,6 +267,54 @@ def test_two_candidates_for_one_key_become_a_write_and_an_update() -> None:
     ]
 
 
+def test_a_preference_proposed_under_a_drifted_key_replaces_the_stored_one() -> None:
+    """End to end, with the real store: the dev database's actual defect. A
+    preference is already live under one key; the proposer, this turn,
+    invents a *different* key for what is unmistakably the same preference
+    restated. The stored key wins (D3), so the id derived for the new record
+    matches what the store already had it under."""
+    memory = bound(
+        candidate(
+            kind="preference", key="budget_reporting_currency",
+            statement="The user prefers budget numbers to be reported in "
+            "thousands of VND.",
+        ),
+    )
+    existing = make_record(
+        memory_id="mem-usd",
+        kind="preference",
+        key="budget_reporting_format",
+        statement="The user prefers budget numbers to be reported in "
+        "thousands of USD.",
+    )
+    memory.service.store.write(existing)
+
+    decisions = memory.consolidate(state())
+
+    assert [d.decision for d in decisions] == ["update"]
+    live = memory.service.store.live(make_scope())
+    assert [record.key for record in live] == ["budget_reporting_format"]
+    assert [record.statement for record in live] == [
+        "The user prefers budget numbers to be reported in thousands of VND."
+    ]
+    assert memory.service.store.records["mem-usd"].superseded_at is not None
+    assert [row.decision for row in memory.service.audit.rows] == ["update", "forget"]
+    audit_row = memory.service.audit.rows[0]
+    assert "budget_reporting_format" in audit_row.reason
+    assert "budget_reporting_currency" in audit_row.reason
+    # The id is derived from what is actually stored -- the adopted key --
+    # not from the key the proposer invented this turn.
+    assert live[0].memory_id != "mem-usd"
+    from agentic_erp_assistant.memory.models import memory_id
+
+    expected_candidate = candidate(
+        kind="preference", key="budget_reporting_format",
+        statement="The user prefers budget numbers to be reported in "
+        "thousands of VND.",
+    )
+    assert live[0].memory_id == memory_id(expected_candidate, make_scope())
+
+
 def test_consolidation_embeds_everything_it_stored_in_one_request() -> None:
     memory = bound(
         candidate(),

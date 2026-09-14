@@ -51,6 +51,15 @@ reach it that any earlier rule would have refused. In particular a poisoned
 candidate can never arrive as an update and quietly take the place of a
 legitimate memory.
 
+That check has a second matching rule beyond the exact ``(kind, key)`` one, and
+only for ``preference``: two preferences whose statements share most of their
+words (:data:`TOPIC_OVERLAP_RATIO`) are treated as one preference restated
+under a new key, because a proposer's ``key`` string is not enforced stable
+across turns and the dev database held exactly this drift -- one preference
+about how budget numbers are shown, proposed twice under two different keys,
+both ending up live at once. See :data:`TOPIC_OVERLAP_RATIO` for why this is
+preference-only and where the threshold comes from.
+
 The checks are lexical, and they over-refuse
 --------------------------------------------
 
@@ -93,6 +102,7 @@ __all__ = [
     "SECRET_MARKERS",
     "SELF_REFERENCE_MARKERS",
     "SOURCE_OVERLAP_RATIO",
+    "TOPIC_OVERLAP_RATIO",
     "VOLATILE_MARKERS",
     "decide",
     "unsafe_to_store",
@@ -129,6 +139,49 @@ and with a citation this record could never carry.
 Deliberately not 1.0. A paraphrase is still a restatement, and a rule that only
 caught verbatim copies would be defeated by the ordinary behaviour of the thing
 proposing the memory.
+"""
+
+
+TOPIC_OVERLAP_RATIO = 0.7
+"""How much two *preferences* have to share, in the smaller of the two
+directions, before the newer one replaces the older rather than sitting
+beside it.
+
+The exact-key rule in :func:`_resolve_conflict` only fires when the proposer
+reused the same ``key`` string, and nothing enforces that it does: the dev
+database held two live preferences about how budget numbers are shown --
+``budget_reporting_format`` proposing "thousands of USD", then
+``budget_reporting_currency`` proposing "thousands of VND" for the very next
+turn -- because two independent calls invented two different keys for one
+preference. Both were pinned into the following turn's prompt at once, and
+the reply used neither: it printed a raw dollar figure. This check is the
+backstop for that: it does not need the key to agree, only the topic.
+
+Measured with the real :func:`_overlap`, smaller direction of the two,
+against the rows the dev database actually held:
+
+* USD/VND above -- ``0.86``
+* the two live "prefix replies with ATLAS 2026" preferences (keys
+  ``atlas_reply_prefix`` / ``project_atlas_prefix_request``) -- ``0.86``
+* the nearest real negative, "budget numbers in thousands of USD" against
+  "replies written in Vietnamese" -- ``0.29``
+
+0.7 sits in that gap with margin on both sides. It is not free of a failure
+mode: "budget numbers reported in thousands of USD" against "budget numbers
+reported per sprint" scores ``0.71`` and would merge, treating a currency
+preference and a cadence preference as one topic. That is the accepted
+trade-off (see the fix-memory-key-drift plan and ADR 0024), not an oversight
+-- a preference told twice costs a repeated sentence; two live preferences
+silently contradicting each other, which is what this check replaces, costs a
+reply that honours neither.
+
+Only applied to ``preference``. A ``fact`` or a ``decision`` with one changed
+word can be a genuinely different fact ("milestone M2's owner is Priya" /
+"milestone M3's owner is Priya" score well above this threshold), and merging
+them would lose one. A preference is "how this person wants to be worked
+with" on a subject, and the subject is exactly what word overlap measures;
+two preferences about the same subject that disagree cannot both be honoured,
+which is the state this check exists to prevent.
 """
 
 
@@ -376,6 +429,18 @@ def _overlap(statement: str, source: str) -> float:
     if not words:
         return 0.0
     return len(words & _content_words(source)) / len(words)
+
+
+def _topic_overlap(left: str, right: str) -> float:
+    """How much two statements share, symmetric, for :data:`TOPIC_OVERLAP_RATIO`.
+
+    The smaller of the two directional :func:`_overlap` scores, not their
+    average or the union: a short new preference fully contained in a long
+    old one, or the reverse, should count on the side that is less generous,
+    so a short statement cannot ride into a merge on the strength of the
+    longer one containing it.
+    """
+    return min(_overlap(left, right), _overlap(right, left))
 
 
 def _clip(text: str) -> str:
@@ -630,10 +695,14 @@ def _resolve_conflict(
 ) -> MemoryDecision:
     """Write, or replace what is already there, or refuse a restatement.
 
-    "Already there" means a live record this scope owns with the same
-    ``(kind, key)``. Comparison of the statements is on normalized whitespace and
-    case, so a re-proposal that differs only in punctuation is the duplicate it
-    actually is rather than a third version of one preference.
+    Four outcomes, in order: a **duplicate** (the same sentence, any key,
+    normalized on whitespace and case, so a re-proposal that differs only in
+    punctuation is the duplicate it actually is rather than a third version of
+    one preference); a same-key **update** ("already there" means a live
+    record this scope owns with the same ``(kind, key)``); for a
+    ``preference`` only, a same-topic **update** under the key already stored
+    (see :data:`TOPIC_OVERLAP_RATIO`) when the key drifted but the subject did
+    not; otherwise a **write**.
     """
     normalized = " ".join(candidate.statement.lower().split())
 
@@ -666,15 +735,47 @@ def _resolve_conflict(
         and record.key == candidate.key
         and in_bounds(record, scope)
     ]
-    if not same:
-        return MemoryDecision(decision="write", reason=f"new {candidate.kind}")
+    if same:
+        superseded = tuple(sorted(record.memory_id for record in same))
+        return MemoryDecision(
+            decision="update",
+            supersedes=superseded,
+            reason=(
+                f"supersedes {len(superseded)} live {candidate.kind} "
+                f"record(s) for {candidate.key!r}"
+            ),
+        )
 
-    superseded = tuple(sorted(record.memory_id for record in same))
-    return MemoryDecision(
-        decision="update",
-        supersedes=superseded,
-        reason=(
-            f"supersedes {len(superseded)} live {candidate.kind} "
-            f"record(s) for {candidate.key!r}"
-        ),
-    )
+    # A preference on the same topic under a *different* key is still the same
+    # preference, and the proposer's key is not something anything enforces
+    # stable across turns -- see TOPIC_OVERLAP_RATIO. Preference only: a fact
+    # or a decision that merely shares words can be a different fact, and
+    # merging those would lose one.
+    if candidate.kind == "preference":
+        same_topic = sorted(
+            (
+                record
+                for record in existing
+                if record.live
+                and record.kind == "preference"
+                and in_bounds(record, scope)
+                and _topic_overlap(candidate.statement, record.statement)
+                >= TOPIC_OVERLAP_RATIO
+            ),
+            key=lambda record: record.memory_id,
+        )
+        if same_topic:
+            keep = same_topic[0].key
+            share = _topic_overlap(candidate.statement, same_topic[0].statement)
+            return MemoryDecision(
+                decision="update",
+                supersedes=tuple(record.memory_id for record in same_topic),
+                key=keep,
+                reason=(
+                    f"supersedes {len(same_topic)} live preference(s) on the "
+                    f"same topic under {keep!r} ({share:.0%} shared); proposed "
+                    f"under {candidate.key!r}"
+                ),
+            )
+
+    return MemoryDecision(decision="write", reason=f"new {candidate.kind}")

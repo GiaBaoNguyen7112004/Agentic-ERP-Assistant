@@ -300,6 +300,14 @@ class MemoryDecision(BaseModel):
     supersedes: tuple[str, ...] = ()
     """The stored records this decision retires. Non-empty only on ``update``."""
 
+    key: str | None = None
+    """The key to store the record under, when it differs from the candidate's
+    own. Set only by a same-topic preference update (see
+    :data:`~agentic_erp_assistant.memory.policy.TOPIC_OVERLAP_RATIO`): the key
+    the store already has wins over the one the proposer invented this turn,
+    so a rewritten preference stops drifting to a new key on every turn.
+    ``None`` means the candidate's own key, which is every other outcome."""
+
     reason: str = Field(default="", max_length=REASON_MAX_CHARS)
     """One line for a person reading the audit. Never parsed, never branched on;
     every fact the system acts on is in a typed field above it."""
@@ -335,6 +343,14 @@ class MemoryDecision(BaseModel):
             )
         if any(not identifier.strip() for identifier in self.supersedes):
             raise ValueError("supersedes: memory ids must not be blank")
+        if self.key is not None and self.decision != "update":
+            raise ValueError(
+                f"key: decision {self.decision!r} does not store the candidate "
+                f"under a different key, so naming one here is a rewrite nobody "
+                f"asked for"
+            )
+        if self.key is not None and not self.key.strip():
+            raise ValueError("key: must not be blank when given")
         return self
 
 

@@ -454,11 +454,20 @@ class SessionMemory:
         for candidate in self._proposals(state):
             verdict = decide(candidate, existing=existing, scope=self.scope)
             decisions.append(verdict)
-            identifier = memory_id(candidate, self.scope)
 
             if not verdict.stores:
+                identifier = memory_id(candidate, self.scope)
                 self._audit(state, verdict, candidate.kind, identifier, candidate.statement)
                 continue
+
+            if verdict.key is not None and verdict.key != candidate.key:
+                # A same-topic preference update names the key the store
+                # already had, not the one just proposed -- adopt it before
+                # deriving the id, so what is stored (and its id) reflects
+                # what is actually kept, and the key stops drifting to a new
+                # value on every rewrite.
+                candidate = candidate.model_copy(update={"key": verdict.key})
+            identifier = memory_id(candidate, self.scope)
 
             record = self._record(candidate, identifier, state, verdict.supersedes)
             self.service.store.write(record)

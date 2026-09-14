@@ -42,6 +42,30 @@ JUNK_ROWS: tuple[dict, ...] = (
          route="refuse", confidence=0.8),
 )
 
+DRIFTED_PREFERENCE_PAIRS: tuple[tuple[str, str], ...] = (
+    # dev DB 2026-09-14 22:39/22:42, keys budget_reporting_format /
+    # budget_reporting_currency -- both live at once, both pinned into the
+    # next turn's prompt, and the reply used neither: "$187,200".
+    ("The user prefers budget numbers to be reported in thousands of USD.",
+     "The user prefers budget numbers to be reported in thousands of VND."),
+    # dev DB 2026-09-14, keys atlas_reply_prefix / project_atlas_prefix_request
+    ("The user wants information about Project Atlas to be prefixed with 'ATLAS 2026'.",
+     "The user requested that information about Project Atlas be prefixed with 'ATLAS 2026'."),
+)
+"""Same preference, two turns, two keys the proposer invented independently --
+the drift ``_resolve_conflict``'s exact-key rule cannot see. Each pair is
+(the statement already stored, the statement proposed next); see the
+fix-memory-key-drift plan, §0."""
+
+DISTINCT_PREFERENCE_PAIRS: tuple[tuple[str, str], ...] = (
+    ("The user prefers budget numbers to be reported in thousands of USD.",
+     "The user prefers replies written in Vietnamese."),
+    ("The user prefers replies written in Vietnamese.",
+     "The user wants information about Project Atlas to be prefixed with 'ATLAS 2026'."),
+)
+"""Two preferences that must never merge -- the negative fixtures for
+``TOPIC_OVERLAP_RATIO``, scoring 0.29 and 0.14 against the real ``_overlap``."""
+
 GOOD_ROWS: tuple[dict, ...] = (
     # a real, user-stated preference -- must still be stored after the change
     dict(kind="preference", key="project_atlas_prefix",

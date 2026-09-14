@@ -13,8 +13,13 @@ import pytest
 from agentic_erp_assistant.memory.models import MemoryCandidate
 from agentic_erp_assistant.memory.policy import decide
 
-from tests.memory.builders import make_scope
-from tests.memory.junk_fixtures import GOOD_ROWS, JUNK_ROWS
+from tests.memory.builders import make_record, make_scope
+from tests.memory.junk_fixtures import (
+    DISTINCT_PREFERENCE_PAIRS,
+    DRIFTED_PREFERENCE_PAIRS,
+    GOOD_ROWS,
+    JUNK_ROWS,
+)
 
 # Which not_established rule each junk row falls to. Rows 1-3 are absence
 # claims (row 1 is also a self-description; the absence pattern is checked
@@ -73,3 +78,55 @@ def test_a_good_row_is_still_stored(row: dict) -> None:
     verdict = decide(make_candidate(row), scope=make_scope())
 
     assert verdict.stores is True
+
+
+@pytest.mark.parametrize(
+    ("stored_statement", "proposed"), DRIFTED_PREFERENCE_PAIRS
+)
+def test_a_changed_preference_under_a_drifted_key_replaces_the_old_one(
+    stored_statement: str, proposed: str
+) -> None:
+    """The dev database's actual defect: one preference, proposed twice under
+    two keys the model invented independently, ending up as two live rows
+    that contradict each other in the very next prompt."""
+    existing = make_record(
+        memory_id="mem-old-key",
+        kind="preference",
+        key="key_from_last_time",
+        statement=stored_statement,
+    )
+    candidate = MemoryCandidate(
+        kind="preference",
+        key="key_the_model_invented_today",
+        statement=proposed,
+        confidence=0.9,
+        required_scope="project.docs.read",
+    )
+
+    verdict = decide(candidate, existing=[existing], scope=make_scope())
+
+    assert verdict.decision == "update"
+    assert verdict.supersedes == ("mem-old-key",)
+    assert verdict.key == "key_from_last_time"
+
+
+@pytest.mark.parametrize(
+    ("first", "second"), DISTINCT_PREFERENCE_PAIRS
+)
+def test_two_distinct_preferences_never_merge(first: str, second: str) -> None:
+    """The negative fixtures: preferences about different subjects must not be
+    treated as the same one, however cheap "just merge preferences" would be."""
+    existing = make_record(
+        memory_id="mem-existing", kind="preference", key="existing_key", statement=first
+    )
+    candidate = MemoryCandidate(
+        kind="preference",
+        key="new_key",
+        statement=second,
+        confidence=0.9,
+        required_scope="project.docs.read",
+    )
+
+    verdict = decide(candidate, existing=[existing], scope=make_scope())
+
+    assert verdict.decision == "write"

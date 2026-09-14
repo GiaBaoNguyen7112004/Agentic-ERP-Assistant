@@ -223,6 +223,20 @@ def test_a_reason_longer_than_the_cap_is_refused() -> None:
         MemoryDecision(decision="write", reason="x" * (REASON_MAX_CHARS + 1))
 
 
+def test_a_key_may_only_be_named_on_an_update() -> None:
+    """A write or a reject stores the candidate's own key, or nothing at all --
+    naming a different one there is a rewrite nobody asked for."""
+    with pytest.raises(ValidationError, match="key"):
+        MemoryDecision(decision="write", key="adopted_key")
+    with pytest.raises(ValidationError, match="key"):
+        MemoryDecision(decision="reject", rejection="duplicate", key="adopted_key")
+
+
+def test_an_adopted_key_must_not_be_blank() -> None:
+    with pytest.raises(ValidationError, match="key"):
+        MemoryDecision(decision="update", supersedes=("mem-old",), key="  ")
+
+
 def test_stores_is_true_for_the_two_verdicts_that_write() -> None:
     assert MemoryDecision(decision="write").stores is True
     assert (
