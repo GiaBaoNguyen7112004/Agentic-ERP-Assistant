@@ -41,3 +41,5 @@ Numbered `NNNN-kebab-case-title.md`, never renumbered. Sections: **Status**,
 is `Proposed`, `Accepted`, or `Superseded by NNNN` — an ADR is never deleted or
 edited into a different decision, because the point of the record is that it
 remains readable after the decision changes.
+| [0022](0022-the-model-is-told-the-principal-and-history-is-the-authority-on-the-conversation.md) | The model is told the principal, and history is the authority on the conversation | Accepted |
+| [0023](0023-memory-is-what-the-user-established.md) | Memory is what the user established; a turn that established nothing writes nothing | Accepted |

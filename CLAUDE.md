@@ -249,7 +249,13 @@ Not yet chosen; ask before assuming, and update this file once settled.
   structurally — and turns evicted from the window are folded into the session's
   `session_summary` through the compaction allow-list, with an audit row.
   `QDRANT_MEMORY_COLLECTION` and `MemoryService.required_scope` are
-  the two configuration points.
+  the two configuration points. Since the 2026-09 memory refactor (ADR 0022)
+  the model is told who it is talking to via a principal block in the system
+  role, history is the authority on the conversation itself, and memory is
+  only what the user established — the pure policy refuses absence claims,
+  self-descriptions, restated replies and unstated preferences under the
+  `not_established` rejection reason (ADR 0023), and a turn that refused,
+  clarified or failed is never asked to propose at all.
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
   are driven by the caller. The `think -> answer` route is held to the reply

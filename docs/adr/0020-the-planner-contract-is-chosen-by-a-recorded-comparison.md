@@ -96,6 +96,21 @@ ad-hoc live session.
 `evidence/routing/routing-comparison-2026-09-12.json` is committed alongside
 this ADR — the full ninety rows, not just the summary table above.
 
+**2026-09-14 wording change (the memory refactor, ADR 0022).** The
+production `PLANNER_CONTRACT` gained its conversational rule — history is
+the authority on a question about the conversation itself — between the old
+rules 4 and 5. The named contract stays the production one, so the
+comparison was re-run against the new wording
+(`evidence/routing/routing-comparison-2026-09-14.json`, six cases ×
+five repeats per contract, `principal=None` so the only diff from the
+recorded baseline is the contract text). The result reproduces the baseline
+exactly: 25/30 = 83.3% match rate, 0 hallucinations, on all three contracts;
+the only mismatching case is still R1 (the compound question, 0/15, whose
+structural closure is ADR 0021's, not a wording question); the declaration
+match rate is 1.0 (30/30). Nothing dropped, so the choice recorded above
+stands, and the conversational rule — about one class of question the six
+cases do not contain — cost no case its expected route.
+
 ## Alternatives considered
 
 Everything `docs/gap-plan.md`'s D5 already rejected before this ADR was
