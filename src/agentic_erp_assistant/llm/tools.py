@@ -424,7 +424,9 @@ REFUSE_TOOL = ToolSpec(
         "Decline the request. Use it when what is asked falls outside project "
         "delivery operations, or when no available tool and no project "
         "document could support an answer -- never as a way to avoid a hard "
-        "lookup."
+        "lookup. A question about this conversation (what was asked, what was "
+        "answered) is not outside project delivery -- answer it from history "
+        "instead."
     ),
     arguments=RefuseArguments,
     mutating=False,

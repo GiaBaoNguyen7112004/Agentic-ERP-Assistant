@@ -593,3 +593,38 @@ def test_the_principal_block_carries_nothing_citation_shaped() -> None:
     content = render_principal(a_principal())
 
     assert "[" not in content
+
+
+# --------------------------------------------------------------------------
+# A conversational route (D2): history is the authority on the conversation
+# --------------------------------------------------------------------------
+
+
+def test_system_policy_rule_7_names_the_conversation_as_the_exception() -> None:
+    """S1: the old wording ("and for nothing else") made a question about the
+    conversation itself have no legal route."""
+    assert "conversation itself" in SYSTEM_POLICY
+    assert "for nothing else" not in SYSTEM_POLICY
+
+
+def test_the_planner_contract_names_the_conversational_route() -> None:
+    assert "about the conversation" in PLANNER_CONTRACT
+    assert "about the project**" in PLANNER_CONTRACT
+
+
+def test_the_planner_contract_numbers_stay_sequential() -> None:
+    """The conversational rule was inserted between 4 and 5; renumbering
+    left a gap would make rule 6 read as an afterthought."""
+    for number in ("1.", "2.", "3.", "4.", "5.", "6."):
+        assert f"\n{number} " in PLANNER_CONTRACT
+
+
+def test_the_declaration_contract_declares_an_empty_list_for_the_conversation() -> None:
+    assert "question about this conversation itself" in DECLARATION_CONTRACT
+
+
+def test_refuse_is_never_the_route_for_a_question_about_the_conversation() -> None:
+    from agentic_erp_assistant.llm.tools import REFUSE_TOOL
+
+    assert "conversation" in REFUSE_TOOL.description
+    assert "from history" in REFUSE_TOOL.description
