@@ -81,6 +81,11 @@ def state(**overrides: object) -> AgentState:
         "trace_id": "run-1",
         "session_id": "sess-1",
         "response": "The cutover is on Thursday.",
+        # An answered turn: the only state consolidate() is called with in
+        # production that proposes anything. An unanswered one is never asked
+        # -- the tests for that are the not_established skip below.
+        "route": "answer",
+        "failure": "none",
         "terminal": True,
     }
     fields.update(overrides)
@@ -300,6 +305,72 @@ def test_no_proposer_is_a_complete_configuration() -> None:
 
     assert memory.consolidate(state()) == ()
     assert len(memory.recall(state())) == 1
+
+
+# --------------------------------------------------------------------------
+# The not_established skip: a turn that established nothing is never asked
+# --------------------------------------------------------------------------
+
+
+def test_a_turn_that_refused_is_never_asked_and_returns_the_skip() -> None:
+    """A refusal ends with the user no better informed; asking the proposer
+    what the turn was worth is how the absence-claim junk got written."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(route="refuse", response="I cannot answer that."))
+
+    assert memory.service.proposer.seen == []
+    assert len(decisions) == 1
+    assert decisions[0].rejection == "not_established"
+    assert decisions[0].reason.startswith("turn ended in refuse")
+    assert memory.service.store.live(make_scope()) == ()
+
+
+def test_a_turn_that_asks_for_clarification_is_skipped_too() -> None:
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(route="clarify", response="Which sprint do you mean?"))
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions] == ["not_established"]
+
+
+def test_an_answered_turn_that_failed_is_skipped_too() -> None:
+    """route is not enough on its own: an answer marked incomplete_reply left
+    the user without the thing they asked for."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(failure="incomplete_reply"))
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions] == ["not_established"]
+
+
+def test_the_skip_leaves_no_audit_row() -> None:
+    """The audit table's memory_id/kind describe a candidate, and the skip has
+    none -- the trace event the orchestrator derives is the record."""
+    memory = bound(candidate())
+
+    memory.consolidate(state(route="refuse", response="I cannot answer that."))
+
+    assert memory.service.audit.rows == []
+
+
+def test_a_skipped_turn_still_promotes_its_evicted_turns() -> None:
+    """Promotion is about *older* turns; how this one ended does not bear on
+    whether the window's overflow gets folded."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(
+        state(route="refuse", response="I cannot answer that."),
+        evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),),
+    )
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions if d.rejection] == ["not_established"]
+    summaries = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(summaries) == 1
+    assert "Goal: get the cutover scheduled." in summaries[0].statement
 
 
 # --------------------------------------------------------------------------

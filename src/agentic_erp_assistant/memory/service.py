@@ -134,6 +134,19 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def _established(state: AgentState) -> bool:
+    """Only a turn that answered can have established anything.
+
+    A refusal, a clarification and a failure all end with the user no better
+    informed than they were -- and a turn whose output was "I could not answer
+    that" is exactly where the absence-claim junk came from: a proposer asked
+    what the turn was worth inventing something worth remembering about a turn
+    that remembered nothing. Route and failure are typed fields, so the test is
+    two comparisons, not prose matching.
+    """
+    return state.route == "answer" and state.failure == "none"
+
+
 @dataclass
 class MemoryService:
     """The shared, expensive half of memory, built once per process.
@@ -369,7 +382,75 @@ class SessionMemory:
         stored: list[MemoryRecord] = []
         retired: list[str] = []
 
-        existing = list(self.service.store.live(self.scope))
+        if _established(state):
+            judged, judged_stored, judged_retired = self._judge_proposals(
+                state, list(self.service.store.live(self.scope))
+            )
+            decisions.extend(judged)
+            stored.extend(judged_stored)
+            retired.extend(judged_retired)
+        else:
+            # D4/D5 (the memory refactor): a turn that refused, asked for
+            # clarification or failed established nothing, so there is nothing
+            # to propose and the proposer is never asked -- the model call is
+            # the cost this skip exists to avoid. The rejection is still a
+            # returned decision (the trace's memory_rejected event derives from
+            # it), but no audit row is written for it: that table's
+            # ``memory_id``/``kind`` describe a candidate, and there is none.
+            logger.info(
+                "run %s ended %s; nothing to propose", state.trace_id, state.route
+            )
+            decisions.append(
+                MemoryDecision(
+                    decision="reject",
+                    rejection="not_established",
+                    reason=(
+                        f"turn ended in {state.route} ({state.failure}); a turn "
+                        f"that produced no answer established nothing"
+                    ),
+                )
+            )
+
+        summary, verdict = self._promote(state, evicted)
+        if verdict is not None:
+            decisions.append(verdict)
+            self._audit(
+                state,
+                verdict,
+                "session_summary",
+                summary.memory_id if summary is not None
+                else f"summary-{self.scope.session_id}-{state.trace_id}",
+                summary.statement if summary is not None else "",
+            )
+        if summary is not None:
+            self.service.store.write(summary)
+            stored.append(summary)
+            retired.extend(summary.supersedes)
+
+        self._retire(retired, state)
+        self._index(stored)
+        return tuple(decisions)
+
+    def _judge_proposals(
+        self,
+        state: AgentState,
+        existing: list[MemoryRecord],
+    ) -> tuple[list[MemoryDecision], list[MemoryRecord], list[str]]:
+        """Ask the proposer, judge every proposal, and write the verdicts down.
+
+        The proposal half of :meth:`consolidate`, extracted so the skip for an
+        unestablished turn can leave it out entirely -- a turn that established
+        nothing is never asked -- while the promotion half still runs.
+
+        Returns:
+            ``(decisions, stored, retired)``, in the order the candidates were
+            proposed. Rejections are included: they are the half of the record
+            that shows the policy working.
+        """
+        decisions: list[MemoryDecision] = []
+        stored: list[MemoryRecord] = []
+        retired: list[str] = []
+
         for candidate in self._proposals(state):
             verdict = decide(candidate, existing=existing, scope=self.scope)
             decisions.append(verdict)
@@ -391,25 +472,7 @@ class SessionMemory:
             retired.extend(verdict.supersedes)
             self._audit(state, verdict, candidate.kind, identifier, candidate.statement)
 
-        summary, verdict = self._promote(state, evicted)
-        if verdict is not None:
-            decisions.append(verdict)
-            self._audit(
-                state,
-                verdict,
-                "session_summary",
-                summary.memory_id if summary is not None
-                else f"summary-{self.scope.session_id}-{state.trace_id}",
-                summary.statement if summary is not None else "",
-            )
-        if summary is not None:
-            self.service.store.write(summary)
-            stored.append(summary)
-            retired.extend(summary.supersedes)
-
-        self._retire(retired, state)
-        self._index(stored)
-        return tuple(decisions)
+        return decisions, stored, retired
 
     def _proposals(self, state: AgentState) -> Sequence[MemoryCandidate]:
         """Ask the proposer, and treat every failure as "nothing to remember".

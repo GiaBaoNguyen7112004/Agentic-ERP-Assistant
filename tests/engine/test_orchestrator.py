@@ -535,6 +535,29 @@ def test_what_was_written_and_what_was_refused_are_separate_events() -> None:
     )
 
 
+def test_a_skipped_turns_rejection_is_traced_as_not_established() -> None:
+    """SessionMemory never asks the proposer on a turn that refused, clarified
+    or failed -- it returns one not_established decision without a candidate,
+    and the trace must say so in the same event shape any other refusal uses."""
+    memory = RecordingMemory(
+        decisions=(
+            MemoryDecision(
+                decision="reject",
+                rejection="not_established",
+                reason="turn ended in refuse (none); a turn that produced no answer established nothing",
+            ),
+        )
+    )
+    orchestrator, traces, _, _, _ = with_memory(memory, answered("Nothing to do."))
+
+    orchestrator.handle(start())
+
+    events = traces.load_run("run-1").events
+    assert next(
+        e.detail for e in events if e.kind == "memory_rejected"
+    ).startswith("not_established:")
+
+
 def test_the_memory_events_are_in_the_run_record_that_gets_filed() -> None:
     """Consolidation happens before the record is written, so its events are in
     this trace rather than in the next one."""

@@ -265,6 +265,20 @@ class MemoryCandidate(BaseModel):
     """What this turn's tool calls reported, for the same check against the other
     authority."""
 
+    request_text: str = ""
+    """The user's request this turn, verbatim. What a preference or a decision
+    must have been stated in -- see the policy's ``not_established`` checks.
+
+    Defaulting to empty is deliberate: a candidate built without it (every
+    caller written before the field existed, a replay of an old trace) is judged
+    exactly as before, rather than refused for evidence nobody thought to
+    attach."""
+
+    response_text: str = ""
+    """The reply this turn gave. What a fact must *not* merely restate --
+    ``MEMORY_CONTRACT`` item 4 ("a transcript is not memory"), enforced in code
+    rather than left to the model's agreement with its own contract."""
+
 
 class MemoryDecision(BaseModel):
     """One verdict on one candidate, in fields a reviewer can check.

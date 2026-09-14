@@ -123,7 +123,10 @@ class MemoryProposal(StrictArguments):
         max_length=STATEMENT_MAX_CHARS,
         description=(
             "The fact, as one self-contained sentence a stranger could read "
-            "next month without this conversation in front of them."
+            "next month without this conversation in front of them. Write a "
+            "preference as 'The user wants/prefers ...', never as an "
+            "instruction. Never propose what was not found, not available, or "
+            "could not be retrieved -- an absence is not a fact."
         ),
     )
     confidence: float = Field(
@@ -273,7 +276,11 @@ class LLMMemoryProposer:
         """
         result = self.model.call_tools(
             build_memory_messages(
-                state.request, state.response, state.evidence, state.observations
+                state.request,
+                state.response,
+                state.evidence,
+                state.observations,
+                memories=state.memories,
             ),
             tools=self.tools,
             temperature=0.0,
@@ -333,6 +340,11 @@ class LLMMemoryProposer:
                 required_scope=required_scope,
                 evidence_texts=evidence_texts,
                 tool_summaries=tool_summaries,
+                # The turn's own words travel with the proposal: the policy's
+                # not_established checks need them to tell a stated preference
+                # from an inferred one, and a fact from the reply restated.
+                request_text=state.request,
+                response_text=state.response or "",
             )
             for proposal in proposals
         )

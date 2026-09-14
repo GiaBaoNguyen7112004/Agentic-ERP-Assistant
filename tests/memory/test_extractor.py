@@ -28,6 +28,8 @@ from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryKind
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
+from tests.memory.builders import make_record
+
 
 class FakeModel:
     """Returns a scripted choice and records what it was asked."""
@@ -252,6 +254,47 @@ def test_only_the_proposal_function_is_offered() -> None:
     _, model = propose(called())
 
     assert list(model.offered[0]) == [PROPOSE_MEMORIES_TOOL]
+
+
+def test_the_turns_own_memories_reach_the_proposer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_memory_messages takes memories so the model can see what it would
+    be restating -- an instruction to avoid duplicates given without showing
+    the existing memories is one nobody could follow. The call never passed
+    them; the docstring already promised it."""
+    seen: dict[str, object] = {}
+
+    def recording_build(*args: object, **kwargs: object):
+        seen["memories"] = kwargs.get("memories")
+        return [
+            {"role": "system", "content": ""},
+            {"role": "developer", "content": ""},
+            {"role": "user", "content": ""},
+            {"role": "evidence", "content": ""},
+            {"role": "observation", "content": ""},
+            {"role": "memory", "content": ""},
+            {"role": "assistant", "content": ""},
+        ]
+
+    monkeypatch.setattr(
+        "agentic_erp_assistant.memory.extractor.build_memory_messages",
+        recording_build,
+    )
+    memory = make_record()
+
+    LLMMemoryProposer(model=FakeModel(called())).propose(
+        state(memories=(memory,)), required_scope="project.docs.read"
+    )
+
+    assert seen["memories"] == (memory,)
+
+
+def test_the_candidate_carries_the_turns_own_words() -> None:
+    """The policy's not_established checks need them: a stated preference has
+    to be found in the request, and a fact must not merely restate the reply."""
+    candidates, _ = propose(called(proposal()))
+
+    assert candidates[0].request_text == state().request
+    assert candidates[0].response_text == state().response
 
 
 # --------------------------------------------------------------------------
