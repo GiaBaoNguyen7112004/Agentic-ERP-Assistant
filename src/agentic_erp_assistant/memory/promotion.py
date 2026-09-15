@@ -163,8 +163,9 @@ class SessionSummaryProposerPort(Protocol):
         Args:
             turns: The turns leaving the window, oldest first. Never empty --
                 the caller does not ask about an empty promotion.
-            previous: The session's current summary, if it has one, so the
-                model can extend or correct it rather than starting over.
+            previous: The session's current summary, if it has one, shown to
+                the model for context -- code carries it forward, so the model
+                is asked only for what the turns add or change.
 
         Returns:
             A proposal, or ``None`` when the model said nothing is worth

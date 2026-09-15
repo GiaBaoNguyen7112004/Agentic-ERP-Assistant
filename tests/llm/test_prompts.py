@@ -496,6 +496,17 @@ def test_promotion_messages_refuse_an_empty_batch() -> None:
         build_promotion_messages(())
 
 
+def test_the_promotion_contract_says_code_carries_the_previous_summary() -> None:
+    """The steering half of the merge conversation_state enforces: the model
+    proposes the delta, code carries the rest. Before that merge existed the
+    contract asked for the impossible -- an empty proposal destroyed the
+    previous summary -- which is the defect ADR 0028 records."""
+    assert "carried forward automatically" in PROMOTION_CONTRACT
+    assert "Propose only what these turns add or change; restate nothing" in (
+        PROMOTION_CONTRACT
+    )
+
+
 # --------------------------------------------------------------------------
 # build_declaration_messages: four blocks, before anything has run (ADR 0021)
 # --------------------------------------------------------------------------
