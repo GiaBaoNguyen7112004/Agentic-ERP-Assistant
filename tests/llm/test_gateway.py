@@ -447,6 +447,66 @@ def test_prose_instead_of_json_is_a_validation_failure_not_a_retry() -> None:
 
 
 # --------------------------------------------------------------------------
+# Step 4's one repair: an unresolvable citation is dropped, not fatal
+# --------------------------------------------------------------------------
+
+# The observed provider slip: the structured-output schema carries
+# min_length on locator, but the provider does not enforce it, and the
+# composer emitted an empty one beside citations that were fine.
+EMPTY_LOCATOR_JSON = json.dumps(
+    {
+        "answer": "Refunds close after 30 days.",
+        "citations": [
+            {"source_id": "doc-1", "locator": "  "},  # whitespace-only: same defect
+            {"source_id": "doc-1", "locator": "full"},
+        ],
+        "grounded": True,
+        "confidence": 0.9,
+        "refusal_reason": None,
+    }
+)
+
+ONLY_EMPTY_LOCATOR_JSON = json.dumps(
+    {
+        "answer": "Refunds close after 30 days.",
+        "citations": [{"source_id": "doc-1", "locator": ""}],
+        "grounded": True,
+        "confidence": 0.9,
+        "refusal_reason": None,
+    }
+)
+
+
+def test_a_citation_with_an_empty_locator_is_dropped_not_fatal() -> None:
+    """The pointer cannot be checked by a reader, so it goes; the turn does
+    not -- the answer and its remaining resolvable citations are delivered,
+    and the drop is visible in the trace detail rather than silent."""
+    recorder = Recorder(httpx.Response(200, json=reply(EMPTY_LOCATOR_JSON)))
+    gateway, telemetry, client = make_gateway(recorder)
+
+    answer = gateway.answer(QUESTION, EVIDENCE)
+    client.close()
+
+    assert [cite.locator for cite in answer.citations] == ["full"]
+    assert [record.outcome for record in telemetry.records] == ["answered"]
+    assert "dropped 1 citation" in (telemetry.records[0].detail or "")
+
+
+def test_a_grounded_answer_left_without_any_resolvable_citation_still_fails() -> None:
+    """Dropping the unresolvable pointer must not manufacture grounding: with
+    nothing left to back the claim, the schema's own rule rejects the reply,
+    exactly as if the salvage had never run."""
+    recorder = Recorder(httpx.Response(200, json=reply(ONLY_EMPTY_LOCATOR_JSON)))
+    gateway, telemetry, client = make_gateway(recorder)
+
+    with pytest.raises(ValidationError):
+        gateway.answer(QUESTION, EVIDENCE)
+    client.close()
+
+    assert [record.outcome for record in telemetry.records] == ["invalid_schema"]
+
+
+# --------------------------------------------------------------------------
 # Step 7's retry, firing inside the assembly
 # --------------------------------------------------------------------------
 

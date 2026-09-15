@@ -22,6 +22,7 @@ Telemetry is written on every path that reached the provider, including the ones
 that failed. A rejected reply was still generated and still billed.
 """
 
+import json
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -156,6 +157,54 @@ def _as_snippets(evidence: Evidence) -> list[EvidenceSnippet]:
             for source_id, text in evidence.items()
         ]
     return list(evidence)
+
+
+def _salvage_unresolvable_citations(text: str) -> tuple[str, int]:
+    """Drop citations an empty source id or locator leaves unresolvable.
+
+    The provider does not enforce the schema's ``min_length`` (structured
+    output accepts the schema but ignores the constraint), so a composer can
+    emit ``{"source_id": "doc-1", "locator": ""}`` -- observed in the wild as
+    ``citations.N.locator string_too_short`` failing a turn whose other three
+    citations and answer text were fine. An empty field is not a resolvable
+    reference -- the citation rule's own words -- so the honest repair is to
+    drop the pointer, not the turn: dropping only ever removes a citation that
+    could not have been checked by a reader, never adds or rewrites one, and
+    the schema's grounded-but-uncited rule still rejects what is left if no
+    resolvable citation survives. Prose, malformed JSON, and shape errors
+    deeper than an empty field are returned untouched -- those are the
+    schema's own reports to make.
+
+    Returns the (possibly repaired) payload and how many citations were
+    dropped, so the repair is visible in the trace rather than silent.
+    """
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return text, 0
+    if not isinstance(payload, dict):
+        return text, 0
+    citations = payload.get("citations")
+    if not isinstance(citations, list):
+        return text, 0
+
+    def unresolvable(citation: object) -> bool:
+        # A non-dict entry is a shape error, not an empty field: the schema
+        # reports it, unchanged.
+        if not isinstance(citation, dict):
+            return False
+        return any(
+            not isinstance(citation.get(field_name), str)
+            or not citation.get(field_name, "").strip()
+            for field_name in ("source_id", "locator")
+        )
+
+    kept = [citation for citation in citations if not unresolvable(citation)]
+    dropped = len(citations) - len(kept)
+    if dropped == 0:
+        return text, 0
+    payload["citations"] = kept
+    return json.dumps(payload), dropped
 
 
 @dataclass
@@ -315,7 +364,11 @@ class LLMGateway:
 
         Returns:
             A validated :class:`GroundedAnswer` -- which, by construction, either
-            carries citations or says why it refused.
+            carries citations or says why it refused. A citation whose source
+            id or locator arrives empty is dropped before validation rather
+            than allowed to fail the turn -- it is not a resolvable reference,
+            and the drop is recorded in the call's trace detail. A reply left
+            with no resolvable citation still fails the schema below.
 
         Raises:
             ContextWindowExceeded: The estimate does not leave room for a reply.
@@ -386,9 +439,12 @@ class LLMGateway:
             raise
         latency = time.perf_counter() - started
 
-        # 4. Validate, and record what it really cost.
+        # 4. Validate, and record what it really cost. One repair runs first
+        # (see _salvage_unresolvable_citations): a citation an empty field
+        # leaves unresolvable is dropped, and the drop itself is recorded.
+        salvaged, dropped = _salvage_unresolvable_citations(response["text"])
         try:
-            answer = GroundedAnswer.model_validate_json(response["text"])
+            answer = GroundedAnswer.model_validate_json(salvaged)
         except ValidationError as error:
             self._record(
                 outcome="invalid_schema",
@@ -410,6 +466,11 @@ class LLMGateway:
             latency=latency,
             attempts=attempts,
             model=response["model"],
+            detail=(
+                f"dropped {dropped} citation(s) with an empty source id or locator"
+                if dropped
+                else None
+            ),
             request=request_snapshot,
             response=self._snapshot_response(
                 content=response["text"], stop_reason=response["stop_reason"]
