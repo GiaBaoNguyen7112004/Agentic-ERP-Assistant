@@ -136,6 +136,14 @@ class Risk(_Record):
     project_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     severity: RiskSeverity
+    status: Literal["open", "closed"]
+    """Whether the risk is still live.
+
+    Required, with no default, for the same reason ``source_id`` is: the
+    register this dataset mirrors distinguishes open from closed rows, and a
+    row that forgot to say which is a row ``list_risks`` -- whose tool
+    description promises the *open* risks -- would silently misreport.
+    """
 
 
 class ErpNotPersistedError(RuntimeError):
@@ -255,6 +263,18 @@ class MockErp:
         """
         return tuple(risk for risk in self.risks if risk.project_id == project_id)
 
+    def open_risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        """The live risks on a project -- what ``list_risks`` promises to list.
+
+        Closed rows stay in the dataset (they are in the register this dataset
+        mirrors, and a proposed risk duplicated against a closed one is still a
+        duplicate), but they are not live delivery exposure, so they are not
+        listed as open.
+        """
+        return tuple(
+            risk for risk in self.risks_for(project_id) if risk.status == "open"
+        )
+
     def for_project(self, project_code: str) -> "ProjectErp":
         """One project's slice of this store -- see :class:`ProjectErp`."""
         return ProjectErp(store=self, project_code=project_code)
@@ -288,6 +308,7 @@ class MockErp:
                 project_id=project_id,
                 title=title,
                 severity=severity,
+                status="open",
                 source_id=f"risk-r-{len(self.risks) + 1}",
             )
             self.risks.append(created)
@@ -379,6 +400,11 @@ class ProjectErp:
         if project_id != self.project_code:
             return ()
         return self.store.risks_for(project_id)
+
+    def open_risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        if project_id != self.project_code:
+            return ()
+        return self.store.open_risks_for(project_id)
 
     def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
         """Record a new risk, through the store this view wraps.

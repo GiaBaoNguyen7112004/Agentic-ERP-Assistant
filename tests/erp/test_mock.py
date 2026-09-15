@@ -76,6 +76,7 @@ def test_a_severity_outside_the_set_is_rejected() -> None:
                         "project_id": "atlas",
                         "title": "x",
                         "severity": "catastrophic",
+                        "status": "open",
                         "source_id": "risk-r-9",
                     }
                 ],
@@ -105,6 +106,42 @@ def test_a_project_with_no_risks_reads_as_none_open(erp: MockErp) -> None:
     """Empty, not None: 'none open' is a reportable answer, while None would
     make the handler guess whether it meant that or 'no such project'."""
     assert erp.risks_for("no-such-project") == ()
+
+
+def test_closed_risks_are_kept_but_not_open(erp: MockErp) -> None:
+    """The dataset mirrors the register, which keeps closed rows on file --
+    a proposed risk duplicated against a closed one is still a duplicate --
+    but what list_risks promises is the open risks, and the store does the
+    filtering so the rule is not a check a handler has to remember."""
+    all_ids = [risk.risk_id for risk in erp.risks_for("atlas")]
+    open_ids = [risk.risk_id for risk in erp.open_risks_for("atlas")]
+
+    assert "R-5" in all_ids and "R-6" in all_ids
+    assert "R-5" not in open_ids and "R-6" not in open_ids
+    assert len(open_ids) == 6
+
+
+def test_a_risk_without_a_status_fails_at_load() -> None:
+    """Required, no default: the register distinguishes open from closed, and
+    a row that forgot to say which is a row list_risks would misreport."""
+    with pytest.raises(ValidationError, match="status"):
+        MockErp.from_mapping(
+            {
+                "projects": [],
+                "milestones": [],
+                "sprints": [],
+                "budgets": [],
+                "risks": [
+                    {
+                        "risk_id": "R-1",
+                        "project_id": "atlas",
+                        "title": "x",
+                        "severity": "high",
+                        "source_id": "risk-r-1",
+                    }
+                ],
+            }
+        )
 
 
 def test_the_budget_is_found_by_project(erp: MockErp) -> None:
@@ -226,7 +263,7 @@ def test_the_repo_fixture_is_untouched_by_the_write_tests() -> None:
     being edited by a test."""
     raw = json.loads(DEFAULT_DATASET_PATH.read_text(encoding="utf-8"))
     risk_ids = [risk["risk_id"] for risk in raw["risks"]]
-    assert risk_ids == ["R-1", "R-2"]
+    assert risk_ids == ["R-1", "R-2", "R-3", "R-4", "R-5", "R-6", "R-7", "R-8"]
 
 
 # --------------------------------------------------------------------------

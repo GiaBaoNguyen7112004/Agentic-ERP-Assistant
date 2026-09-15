@@ -1,5 +1,5 @@
 {
-  "_readme": "Synthetic delivery data for two fictional, unrelated projects -- Atlas and Orion, mirroring data/documents/orion-status-report-2026-09.md. Small enough to read in review, and the only dataset the mock ERP serves. Orion has no sprint and no risk row on purpose: the report narrates one open risk (O-1) that nobody has recorded in the tracker yet, so a project-bound actor recording it is a real write, not a duplicate. No real customer data belongs here.",
+  "_readme": "Synthetic delivery data for two fictional, unrelated projects -- Atlas and Orion, mirroring data/documents/. Small enough to read in review, and the only dataset the mock ERP serves. No real customer data belongs here. Mirroring rule: data/documents/ is the record of truth for everything it states -- risk-register.csv (effective 2026-08-31) owns the risk rows this file mirrors (every row here must match its register row on id, title, severity and status; tests/erp/test_fixture_consistency.py fails loudly if the two drift), the status reports own the milestone dates, the sprint report owns the sprint numbers, and the budget summaries own the budget figures. Orion has no sprint and no pre-seeded risk row on purpose: the report narrates one open risk (O-1) that nobody has recorded in the tracker yet, so a project-bound actor recording it is a real write, not a duplicate -- and create_risk mints it O-1, the id the report already names. Sprint 11 and the M2 forecast detail (two days late is a forecast slip as of the report date, not an actual overrun) live only in the documents on purpose; the tools serve the tracker's current rows. Orion's milestones mirror its status report, including the completed O1 and the future O3.",
   "projects": [
     {
       "project_id": "atlas",
@@ -92,6 +92,7 @@
       "project_id": "atlas",
       "title": "Finance data migration may exceed the cutover window",
       "severity": "high",
+      "status": "open",
       "source_id": "risk-r-1"
     },
     {
@@ -99,7 +100,56 @@
       "project_id": "atlas",
       "title": "Second integration vendor has not confirmed the test window",
       "severity": "medium",
+      "status": "open",
       "source_id": "risk-r-2"
+    },
+    {
+      "risk_id": "R-3",
+      "project_id": "atlas",
+      "title": "Forecast overrun exceeds delegated tolerance",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-3"
+    },
+    {
+      "risk_id": "R-4",
+      "project_id": "atlas",
+      "title": "Hypercare staffing is not confirmed",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-4"
+    },
+    {
+      "risk_id": "R-5",
+      "project_id": "atlas",
+      "title": "Warehouse test environment availability",
+      "severity": "medium",
+      "status": "closed",
+      "source_id": "risk-r-5"
+    },
+    {
+      "risk_id": "R-6",
+      "project_id": "atlas",
+      "title": "Training room availability",
+      "severity": "low",
+      "status": "closed",
+      "source_id": "risk-r-6"
+    },
+    {
+      "risk_id": "R-7",
+      "project_id": "atlas",
+      "title": "Legacy payments bridge is retained beyond two weeks",
+      "severity": "low",
+      "status": "open",
+      "source_id": "risk-r-7"
+    },
+    {
+      "risk_id": "R-8",
+      "project_id": "atlas",
+      "title": "Cost centre mapping fix introduces new defects",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-8"
     }
   ]
 }

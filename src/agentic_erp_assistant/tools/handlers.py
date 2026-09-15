@@ -171,7 +171,11 @@ def build_handlers(erp: MockErp) -> dict[str, Handler]:
         if project is None:
             raise ToolError(f"no project {arguments.project_id!r} exists")
 
-        risks = store.risks_for(arguments.project_id)
+        # Open rows only -- the tool description promises "the open risks",
+        # and the dataset mirrors the register, which keeps closed ones on
+        # file. The store does the filtering so the rule is not a check this
+        # handler has to remember.
+        risks = store.open_risks_for(arguments.project_id)
         if risks:
             listed = "; ".join(f"{risk.risk_id} ({risk.severity}) {risk.title}" for risk in risks)
             summary = f"{len(risks)} open risk{'s' if len(risks) != 1 else ''}: {listed}"
