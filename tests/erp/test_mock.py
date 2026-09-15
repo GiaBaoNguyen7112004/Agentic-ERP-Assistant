@@ -170,7 +170,74 @@ def test_creating_a_risk_records_it(erp: MockErp) -> None:
 def test_a_created_risk_can_be_cited(erp: MockErp) -> None:
     created = erp.create_risk(project_id="atlas", title="x", severity="low")
 
-    assert created.source_id == f"risk-r-{len(erp.risks)}"
+    assert created.risk_id == "R-9"
+    assert created.source_id == "risk-r-9"
+
+
+def test_the_id_continues_from_the_highest_suffix_not_the_row_count(
+    tmp_path,
+) -> None:
+    """A count-derived id collides the moment ids are not a dense 1..n run --
+    the register this dataset mirrors already owns R-3..R-8, so the next Atlas
+    risk must come from the largest suffix, wherever the gaps are."""
+    path = tmp_path / "project.json"
+    path.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {
+                        "project_id": "atlas",
+                        "name": "Atlas ERP rollout",
+                        "risk_id_prefix": "R",
+                        "source_id": "project-atlas",
+                    }
+                ],
+                "milestones": [],
+                "sprints": [],
+                "budgets": [],
+                "risks": [
+                    {
+                        "risk_id": "R-41",
+                        "project_id": "atlas",
+                        "title": "x",
+                        "severity": "low",
+                        "status": "open",
+                        "source_id": "risk-r-41",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = MockErp.load(path)
+
+    created = store.create_risk(project_id="atlas", title="x", severity="low")
+
+    assert created.risk_id == "R-42"
+    assert created.source_id == "risk-r-42"
+
+
+def test_a_risk_minted_for_orion_carries_orion_s_prefix(erp: MockErp) -> None:
+    """The report narrates Orion's unrecorded risk as O-1; the first write
+    against Orion should mint exactly that id, not an Atlas-colliding R-N."""
+    created = erp.create_risk(
+        project_id="orion",
+        title="Pipeline migration cannot be verified without the extract",
+        severity="medium",
+    )
+
+    assert created.risk_id == "O-1"
+    assert created.source_id == "risk-o-1"
+
+
+def test_no_id_is_minted_against_a_project_that_does_not_exist(erp: MockErp) -> None:
+    """The handler refuses unknown projects first; the store's own check is
+    what stops a direct call from writing a row naming no real project -- a
+    corruption the next load would carry forward."""
+    from agentic_erp_assistant.erp.mock import ErpAccessError
+
+    with pytest.raises(ErpAccessError):
+        erp.create_risk(project_id="no-such-project", title="x", severity="low")
 
 
 def test_the_store_enforces_no_policy_of_its_own(erp: MockErp) -> None:
@@ -241,6 +308,7 @@ def test_a_store_with_no_file_refuses_to_write() -> None:
                 {
                     "project_id": "atlas",
                     "name": "Atlas ERP rollout",
+                    "risk_id_prefix": "R",
                     "source_id": "project-atlas",
                 }
             ],
@@ -312,6 +380,7 @@ def test_create_risk_through_the_matching_view_succeeds(erp: MockErp) -> None:
     )
 
     assert created.project_id == "orion"
+    assert created.risk_id == "O-1"
     assert created in erp.risks
 
 

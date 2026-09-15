@@ -92,6 +92,7 @@ class FakeErp:
         return Project(
             source_id=f"project-{project_id}", project_id=project_id,
             name="Atlas ERP rollout",
+            risk_id_prefix="R",
         )
 
 

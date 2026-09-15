@@ -4,11 +4,13 @@
     {
       "project_id": "atlas",
       "name": "Atlas ERP rollout",
+      "risk_id_prefix": "R",
       "source_id": "project-atlas"
     },
     {
       "project_id": "orion",
       "name": "Orion CRM migration",
+      "risk_id_prefix": "O",
       "source_id": "project-orion"
     }
   ],

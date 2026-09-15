@@ -104,6 +104,14 @@ class _Record(BaseModel):
 class Project(_Record):
     project_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    risk_id_prefix: str = Field(min_length=1, pattern=r"^[A-Z]{1,3}$")
+    """The letter a new risk's id is minted with: ``R`` for Atlas, ``O`` for
+    Orion, following the same per-project convention the milestone ids
+    already use (``M1``…, ``O2``). Data, not code, because which prefix a
+    project uses is a fact about the project, and the dataset is where the
+    project's facts live. It is what makes the first risk recorded against
+    Orion come out ``O-1`` -- the id its status report already narrates --
+    instead of a colliding ``R-N`` from the Atlas register."""
 
 
 class Milestone(_Record):
@@ -284,11 +292,23 @@ class MockErp:
     def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
         """Record a new risk, persist it, and return it.
 
-        The id is derived from the count rather than randomly generated, so a
-        test can assert on the result and an audit row and a trace entry all
-        name the same thing. Nothing here checks permission or approval -- that
-        is the gateway's job, and a store that also enforced policy would be a
-        second place to look for the rule.
+        The id is minted per project -- ``self.project(project_id)`` supplies
+        the prefix (``R`` for Atlas, ``O`` for Orion) and the number continues
+        from the *largest suffix that project already has*, not from the row
+        count. A count-derived id collides the moment the ids are not a dense
+        ``1..n`` run, and the register this dataset mirrors already owns
+        ``R-3``..``R-8``; a row count is also shared across projects, which
+        would mint two different projects' risks the same id. Nothing here
+        checks permission or approval -- that is the gateway's job, and a
+        store that also enforced policy would be a second place to look for
+        the rule.
+
+        Raises:
+            ErpAccessError: ``project_id`` names no project this store knows.
+                The handler refuses unknown projects first; this is the
+                store's own guarantee that an id is never minted against a
+                project that does not exist -- a written row naming no real
+                project would be corruption the next load carries forward.
 
         Persists through :meth:`_flush` before returning, so a caller that was
         told "recorded" can reload the file and find it. A store without a path
@@ -296,20 +316,35 @@ class MockErp:
         rolls the append back, because a store that kept the row in memory
         after refusing to write it would be claiming a write it did not make.
 
-        Holds ``self._lock`` around the append-flush-rollback sequence: the
-        web layer can have two approved writes reach this store from two
-        request threads, and without a lock one thread's ``len(self.risks)``
-        could be read before the other's append lands, handing out the same
-        id twice.
+        Holds ``self._lock`` around the id-minting-append-flush-rollback
+        sequence: the web layer can have two approved writes reach this store
+        from two request threads, and without a lock both could read the same
+        largest suffix before either appends, handing out the same id twice.
         """
         with self._lock:
+            project = self.project(project_id)
+            if project is None:
+                raise ErpAccessError(
+                    f"no project {project_id!r} exists, so no risk id can be "
+                    "minted for it"
+                )
+            highest = max(
+                (
+                    int(risk.risk_id.rsplit("-", 1)[-1])
+                    for risk in self.risks
+                    if risk.project_id == project_id
+                    and risk.risk_id.rsplit("-", 1)[-1].isdigit()
+                ),
+                default=0,
+            )
+            risk_id = f"{project.risk_id_prefix}-{highest + 1}"
             created = Risk(
-                risk_id=f"R-{len(self.risks) + 1}",
+                risk_id=risk_id,
                 project_id=project_id,
                 title=title,
                 severity=severity,
                 status="open",
-                source_id=f"risk-r-{len(self.risks) + 1}",
+                source_id=f"risk-{risk_id.lower()}",
             )
             self.risks.append(created)
             try:
