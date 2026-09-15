@@ -1,0 +1,25 @@
+# Secrets never enter the build context, let alone the image.
+.env
+
+# The image builds its own UI; host node_modules is hundreds of MB of
+# context bloat, and host web/static is gitignored local state -- the node
+# stage, not the checkout, is the source of truth in the image.
+ui/node_modules
+src/agentic_erp_assistant/web/static
+
+# Review and evidence material the image does not need.
+.git
+.venv
+.claude
+.pytest_cache
+**/__pycache__
+*.py[oc]
+docs
+evidence
+tests
+
+# Root-level working notes only (/*.md, not **/*.md -- data/documents/*.md is
+# the corpus and must ship). README.md stays: pyproject.toml names it as the
+# readme and uv needs it to build the project.
+/*.md
+!README.md

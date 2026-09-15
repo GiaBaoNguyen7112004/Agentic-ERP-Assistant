@@ -44,6 +44,8 @@ uv run pytest                # tests (once pytest is a dev dependency)
 uv add <pkg>                 # add a runtime dependency
 uv add --dev <pkg>           # add a dev dependency
 
+docker compose up --build                        # the whole system from a fresh checkout (ADR 0029)
+
 docker compose up -d qdrant                          # the vector store
 uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
 uv run python scripts/ingest_documents.py            # embed and store, for real
