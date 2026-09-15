@@ -236,7 +236,18 @@ Not yet chosen; ask before assuming, and update this file once settled.
   (ADR 0009). `OPENAI_EMBEDDING_MODEL` comes from `.env` with no default.
   Still open behind that: `MIN_COSINE_SIMILARITY` in `rag/retriever.py` is
   provisional until the evidence run measures the gap it should sit in, and the
-  index router and graph slice (reference steps 13 and 14) are deferred.
+  index router and graph slice (reference steps 13 and 14) are deferred. Since
+  ADR 0026, the planner's own routing prompt (and only that prompt) carries a
+  `DocumentCatalogue` -- every document this turn's actor is authorized to
+  search, filtered from the manifest by the same `rag/access.py::
+  is_authorized` check retrieval itself enforces -- so a refusal or a search
+  choice is made against what actually exists and what this actor may open,
+  never a guess from a tool description alone. A document outside the
+  catalogue is never named to the model; the wording only tells it to say a
+  named-but-absent document is inaccessible, never that it does not exist.
+  `retrieve_and_answer` still runs exactly one query per turn regardless of
+  how many documents the request names — a request naming several is
+  `multi-document-turn-plan.md`'s open step 3.
 - ~~Memory topology~~ — settled: Postgres holds the records (`memories`,
   `intents`, `memory_audit`), a second Qdrant collection indexes them for
   semantic recall, and graph memory is rejected because the required queries are

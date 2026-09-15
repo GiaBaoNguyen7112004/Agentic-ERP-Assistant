@@ -41,6 +41,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from agentic_erp_assistant.context.catalogue import DocumentCatalogue
 from agentic_erp_assistant.llm.ports import Message
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.state.conversation import ConversationTurn
@@ -66,6 +67,7 @@ __all__ = [
     "build_messages",
     "build_planner_messages",
     "build_promotion_messages",
+    "render_catalogue",
     "render_principal",
     "system_content",
 ]
@@ -164,12 +166,65 @@ def render_principal(principal: Principal) -> str:
     )
 
 
-def system_content(principal: Principal | None) -> str:
+def render_catalogue(catalogue: DocumentCatalogue) -> str:
+    """The document catalogue block, appended to the system role after the
+    principal (ADR 0026) -- only ever built by
+    :func:`~agentic_erp_assistant.context.catalogue.build_catalogue`, which
+    is the one place "what may this actor search" is decided, reusing
+    ``rag/access.py::is_authorized`` rather than a second comparison.
+
+    A document this actor may not read is never named here -- listing a
+    confidential title to someone who cannot open it discloses the one fact
+    access control exists to hide -- so the wording below is the only thing
+    that tells the model what to say about a document the user names that
+    is not on this list: it does not exist *to this actor*, which is not
+    the same claim as "it does not exist", and the model is told to make
+    only the first one.
+    """
+    if not catalogue:
+        return (
+            "You have no documents to search for this project. Any call to "
+            "search_project_documents will come back empty."
+        )
+    lines = "\n".join(
+        f"- {entry.document_id}: {entry.title} "
+        f"({entry.document_type}, {entry.effective_date})"
+        for entry in catalogue.entries
+    )
+    return (
+        "Documents you can search with search_project_documents -- any "
+        "format (CSV, PDF, HTML, Markdown) is indexed and searched the same "
+        "way, so a document's file type is never a reason to refuse it:\n"
+        f"{lines}\n"
+        "A document the user names that is not on this list is either "
+        "outside this project or outside what you may read here -- say you "
+        "cannot access it; never say it does not exist, and never guess "
+        "which one it is."
+    )
+
+
+def system_content(
+    principal: Principal | None, catalogue: DocumentCatalogue | None = None
+) -> str:
     """``SYSTEM_POLICY`` alone when nobody is bound (a replay, the routing
-    comparison), otherwise the policy followed by the principal block."""
+    comparison), otherwise the policy followed by the principal block and,
+    when given, the document catalogue.
+
+    ``catalogue`` is ignored when ``principal`` is ``None``: a document
+    catalogue is a fact about *this actor's* entitlements, and there is no
+    actor to state it for on an unbound call. Only
+    :func:`build_planner_messages` ever passes one -- the routing decision
+    is the one place a missing catalogue produces the failure ADR 0026
+    documents (refusing a search the actor could have made); the composer,
+    the declarer and the memory calls have no occasion to weigh whether a
+    document exists at all.
+    """
     if principal is None:
         return SYSTEM_POLICY
-    return f"{SYSTEM_POLICY}\n\n{render_principal(principal)}"
+    blocks = [SYSTEM_POLICY, render_principal(principal)]
+    if catalogue is not None:
+        blocks.append(render_catalogue(catalogue))
+    return "\n\n".join(blocks)
 
 
 DEVELOPER_CONTRACT = (
@@ -346,7 +401,10 @@ PLANNER_CONTRACT = (
     "1. If the question needs something written down in a project document -- a\n"
     "decision, a commitment, an explanation, anything that has to be quoted -- call\n"
     "search_project_documents first. Facts that must be cited come from documents,\n"
-    "not from memory.\n"
+    "not from memory. Check 'Documents you can search' in the system role before\n"
+    "deciding a document is unavailable: a document's file format -- a CSV, a\n"
+    "PDF, a spreadsheet -- is never a reason to search it less, or to refuse\n"
+    "instead of searching, if it is on that list.\n"
     "2. If the question asks for a field the ERP holds -- a milestone's status, a\n"
     "sprint's burn-down, a budget, the open risks -- call that tool with the\n"
     "identifier the user gave.\n"
@@ -354,7 +412,10 @@ PLANNER_CONTRACT = (
     "would produce a confident answer about the wrong thing, call ask_clarification\n"
     "with the one question that unblocks it.\n"
     "4. If the request is outside project delivery, or nothing available could\n"
-    "support an answer, call refuse with the reason.\n"
+    "support an answer -- checked against what is actually listed and callable,\n"
+    "never guessed from a document's name or format -- call refuse with the\n"
+    "reason. If the user names a document not on the list, say so plainly in the\n"
+    "reason: that it is not one you can access, never that it does not exist.\n"
     "5. If the request is about the conversation itself rather than the project\n"
     "-- what was asked or answered earlier, a greeting, a thank-you, the user\n"
     "telling you how they want replies shaped -- answer directly in plain text\n"
@@ -438,6 +499,7 @@ def build_planner_messages(
     *,
     contract: str = PLANNER_CONTRACT,
     principal: Principal | None = None,
+    catalogue: DocumentCatalogue | None = None,
 ) -> list[Message]:
     """Build the seven role blocks for one routing decision.
 
@@ -470,6 +532,12 @@ def build_planner_messages(
         principal: Who this turn is for, rendered into the system role after
             the policy. ``None`` -- the default -- sends
             :data:`SYSTEM_POLICY` byte-for-byte.
+        catalogue: Which documents this turn's actor may search (ADR 0026),
+            rendered into the system role after the principal. ``None`` --
+            the default, and every caller but
+            :mod:`agentic_erp_assistant.composition.turn` -- omits the
+            block entirely, which is also what a blank ``principal`` does
+            regardless of this argument.
 
     Returns:
         Seven messages: system, developer, user, evidence, observation,
@@ -482,7 +550,7 @@ def build_planner_messages(
         raise ValueError("question must not be blank")
 
     return [
-        {"role": "system", "content": system_content(principal)},
+        {"role": "system", "content": system_content(principal, catalogue)},
         {"role": "developer", "content": contract},
         {"role": "user", "content": question},
         {"role": "evidence", "content": _render_evidence(evidence)},

@@ -1208,3 +1208,74 @@ def test_a_gateway_with_a_principal_sends_it_in_every_first_message() -> None:
         assert body["messages"][0]["role"] == "system"
         assert body["messages"][0]["content"] == expected
         assert "Priya Raman" in body["messages"][0]["content"]
+
+
+# --------------------------------------------------------------------------
+# The document catalogue: decide() only (ADR 0026)
+# --------------------------------------------------------------------------
+
+
+def test_a_gateway_without_a_catalogue_sends_no_catalogue_block() -> None:
+    """The default: unchanged from before ADR 0026 for every caller that
+    does not opt in."""
+    from agentic_erp_assistant.llm.prompts import Principal
+
+    principal = Principal(
+        actor="priya",
+        display_name="Priya Raman",
+        role="Delivery lead",
+        project_code="atlas",
+        project_name="Atlas ERP rollout",
+    )
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"}))
+    )
+    gateway, _, _ = make_gateway(recorder, principal=principal)
+
+    gateway.decide("What could go wrong on atlas?")
+
+    body = json.loads(recorder.requests[0].content)
+    assert "Documents you can search" not in body["messages"][0]["content"]
+
+
+def test_a_gateway_with_a_catalogue_sends_it_only_from_decide() -> None:
+    from agentic_erp_assistant.context.catalogue import CatalogueEntry, DocumentCatalogue
+    from agentic_erp_assistant.llm.prompts import Principal
+
+    principal = Principal(
+        actor="priya",
+        display_name="Priya Raman",
+        role="Delivery lead",
+        project_code="atlas",
+        project_name="Atlas ERP rollout",
+    )
+    catalogue = DocumentCatalogue(
+        entries=(
+            CatalogueEntry(
+                document_id="risk-register",
+                title="Atlas Risk Register",
+                document_type="risk_register",
+                effective_date="2026-08-31",
+            ),
+        )
+    )
+    recorder = Recorder(
+        httpx.Response(200, json=tool_call_reply("list_risks", {"project_id": "atlas"})),
+        httpx.Response(200, json=tool_call_reply(
+            "declare_reply_contract", {"needs": [], "document_query": None}
+        )),
+        httpx.Response(200, json=reply()),
+    )
+    gateway, _, _ = make_gateway(recorder, principal=principal, catalogue=catalogue)
+
+    gateway.decide("What could go wrong on atlas?")
+    gateway.declare("What could go wrong on atlas?")
+    gateway.answer(QUESTION, EVIDENCE)
+
+    decide_system = json.loads(recorder.requests[0].content)["messages"][0]["content"]
+    declare_system = json.loads(recorder.requests[1].content)["messages"][0]["content"]
+    answer_system = json.loads(recorder.requests[2].content)["messages"][0]["content"]
+
+    assert "risk-register: Atlas Risk Register" in decide_system
+    assert "Documents you can search" not in declare_system
+    assert "Documents you can search" not in answer_system

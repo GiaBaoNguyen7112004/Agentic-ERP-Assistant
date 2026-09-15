@@ -30,6 +30,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from agentic_erp_assistant.context.catalogue import DocumentCatalogue
 from agentic_erp_assistant.llm.inspection import (
     ModelCallInspector,
     ModelRequestSnapshot,
@@ -262,6 +263,21 @@ class LLMGateway:
     not something a decision carries. ``call_tools`` takes messages already
     built, so it needs nothing here."""
 
+    catalogue: DocumentCatalogue | None = None
+    """Which documents this turn's actor may search (ADR 0026), appended to
+    the system block of :meth:`decide`'s own prompt only. ``None`` -- the
+    default -- omits the block, the same as an unset :attr:`principal` does
+    for the whole system role.
+
+    Bound at construction, exactly like :attr:`principal` -- which document
+    catalogue applies is standing session context, decided once by
+    ``composition/turn.py`` from the actor's own entitlements, never
+    something a single decision carries. :meth:`answer`, :meth:`declare` and
+    a memory-proposal gateway built without one never see this field at
+    all: composing from evidence already retrieved, and declaring what a
+    reply needs in the abstract, have no occasion to weigh whether a
+    specific document exists."""
+
     def answer(
         self,
         question: str,
@@ -461,6 +477,7 @@ class LLMGateway:
                 memories,
                 history,
                 contract=self.planner_contract,
+                catalogue=self.catalogue,
                 principal=self.principal,
             ),
             tools=tools,

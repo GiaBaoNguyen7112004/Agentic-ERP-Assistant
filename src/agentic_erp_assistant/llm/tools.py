@@ -380,11 +380,13 @@ the model, and is not what enforces anything."""
 SEARCH_PROJECT_DOCUMENTS_TOOL = ToolSpec(
     name="search_project_documents",
     description=(
-        "Search the project documents -- status reports, meeting notes, "
-        "contracts -- and return the passages that answer a question, each "
+        "Search the documents listed under 'Documents you can search' in the "
+        "system role, and return the passages that answer a question, each "
         "with the source it came from. Read-only. Use it for anything the ERP "
         "tools do not hold as a field: decisions, commitments, explanations, "
-        "and any question whose answer has to be quoted rather than looked up."
+        "and any question whose answer has to be quoted rather than looked up "
+        "-- whatever the document's own file format is (a spreadsheet, a PDF, "
+        "a report): every listed document is searched the same way."
     ),
     arguments=SearchProjectDocumentsArguments,
     mutating=False,
@@ -422,9 +424,12 @@ REFUSE_TOOL = ToolSpec(
     name="refuse",
     description=(
         "Decline the request. Use it when what is asked falls outside project "
-        "delivery operations, or when no available tool and no project "
-        "document could support an answer -- never as a way to avoid a hard "
-        "lookup. A question about this conversation (what was asked, what was "
+        "delivery operations, or when no available tool and no listed document "
+        "could support an answer -- never as a way to avoid a hard lookup, and "
+        "never because a document's file format (a CSV, a PDF, a spreadsheet) "
+        "looks hard to search: search it, the same as any other listed "
+        "document, before deciding nothing there could answer this. A "
+        "question about this conversation (what was asked, what was "
         "answered) is not outside project delivery -- answer it from history "
         "instead."
     ),

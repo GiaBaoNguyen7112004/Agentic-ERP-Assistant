@@ -168,7 +168,9 @@ already sets.
   stands (bound holds).
 - contract `None` -> refuse stands, no event (unchecked turns remain unchecked).
 
-**ADR 0024** -- "a refusal is a claim the contract checks", amending 0021.
+**ADR 0025** -- "a refusal is held to the reply contract too", amending 0021. **Done**
+(commit `aeb87f1`): `engine/nodes.py::think`'s gate widened, no draft carried for a
+refusal, five new tests in `tests/engine/test_completeness.py`.
 
 ### Step 2 -- `context:`/`llm:` the model is told which documents exist (closes RC1, gives RC4 a script)
 
@@ -208,6 +210,18 @@ appear, wei sees the budget summary and priya does not); `tests/context/` for th
 catalogue builder; `tests/eval` -- `PLANNER_CONTRACT` changed, so the ADR 0020
 comparison is re-run in step 4.
 
+**ADR 0026** -- "the model is told which documents it may search". **Done**
+(commit pending): `context/catalogue.py::build_catalogue` (reuses
+`rag/access.py::is_authorized`, no second scope check), `llm/prompts.py::
+render_catalogue`, `LLMGateway.catalogue` (bound at construction, read only by
+`decide()`), `composition/turn.py` builds one `RetrievalContext` shared by the
+retriever and the catalogue. Tool/contract wording updated. Live-verified against
+the real corpus and a real model call: the same request that produced
+`run-e4feb394274f42c288be90ed37ad8c8e` now routes to
+`retrieve_project_documents` instead of `refuse` -- but with only one query
+("risk severity in risk register"), the sprint report is still never fetched,
+confirming RC3 is exactly step 3's problem, not this one's.
+
 ### Step 3 -- `rag:`/`engine:` multi-query retrieval in one node (closes RC3)
 
 **Change:** `search_project_documents` takes `queries: list[str]` (1-3, each non-empty)
@@ -240,7 +254,7 @@ passages from whichever document matches best and starves the rest."
 event; a replayed state with legacy `{"query": ...}` still runs); `tests/rag/` unchanged
 (the retriever itself does not change).
 
-**ADR 0025** -- "retrieval takes a bounded list of queries".
+**ADR 0027** -- "retrieval takes a bounded list of queries".
 
 ### Step 4 -- `eval:`/`docs:` the evidence
 

@@ -15,6 +15,11 @@ from agentic_erp_assistant.context.builder import (
     ExclusionReason,
 )
 from agentic_erp_assistant.context.candidate import CandidateKind, ContextCandidate
+from agentic_erp_assistant.context.catalogue import (
+    build_catalogue,
+    CatalogueEntry,
+    DocumentCatalogue,
+)
 from agentic_erp_assistant.context.compact import (
     CompactedConversation,
     compact_conversation,
@@ -43,13 +48,16 @@ from agentic_erp_assistant.context.memory_injection import (
 )
 
 __all__ = [
+    "build_catalogue",
     "CandidateKind",
+    "CatalogueEntry",
     "CLIP_MARKER",
     "CompactedConversation",
     "compact_conversation",
     "ContextBuilder",
     "ContextCandidate",
     "ContextPlan",
+    "DocumentCatalogue",
     "ExcludedCandidate",
     "ExclusionReason",
     "HISTORY_BUDGET_TOKENS",

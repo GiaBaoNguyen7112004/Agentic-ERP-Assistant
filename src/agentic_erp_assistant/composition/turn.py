@@ -19,6 +19,7 @@ import psycopg
 
 from agentic_erp_assistant.composition.resources import AppResources
 from agentic_erp_assistant.composition.users import User
+from agentic_erp_assistant.context.catalogue import build_catalogue
 from agentic_erp_assistant.context.history_injection import HISTORY_TURN_LIMIT
 from agentic_erp_assistant.engine.orchestrator import RunOrchestrator
 from agentic_erp_assistant.engine.ports import DocumentRetrieverPort
@@ -238,6 +239,15 @@ def build_turn(
         project_name=project.name if project is not None else None,
     )
 
+    # Built once and reused for both the retriever and the catalogue below --
+    # one snapshot of this turn's entitlements, so what the model is told it
+    # may search and what the retriever will actually let it read can never
+    # drift apart (ADR 0026).
+    retrieval_context = RetrievalContext.for_actor(
+        user.actor, project_code=user.project_code, scopes=user.scopes
+    )
+    catalogue = build_catalogue(resources.manifest, retrieval_context)
+
     answer_sink: AnswerStreamSink | None = stream if stream is not None else None
     answering = LLMGateway(
         resources.chat_client,
@@ -248,13 +258,15 @@ def build_turn(
         inspector=stream if stream is not None else None,
         inspect_io=settings.dev_trace_model_io,
         principal=principal,
+        catalogue=catalogue,
     )
     # A second gateway, same client and budget, no sink and no inspector:
     # memory work must never stream into the chat, and its calls' I/O is a
     # narrower scope than this phase covers -- see
     # docs/trace-inspector-plan.md's own note on the simplification. It does
     # get the principal: the proposer must know "the user" is Priya, not
-    # "the assistant".
+    # "the assistant". It gets no catalogue -- proposing and summarizing
+    # memories never routes a decision to search or refuse.
     memory_model = LLMGateway(
         resources.chat_client,
         context_window=settings.context_window,
@@ -265,11 +277,7 @@ def build_turn(
 
     planner = Planner(answering, tools=offered_tools(resources))
 
-    retriever: DocumentRetrieverPort = resources.retrieval.for_context(
-        RetrievalContext.for_actor(
-            user.actor, project_code=user.project_code, scopes=user.scopes
-        )
-    )
+    retriever: DocumentRetrieverPort = resources.retrieval.for_context(retrieval_context)
     if stream is not None:
         retriever = InspectedRetriever(inner=retriever, stream=stream)
 

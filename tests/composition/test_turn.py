@@ -166,6 +166,78 @@ def test_a_principal_for_a_code_the_erp_does_not_know_has_no_project_name() -> N
     assert principal.project_name is None
 
 
+def test_the_answering_gateway_carries_a_catalogue_of_what_the_actor_may_read() -> None:
+    """ADR 0026: the same manifest, filtered by this actor's own scopes and
+    project -- built once per turn and bound to the planner's own gateway,
+    never the memory one (see the manifest test right below)."""
+    from datetime import date
+
+    from agentic_erp_assistant.rag.manifest import ManifestEntry
+
+    def entry(document_id: str, *, required_scope: str) -> ManifestEntry:
+        return ManifestEntry(
+            document_id=document_id,
+            path=f"{document_id}.md",
+            title=document_id,
+            document_type="status_report",
+            project_code="atlas",
+            required_scope=required_scope,
+            classification="internal",
+            effective_date=date(2026, 9, 1),
+        )
+
+    manifest = {
+        "status-report-2026-09": entry(
+            "status-report-2026-09", required_scope="project.docs.read"
+        ),
+        "budget-summary-q3": entry(
+            "budget-summary-q3", required_scope="project.docs.finance.read"
+        ),
+    }
+    resources = a_resources(manifest=manifest)
+
+    turn = build_turn(
+        resources,
+        user=a_user(scopes=frozenset({"project.docs.read", "project.status.read"})),
+        session_id="sess-1", trace_id="run-1", connection=object(),
+    )
+
+    catalogue = turn.orchestrator.runtime.composer.catalogue
+    assert catalogue is not None
+    assert [e.document_id for e in catalogue.entries] == ["status-report-2026-09"]
+
+
+def test_the_memory_gateway_carries_no_catalogue() -> None:
+    """Proposing and summarizing memories never routes a decision to search
+    or refuse -- so unlike the principal, the catalogue is not shared."""
+    from datetime import date
+
+    from agentic_erp_assistant.rag.manifest import ManifestEntry
+
+    manifest = {
+        "status-report-2026-09": ManifestEntry(
+            document_id="status-report-2026-09",
+            path="status-report-2026-09.md",
+            title="status-report-2026-09",
+            document_type="status_report",
+            project_code="atlas",
+            required_scope="project.docs.read",
+            classification="internal",
+            effective_date=date(2026, 9, 1),
+        )
+    }
+    resources = a_resources(manifest=manifest)
+
+    turn = build_turn(
+        resources, user=a_user(), session_id="sess-1", trace_id="run-1",
+        connection=object(),
+    )
+
+    proposer = turn.orchestrator.memory.service.proposer
+    assert proposer is not None
+    assert proposer.model.catalogue is None
+
+
 def test_the_answering_gateway_carries_the_stream_sink() -> None:
     resources = a_resources()
     stream = RecordingStream()

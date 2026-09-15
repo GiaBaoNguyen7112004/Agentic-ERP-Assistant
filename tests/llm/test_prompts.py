@@ -14,6 +14,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from agentic_erp_assistant.context.catalogue import CatalogueEntry, DocumentCatalogue
 from agentic_erp_assistant.llm.ports import Role
 from agentic_erp_assistant.llm.prompts import (
     DECLARATION_CONTRACT,
@@ -33,6 +34,7 @@ from agentic_erp_assistant.llm.prompts import (
     build_messages,
     build_planner_messages,
     build_promotion_messages,
+    render_catalogue,
     render_principal,
     system_content,
 )
@@ -631,6 +633,100 @@ def test_the_principal_block_carries_nothing_citation_shaped() -> None:
     content = render_principal(a_principal())
 
     assert "[" not in content
+
+
+# --------------------------------------------------------------------------
+# ADR 0026: the document catalogue, planner-only
+# --------------------------------------------------------------------------
+
+CATALOGUE = DocumentCatalogue(
+    entries=(
+        CatalogueEntry(
+            document_id="risk-register",
+            title="Atlas Risk Register",
+            document_type="risk_register",
+            effective_date="2026-08-31",
+        ),
+        CatalogueEntry(
+            document_id="sprint-13-report",
+            title="Sprint 13 Review and Retrospective",
+            document_type="sprint_report",
+            effective_date="2026-09-06",
+        ),
+    )
+)
+EMPTY_CATALOGUE = DocumentCatalogue(entries=())
+
+
+def test_render_catalogue_lists_every_entry_with_its_type_and_date() -> None:
+    content = render_catalogue(CATALOGUE)
+
+    assert "risk-register: Atlas Risk Register (risk_register, 2026-08-31)" in content
+    assert (
+        "sprint-13-report: Sprint 13 Review and Retrospective (sprint_report, "
+        "2026-09-06)" in content
+    )
+    assert "cannot access it" in content
+    assert "never say it does not exist" in content
+
+
+def test_render_catalogue_when_empty_says_so_without_listing_anything() -> None:
+    content = render_catalogue(EMPTY_CATALOGUE)
+
+    assert "no documents to search" in content
+    assert "risk-register" not in content
+
+
+def test_no_catalogue_leaves_the_planner_system_block_unchanged() -> None:
+    """A caller that does not pass one -- every builder but the planner's --
+    sends exactly what it always has."""
+    principal = a_principal()
+
+    assert system_content(principal) == system_content(principal, None)
+    messages = build_planner_messages(QUESTION, principal=principal)
+    assert messages[0]["content"] == system_content(principal)
+
+
+def test_a_catalogue_is_appended_after_the_principal_in_the_planner_prompt() -> None:
+    principal = a_principal()
+
+    content = build_planner_messages(
+        QUESTION, principal=principal, catalogue=CATALOGUE
+    )[0]["content"]
+
+    assert content == system_content(principal, CATALOGUE)
+    principal_block = render_principal(principal)
+    catalogue_block = render_catalogue(CATALOGUE)
+    assert content.index(principal_block) < content.index(catalogue_block)
+    assert content.endswith(catalogue_block)
+
+
+def test_a_catalogue_with_no_principal_is_never_shown() -> None:
+    """A catalogue is a fact about this actor's entitlements; there is no
+    actor to state it for on an unbound call."""
+    assert system_content(None, CATALOGUE) == SYSTEM_POLICY
+
+
+def test_the_catalogue_block_appears_in_no_other_role() -> None:
+    principal = a_principal()
+
+    messages = build_planner_messages(QUESTION, principal=principal, catalogue=CATALOGUE)
+    others = [m["content"] for m in messages if m["role"] != "system"]
+
+    assert not any("Atlas Risk Register" in content for content in others)
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [build_declaration_messages, build_memory_messages],
+)
+def test_only_the_planner_builder_accepts_a_catalogue(builder) -> None:
+    """build_messages, build_declaration_messages and build_memory_messages
+    take no catalogue argument at all -- the composer, the declarer and the
+    memory calls have no occasion to weigh whether a specific document
+    exists, per system_content's own docstring."""
+    with pytest.raises(TypeError):
+        builder(QUESTION, principal=a_principal(), catalogue=CATALOGUE)  # type: ignore[call-arg]
 
 
 # --------------------------------------------------------------------------
