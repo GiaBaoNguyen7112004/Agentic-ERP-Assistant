@@ -43,6 +43,15 @@
       "source_id": "milestone-m3"
     },
     {
+      "milestone_id": "O1",
+      "project_id": "orion",
+      "title": "Contact data consolidation",
+      "due_on": "2026-06-12",
+      "schedule_status": "done",
+      "days_late": 0,
+      "source_id": "milestone-o1"
+    },
+    {
       "milestone_id": "O2",
       "project_id": "orion",
       "title": "Pipeline migration",
@@ -50,6 +59,15 @@
       "schedule_status": "on_track",
       "days_late": 0,
       "source_id": "milestone-o2"
+    },
+    {
+      "milestone_id": "O3",
+      "project_id": "orion",
+      "title": "Decommission of the legacy CRM",
+      "due_on": "2027-01-15",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-o3"
     }
   ],
   "sprints": [

@@ -362,6 +362,12 @@ def test_a_record_of_the_bound_project_is_visible(erp: MockErp) -> None:
     assert milestone is not None
     assert milestone.title == "Pipeline migration"
 
+    # The completed O1 and the future O3 are rows too: the Orion report names
+    # three milestones, and the tools serve the tracker's current rows.
+    assert orion.milestone("O1") is not None
+    assert orion.milestone("O1").schedule_status == "done"
+    assert orion.milestone("O3").due_on == "2027-01-15"
+
 
 def test_the_view_never_widens_what_the_store_would_answer(erp: MockErp) -> None:
     """A milestone that does not exist anywhere reads the same through a view
