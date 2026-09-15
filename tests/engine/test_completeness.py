@@ -1,6 +1,12 @@
-"""ADR 0021: think() holds every attempt to answer or search to the reply
-contract the turn declared -- a missing need is redirected once, and the
-redirect never delivers less than the planner would have.
+"""ADR 0021 / ADR 0025: think() holds every attempt to answer, search or
+refuse to the reply contract the turn declared -- a missing need is
+redirected once, and the redirect never delivers less than the planner
+would have. A refusal is held to the same bound as an answer (ADR 0025):
+"nothing available could support this" is a claim, exactly like a drafted
+answer is, and an un-redirected document_passage need sends the refusal to
+search before it is allowed to stand -- but unlike an answer, the refusal's
+own message is never carried forward as a draft, so a search that still
+finds nothing falls through to an ordinary, now-tested refusal.
 
 Three levels, the first two the same split test_think_after_write.py uses:
 think() in isolation (the mechanics -- which call got which tool_choice and
@@ -100,6 +106,10 @@ def clarified(question: str) -> ReasoningDecision:
     return ReasoningDecision(route="clarify", confidence=0.5, message=question)
 
 
+def refused(reason: str) -> ReasoningDecision:
+    return ReasoningDecision(route="refuse", confidence=0.5, message=reason)
+
+
 def searched(query: str) -> ReasoningDecision:
     return ReasoningDecision(
         route="retrieve_project_documents", confidence=0.5, search_query=query
@@ -164,6 +174,24 @@ def test_an_unmet_field_redirects_a_decision_to_search_too() -> None:
 
     assert planner.calls[1] == ("required", frozenset({RETRIEVAL_TOOL}))
     assert result.route == "call_tool"
+
+
+def test_an_unmet_field_redirects_a_refusal_too() -> None:
+    """ADR 0025: erp_field before document_passage holds for a refusal
+    exactly as it does for an answer or a model-chosen search -- an
+    un-redirected field is fetched first regardless of which route claimed
+    nothing was possible."""
+    planner = FakePlanner(
+        refused("Nothing available could answer this."),
+        called("get_project_status", milestone_id="M2"),
+    )
+
+    result = nodes(planner).think(state(contract=ERP_FIELD_ONLY))
+
+    assert planner.calls[1] == ("required", frozenset({RETRIEVAL_TOOL}))
+    assert result.route == "call_tool"
+    assert result.tool_name == "get_project_status"
+    assert result.redirected_needs == frozenset({"erp_field"})
 
 
 def test_the_forced_call_can_still_choose_to_ask_back() -> None:
@@ -232,6 +260,69 @@ def test_an_unmet_passage_redirects_an_answer_to_search() -> None:
         and "contract needs a document passage" in event.detail
         for event in result.events
     )
+
+
+def test_an_unmet_passage_redirects_a_refusal_to_search() -> None:
+    """ADR 0025's core case: the model refused instead of answering, with
+    document_passage still unmet -- the refusal is withheld and the turn
+    moves to retrieval with the contract's own query. Unlike the answer
+    case, no draft is carried: a refusal reason is not a reply to fall back
+    to if the search finds nothing."""
+    planner = FakePlanner(
+        refused("These documents are not accessible through the available tools.")
+    )
+
+    result = nodes(planner).think(
+        state(contract=BOTH, observations=(an_ok_observation(),))
+    )
+
+    assert len(planner.calls) == 1
+    assert result.route == "retrieve_project_documents"
+    assert result.tool_arguments == {"query": "why"}
+    assert result.draft is None
+    assert result.redirected_needs == frozenset({"document_passage"})
+    assert any(
+        event.kind == "contract_enforced"
+        and "document_passage: refuse withheld, searching 'why'" in event.detail
+        and "refusal reason" in event.detail
+        for event in result.events
+    )
+    assert any(
+        event.kind == "route_selected"
+        and "contract needs a document passage" in event.detail
+        for event in result.events
+    )
+
+
+def test_a_refusal_with_the_passage_already_redirected_stands() -> None:
+    """One redirect per need, not one per turn: the passage was already
+    sent out once this turn and still came back missing -- a second refusal
+    is not redirected again, it is delivered as the terminal refuse it
+    always would have been."""
+    planner = FakePlanner(refused("No source could support this."))
+
+    result = nodes(planner).think(
+        state(contract=DOCUMENT_ONLY, redirected_needs=frozenset({"document_passage"}))
+    )
+
+    assert len(planner.calls) == 1
+    assert result.route == "refuse"
+    assert result.response == "No source could support this."
+    assert "contract_enforced" not in kinds(result)
+
+
+def test_a_refusal_that_already_meets_the_contract_is_not_redirected() -> None:
+    """A refusal is only ever held to a need the contract actually
+    declared: with no contract in play, refuse stands exactly as it always
+    has."""
+    planner = FakePlanner(refused("This is outside project delivery."))
+
+    result = nodes(planner).think(state(contract=None))
+
+    assert len(planner.calls) == 1
+    assert result.route == "refuse"
+    assert result.response == "This is outside project delivery."
+    assert "contract_enforced" not in kinds(result)
 
 
 def test_a_model_chosen_search_is_left_alone_even_with_a_passage_missing() -> None:
@@ -459,6 +550,46 @@ def test_a_field_redirect_that_succeeds_returns_to_think_and_completes() -> None
     assert result.route == "answer"
     assert result.failure == "none"
     assert result.step_count == 3
+
+
+def test_a_redirected_refusal_finding_nothing_ends_in_a_tested_refusal() -> None:
+    """ADR 0025's round trip: the model refused with document_passage
+    unmet, the redirect forces a real search, and the search finds
+    nothing -- the turn ends in an ordinary insufficient_evidence refusal,
+    not the model's own untested claim and not an incomplete_reply (there
+    was never a draft to deliver)."""
+    model = ScriptedRealPlannerModel(
+        real_called(
+            "refuse",
+            reason="These documents are not accessible through the available tools.",
+        ),
+    )
+    engine = WorkflowRuntime(
+        retriever=FakeRetriever(),  # finds nothing
+        tools=ScriptedGateway(),
+        planner=Planner(model),
+        composer=None,  # not exercised: no snippets reach the composer
+        sleep=lambda seconds: None,
+    )
+
+    result = engine.run(
+        AgentState(
+            request=(
+                "Cross-check each open risk against the risk register CSV "
+                "for its severity."
+            ),
+            actor="priya",
+            project_code="atlas",
+            trace_id="run-1",
+            scopes=SCOPES,
+            contract=DOCUMENT_ONLY,
+        )
+    )
+
+    assert model.calls == 1
+    assert result.route == "refuse"
+    assert result.failure == "insufficient_evidence"
+    assert result.terminal is True
 
 
 # --------------------------------------------------------------------------

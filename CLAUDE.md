@@ -267,10 +267,15 @@ Not yet chosen; ask before assuming, and update this file once settled.
   are driven by the caller. The `think -> answer` route is held to the reply
   contract the planner declared before the graph ran (ADR 0021): a missing
   need is redirected once, and a reply still short after that is delivered
-  marked `failure=incomplete_reply`, never silently. A turn with no
-  declaration (`contract=None` — a replay, a hand-built state, a declarer
-  that raised) is unchecked, and its trace says so plainly rather than
-  looking indistinguishable from one that passed.
+  marked `failure=incomplete_reply`, never silently. Since ADR 0025, `think ->
+  refuse` is held to the same contract -- a refusal with a declared need still
+  unmet is redirected exactly once, the same as an answer, except the
+  refusal's own message is never kept as a fallback draft, so a redirected
+  search that still finds nothing ends in an ordinary, now-tested
+  `insufficient_evidence` refusal rather than delivering the model's untested
+  claim. A turn with no declaration (`contract=None` — a replay, a hand-built
+  state, a declarer that raised) is unchecked, and its trace says so plainly
+  rather than looking indistinguishable from one that passed.
 - ~~Trace persistence~~ — settled: Postgres (`persistence/schema.py`, nine tables,
   `docker compose up -d postgres && uv run python scripts/init_postgres.py`).
   `web/`'s read model (`persistence/postgres_queries.py::EvidenceQueries`) is

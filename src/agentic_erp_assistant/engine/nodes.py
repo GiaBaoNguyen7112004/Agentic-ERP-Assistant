@@ -263,17 +263,18 @@ class GraphNodes:
                 events=events + (_event("think", "failed", detail),),
             )
 
-        # ADR 0021: does this decision satisfy what the planner itself
-        # declared a complete reply needs? Only "answer" and
-        # "retrieve_project_documents" are worth asking -- every other route
-        # either executes something that will feed a later think() (call_tool,
-        # request_approval) or ends the turn on its own terms (clarify,
-        # refuse, fail), neither of which a reply contract has anything to say
-        # about. `gap` stays available for the "answer" branch below, which is
-        # the one place a still-missing need, after its one redirect, has to
-        # be delivered rather than silently dropped.
+        # ADR 0021 / ADR 0025: does this decision satisfy what the planner
+        # itself declared a complete reply needs? "answer",
+        # "retrieve_project_documents" and "refuse" are worth asking --
+        # clarify and the routes that feed a later think() (call_tool,
+        # request_approval) are not. A refusal is a claim, exactly like an
+        # answer is: "nothing available could support this" is untested
+        # until the need the contract itself declared has actually been
+        # looked for. `gap` stays available for the "answer" branch below,
+        # which is the one place a still-missing need, after its one
+        # redirect, has to be delivered rather than silently dropped.
         gap: Completeness | None = None
-        if decision.route in ("answer", "retrieve_project_documents"):
+        if decision.route in ("answer", "retrieve_project_documents", "refuse"):
             gap = assess(state.contract, state)
             need = next_redirect(gap, state.redirected_needs)
 
@@ -323,34 +324,51 @@ class GraphNodes:
                     ),
                 )
 
-            elif need == "document_passage" and decision.route == "answer":
-                # Only reachable with route == "answer": a decision that
-                # already chose retrieve_project_documents is already doing
-                # this, with its own query, and is left alone -- forcing the
-                # contract's query over the model's own would discard a
-                # choice that was already correct.
+            elif need == "document_passage" and decision.route in (
+                "answer",
+                "refuse",
+            ):
+                # Only reachable with route == "answer" or "refuse": a
+                # decision that already chose retrieve_project_documents is
+                # already doing this, with its own query, and is left alone
+                # -- forcing the contract's query over the model's own would
+                # discard a choice that was already correct.
                 assert state.contract is not None  # need only exists if it is
+                withheld_route = decision.route
                 events = events + (
                     _event(
                         "think",
                         "route_selected",
-                        "retrieve_project_documents: contract needs a document "
-                        "passage; answer withheld",
+                        f"retrieve_project_documents: contract needs a document "
+                        f"passage; {withheld_route} withheld",
                     ),
                     _event(
                         "think",
                         "contract_enforced",
-                        f"document_passage: answer withheld, searching "
-                        f"{state.contract.document_query!r}",
+                        f"document_passage: {withheld_route} withheld, searching "
+                        f"{state.contract.document_query!r}"
+                        + (
+                            f" (refusal reason: {decision.message!r})"
+                            if withheld_route == "refuse"
+                            else ""
+                        ),
                     ),
                 )
+                # ADR 0025: a refusal's own message is a claim about why
+                # nothing could support an answer, not a draft answer -- so
+                # unlike the "answer" branch, no draft is carried forward.
+                # If the redirected search still finds nothing,
+                # retrieve_and_answer's no-passages path (state.draft is
+                # None) falls through to an ordinary, now-tested refusal
+                # instead of delivering the model's untested claim as if it
+                # were a withheld answer.
                 return advance(
                     state,
                     "retrieve_project_documents",
                     tool_name=RETRIEVAL_TOOL,
                     tool_arguments={"query": state.contract.document_query},
                     tool_mutating=False,
-                    draft=decision.message,
+                    draft=decision.message if withheld_route == "answer" else None,
                     redirected_needs=state.redirected_needs | {"document_passage"},
                     events=events,
                 )
