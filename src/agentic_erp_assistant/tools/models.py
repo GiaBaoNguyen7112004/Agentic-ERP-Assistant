@@ -16,7 +16,10 @@ gateway port's signature, so the runtime has to be able to name them without
 importing this package; the third is carried in the turn's state long after the
 tool layer is done with it. A second definition would
 be a second thing to keep in step, and the copy that drifts is always the one
-nobody is reading.
+nobody is reading. ``ARGUMENTS_SUMMARY_MAX_CHARS`` -- and the renderer it
+bounds, ``summarize_tool_call`` -- live there for the same reason: both
+``ToolRequest`` and ``ToolOutcome`` need the cap, and neither may import this
+package to get it.
 
 ``ValidationError`` is deliberately not defined here either. Arguments are
 checked by :meth:`~agentic_erp_assistant.llm.tools.ToolSpec.validate_arguments`
@@ -36,18 +39,23 @@ leave that record unwritten. The rule is the same one
 :mod:`agentic_erp_assistant.llm.ports` follows for provider failures.
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentic_erp_assistant.state.agent_state import ApprovalDecision
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome, ToolStatus
-from agentic_erp_assistant.state.tool_request import ToolRequest
+from agentic_erp_assistant.state.tool_request import (
+    ARGUMENTS_SUMMARY_MAX_CHARS,
+    ToolRequest,
+)
 
 __all__ = [
     "ApprovalDecision",
     "ARGUMENTS_SUMMARY_MAX_CHARS",
     "AuditRow",
+    "ExecutionContext",
     "ToolError",
     "ToolOutcome",
     "ToolRequest",
@@ -56,14 +64,24 @@ __all__ = [
 ]
 
 
-ARGUMENTS_SUMMARY_MAX_CHARS = 200
-"""How long the human-readable description of a call may be.
+@dataclass(frozen=True)
+class ExecutionContext:
+    """What a handler is told about the call it is running, beyond the
+    already-validated arguments.
 
-A cap, because this is the line an approver reads and an auditor reads back.
-The moment it can hold a full argument payload, it will, and then credentials
-and customer data are rendered to a screen and written to a record that outlives
-the run. The same decision ``ApprovalRequest.arguments_summary`` already makes.
-"""
+    A handler reads no permission and makes no policy decision -- that is the
+    gateway's job, in one ordered place -- but it still has to know *whose*
+    call this is and *which project* to read through
+    (:meth:`~agentic_erp_assistant.erp.mock.MockErp.for_project`). Carrying
+    that as a second parameter rather than folding it into the arguments model
+    keeps "what the model supplied" and "what the gateway already verified"
+    visibly separate: an argument the model invented is rejected by the
+    argument model's own schema, and nothing here can be spoofed the same way.
+    """
+
+    trace_id: str
+    actor: str
+    project_code: str
 
 
 class _Envelope(BaseModel):

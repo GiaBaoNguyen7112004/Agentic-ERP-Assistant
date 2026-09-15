@@ -1,0 +1,3275 @@
+{
+  "generated_at": "2026-09-15T01:21:44+00:00",
+  "commit": "4377d20c16b3c8f36a22c8134c3ee727d47b50b6",
+  "model": "gpt-4o",
+  "repeats": 5,
+  "prompts": [
+    "v1-direct",
+    "v2-compound",
+    "v3-evidence-first"
+  ],
+  "summary": [
+    {
+      "prompt": "v1-direct",
+      "total": 40,
+      "matches": 35,
+      "match_rate": 0.875,
+      "hallucinations": 0,
+      "cost_usd": 0.327375,
+      "contract_length": 3383
+    },
+    {
+      "prompt": "v2-compound",
+      "total": 40,
+      "matches": 33,
+      "match_rate": 0.825,
+      "hallucinations": 0,
+      "cost_usd": 0.310943,
+      "contract_length": 3383
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "total": 40,
+      "matches": 33,
+      "match_rate": 0.825,
+      "hallucinations": 0,
+      "cost_usd": 0.310827,
+      "contract_length": 3383
+    }
+  ],
+  "results": [
+    {
+      "prompt": "v1-direct",
+      "case_id": "R1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R10",
+      "repeat": 0,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R10",
+      "repeat": 1,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R10",
+      "repeat": 2,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R10",
+      "repeat": 3,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "R10",
+      "repeat": 4,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 32,
+      "cost_usd": 0.0082425,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T9/1",
+      "repeat": 0,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T9/1",
+      "repeat": 1,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T9/1",
+      "repeat": 2,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 22,
+      "cost_usd": 0.008132499999999999,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T9/1",
+      "repeat": 3,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "T9/1",
+      "repeat": 4,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A9",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A9",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A9",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A9",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A9",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A12",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A12",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A12",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A12",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A12",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A13",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A13",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A13",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A13",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v1-direct",
+      "case_id": "A13",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R10",
+      "repeat": 0,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 34,
+      "cost_usd": 0.008262499999999999,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R10",
+      "repeat": 1,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R10",
+      "repeat": 2,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 24,
+      "cost_usd": 0.0081625,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R10",
+      "repeat": 3,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "R10",
+      "repeat": 4,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 24,
+      "cost_usd": 0.0081625,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T9/1",
+      "repeat": 0,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 22,
+      "cost_usd": 0.008132499999999999,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T9/1",
+      "repeat": 1,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T9/1",
+      "repeat": 2,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T9/1",
+      "repeat": 3,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "T9/1",
+      "repeat": 4,
+      "chosen_route": null,
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "error": "TransientProviderError: 429 from gpt-4o (request id: req_08c5b075c82c475db4fbd649182d13b2): {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-G5lSKtZrGT4DF7a22k64b0np on tokens per min (TPM): Limit 30000, Used 30000, Requested 2072. Please try again in 4.144s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n        \"type\": \"tokens"
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A1",
+      "repeat": 1,
+      "chosen_route": null,
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "error": "TransientProviderError: 429 from gpt-4o (request id: req_fdc3cf1c9e2a4ce9ad5e579d8e3aacd9): {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-G5lSKtZrGT4DF7a22k64b0np on tokens per min (TPM): Limit 30000, Used 29522, Requested 2089. Please try again in 3.222s. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n        \"type\": \"tokens"
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A9",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A9",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A9",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A9",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A9",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A12",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A12",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A12",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A12",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A12",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A13",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A13",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A13",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A13",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v2-compound",
+      "case_id": "A13",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 3170,
+      "output_tokens": 18,
+      "cost_usd": 0.008105,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_project_status",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_project_status"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3168,
+      "output_tokens": 18,
+      "cost_usd": 0.0081,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R10",
+      "repeat": 0,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 24,
+      "cost_usd": 0.0081625,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R10",
+      "repeat": 1,
+      "chosen_route": null,
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "error": "TransientProviderError: 429 from gpt-4o (request id: req_20819c0d210b4a139d7e786994c6a345): {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-G5lSKtZrGT4DF7a22k64b0np on tokens per min (TPM): Limit 30000, Used 28207, Requested 2078. Please try again in 570ms. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n        \"type\": \"tokens\""
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R10",
+      "repeat": 2,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R10",
+      "repeat": 3,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 33,
+      "cost_usd": 0.0082525,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "R10",
+      "repeat": 4,
+      "chosen_route": "refuse",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "refuse",
+          null
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3169,
+      "output_tokens": 31,
+      "cost_usd": 0.008232499999999998,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T9/1",
+      "repeat": 0,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T9/1",
+      "repeat": 1,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T9/1",
+      "repeat": 2,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T9/1",
+      "repeat": 3,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "T9/1",
+      "repeat": 4,
+      "chosen_route": "clarify",
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "clarify",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3165,
+      "output_tokens": 28,
+      "cost_usd": 0.0081925,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A1",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A1",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A1",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A1",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A1",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3180,
+      "output_tokens": 17,
+      "cost_usd": 0.00812,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A9",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A9",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A9",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A9",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A9",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "list_risks",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "request_approval",
+          "create_risk"
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3174,
+      "output_tokens": 17,
+      "cost_usd": 0.008105000000000001,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A12",
+      "repeat": 0,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A12",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A12",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A12",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A12",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A13",
+      "repeat": 0,
+      "chosen_route": null,
+      "chosen_tool": null,
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": false,
+      "hallucinated_tool": false,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cost_usd": null,
+      "error": "TransientProviderError: 429 from gpt-4o (request id: req_4bc0c869ecdc416eacd86e3aa7a63afd): {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-G5lSKtZrGT4DF7a22k64b0np on tokens per min (TPM): Limit 30000, Used 28031, Requested 2167. Please try again in 396ms. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n        \"type\": \"tokens\""
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A13",
+      "repeat": 1,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A13",
+      "repeat": 2,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A13",
+      "repeat": 3,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    },
+    {
+      "prompt": "v3-evidence-first",
+      "case_id": "A13",
+      "repeat": 4,
+      "chosen_route": "call_tool",
+      "chosen_tool": "get_budget_summary",
+      "accepted_first_routes": [
+        [
+          "call_tool",
+          "get_budget_summary"
+        ],
+        [
+          "call_tool",
+          "list_risks"
+        ],
+        [
+          "retrieve_project_documents",
+          null
+        ]
+      ],
+      "matched": true,
+      "hallucinated_tool": false,
+      "input_tokens": 3238,
+      "output_tokens": 22,
+      "cost_usd": 0.008315,
+      "error": null
+    }
+  ],
+  "declarations": [
+    {
+      "case_id": "R1",
+      "repeat": 0,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "why milestone M2 is late",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0041575,
+      "error": null
+    },
+    {
+      "case_id": "R1",
+      "repeat": 1,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "milestone M2 late",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0041475,
+      "error": null
+    },
+    {
+      "case_id": "R1",
+      "repeat": 2,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "why milestone M2 is late",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0041575,
+      "error": null
+    },
+    {
+      "case_id": "R1",
+      "repeat": 3,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "why milestone M2 is late",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0041575,
+      "error": null
+    },
+    {
+      "case_id": "R1",
+      "repeat": 4,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "why milestone M2 is late",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0041575,
+      "error": null
+    },
+    {
+      "case_id": "T1",
+      "repeat": 0,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0040625,
+      "error": null
+    },
+    {
+      "case_id": "T1",
+      "repeat": 1,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0040625,
+      "error": null
+    },
+    {
+      "case_id": "T1",
+      "repeat": 2,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0040625,
+      "error": null
+    },
+    {
+      "case_id": "T1",
+      "repeat": 3,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0040625,
+      "error": null
+    },
+    {
+      "case_id": "T1",
+      "repeat": 4,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0040625,
+      "error": null
+    },
+    {
+      "case_id": "R10",
+      "repeat": 0,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040349999999999995,
+      "error": null
+    },
+    {
+      "case_id": "R10",
+      "repeat": 1,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040349999999999995,
+      "error": null
+    },
+    {
+      "case_id": "R10",
+      "repeat": 2,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040349999999999995,
+      "error": null
+    },
+    {
+      "case_id": "R10",
+      "repeat": 3,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040349999999999995,
+      "error": null
+    },
+    {
+      "case_id": "R10",
+      "repeat": 4,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040349999999999995,
+      "error": null
+    },
+    {
+      "case_id": "T9/1",
+      "repeat": 0,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.004055,
+      "error": null
+    },
+    {
+      "case_id": "T9/1",
+      "repeat": 1,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.004055,
+      "error": null
+    },
+    {
+      "case_id": "T9/1",
+      "repeat": 2,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.004055,
+      "error": null
+    },
+    {
+      "case_id": "T9/1",
+      "repeat": 3,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.004055,
+      "error": null
+    },
+    {
+      "case_id": "T9/1",
+      "repeat": 4,
+      "declared_needs": [
+        "erp_field"
+      ],
+      "document_query": null,
+      "expected_needs": [
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.004055,
+      "error": null
+    },
+    {
+      "case_id": "A1",
+      "repeat": 0,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.004062499999999999,
+      "error": null
+    },
+    {
+      "case_id": "A1",
+      "repeat": 1,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.004062499999999999,
+      "error": null
+    },
+    {
+      "case_id": "A1",
+      "repeat": 2,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.004062499999999999,
+      "error": null
+    },
+    {
+      "case_id": "A1",
+      "repeat": 3,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.004062499999999999,
+      "error": null
+    },
+    {
+      "case_id": "A1",
+      "repeat": 4,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.004062499999999999,
+      "error": null
+    },
+    {
+      "case_id": "A9",
+      "repeat": 0,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040475,
+      "error": null
+    },
+    {
+      "case_id": "A9",
+      "repeat": 1,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040475,
+      "error": null
+    },
+    {
+      "case_id": "A9",
+      "repeat": 2,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040475,
+      "error": null
+    },
+    {
+      "case_id": "A9",
+      "repeat": 3,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040475,
+      "error": null
+    },
+    {
+      "case_id": "A9",
+      "repeat": 4,
+      "declared_needs": [],
+      "document_query": null,
+      "expected_needs": null,
+      "matched": null,
+      "cost_usd": 0.0040475,
+      "error": null
+    },
+    {
+      "case_id": "A12",
+      "repeat": 0,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A12",
+      "repeat": 1,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A12",
+      "repeat": 2,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A12",
+      "repeat": 3,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A12",
+      "repeat": 4,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A13",
+      "repeat": 0,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A13",
+      "repeat": 1,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF, and schedule slip caused by risks in the latest sprint report",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0045474999999999995,
+      "error": null
+    },
+    {
+      "case_id": "A13",
+      "repeat": 2,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A13",
+      "repeat": 3,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    },
+    {
+      "case_id": "A13",
+      "repeat": 4,
+      "declared_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "document_query": "contingency allocation for high-severity risks in the Q3 budget summary PDF",
+      "expected_needs": [
+        "document_passage",
+        "erp_field"
+      ],
+      "matched": true,
+      "cost_usd": 0.0044275,
+      "error": null
+    }
+  ],
+  "declaration_match_rate": 1.0
+}

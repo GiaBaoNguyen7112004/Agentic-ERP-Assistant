@@ -26,6 +26,20 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0012](0012-memory-is-context-and-never-a-citation.md) | Memory is context in a role of its own, and can never be a citation | Accepted |
 | [0013](0013-postgres-is-the-memory-record-and-graph-memory-is-rejected.md) | Postgres is the memory record, Qdrant indexes it, and graph memory is rejected | Accepted |
 | [0014](0014-short-term-memory-is-a-verbatim-window-and-eviction-feeds-the-summary.md) | Short-term memory is a verbatim window, and eviction feeds the summary | Accepted |
+| [0015](0015-the-web-layer-is-a-thin-shell-and-the-filed-trace-is-the-record.md) | The web layer is a thin async shell, streamed text is a preview, and the filed trace is the record | Accepted |
+| [0016](0016-a-write-is-put-to-a-human-only-after-the-gateway-agrees-it-could-run.md) | A write is put to a human only after the gateway agrees it could run | Accepted |
+| [0017](0017-tools-are-bound-to-the-actors-project-at-the-store-and-at-the-gateway.md) | Tools are bound to the actor's project, at the store and at the gateway | Accepted |
+| [0018](0018-the-evidence-store-is-never-a-test-fixture.md) | The evidence store is never a test fixture | Accepted |
+| [0019](0019-a-repeated-call-is-refused-a-re-run-and-forced-to-answer.md) | A repeated call is refused a re-run, and the planner is forced to answer instead | Accepted |
+| [0020](0020-the-planner-contract-is-chosen-by-a-recorded-comparison.md) | The planner contract is chosen by a recorded comparison | Accepted |
+| [0021](0021-the-planner-declares-what-a-reply-needs-and-the-graph-holds-it-to-that.md) | The planner declares what a reply needs, and the graph holds it to that | Accepted |
+| [0022](0022-the-model-is-told-the-principal-and-history-is-the-authority-on-the-conversation.md) | The model is told the principal, and history is the authority on the conversation | Accepted |
+| [0023](0023-memory-is-what-the-user-established.md) | Memory is what the user established; a turn that established nothing writes nothing | Accepted |
+| [0024](0024-a-preference-is-replaced-by-topic-not-by-key.md) | A preference is replaced by topic, not only by key | Accepted |
+| [0025](0025-a-refusal-is-held-to-the-reply-contract-too.md) | A refusal is held to the reply contract too | Accepted |
+| [0026](0026-the-model-is-told-which-documents-it-may-search.md) | The model is told which documents it may search | Accepted |
+| [0027](0027-retrieval-takes-a-bounded-list-of-queries.md) | Retrieval takes a bounded list of queries | Accepted |
+| [0028](0028-the-session-summary-is-extended-not-replaced.md) | The session summary is extended, not replaced | Accepted |
 
 ## Format
 

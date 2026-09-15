@@ -32,6 +32,7 @@ def answered_state(**overrides: object) -> AgentState:
     fields: dict[str, object] = {
         "request": "How is M2 tracking?",
         "actor": "bao",
+        "project_code": "atlas",
         "trace_id": "run-1",
         "session_id": "sess-1",
         "route": "answer",

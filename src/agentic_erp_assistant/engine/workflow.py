@@ -155,6 +155,14 @@ class WorkflowRuntime:
     from the ports above.
     """
 
+    observer: Callable[[AgentState], object] | None = None
+    """Called with the state after every node execution, after the engine's own
+    bookkeeping, and after the loop guard or an approval changes it. Read-only by
+    contract: the state is frozen, and the return value is ignored. Never allowed
+    to fail a run -- an observer that raises is logged and dropped for the rest of
+    the run, because a screen going away must not end a turn.
+    """
+
     _table: NodeTable = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -170,6 +178,22 @@ class WorkflowRuntime:
                 sleep=self.sleep,
             ).table()
         object.__setattr__(self, "_table", table)
+
+    # -- observation ---------------------------------------------------------
+
+    def _observe(self, state: AgentState) -> None:
+        if self.observer is None:
+            return
+        try:
+            self.observer(state)
+        except Exception:
+            logger.warning(
+                "observer raised for run %s; dropping it for the rest of this "
+                "run",
+                state.trace_id,
+                exc_info=True,
+            )
+            object.__setattr__(self, "observer", None)
 
     # -- the loop ----------------------------------------------------------
 
@@ -218,6 +242,7 @@ class WorkflowRuntime:
             state = state.evolve(
                 events=state.events + (TraceEvent(node=name, kind="node_exited"),)
             )
+            self._observe(state)
 
     def _out_of_budget(self, state: AgentState) -> AgentState:
         """End a run that would not end itself, and say so in the trace.
@@ -231,7 +256,7 @@ class WorkflowRuntime:
             f"(max_steps={self.max_steps}); last route was {state.route!r}"
         )
         logger.error("run %s hit the step budget: %s", state.trace_id, detail)
-        return advance(
+        out_of_budget = advance(
             state,
             "fail",
             mutating=state.tool_mutating if state.route == "call_tool" else None,
@@ -244,10 +269,14 @@ class WorkflowRuntime:
                 ),
             ),
         )
+        self._observe(out_of_budget)
+        return out_of_budget
 
     # -- the only way past a pause -----------------------------------------
 
-    def resume_approval(self, state: AgentState, approved: bool) -> AgentState:
+    def resume_approval(
+        self, state: AgentState, approved: bool, *, decided_by: str | None = None
+    ) -> AgentState:
         """Record a human's decision on a paused call and carry on, or refuse.
 
         The only way a paused state moves. Nothing else sets ``approval`` to
@@ -260,6 +289,8 @@ class WorkflowRuntime:
         Args:
             state: The paused state, exactly as ``run`` returned it.
             approved: What the human said.
+            decided_by: Who said it, recorded in the trace event's detail.
+                ``None`` when the caller has nobody to name.
 
         Returns:
             An approved call runs and the turn continues to a terminal state; a
@@ -275,6 +306,9 @@ class WorkflowRuntime:
                 f"it would audit an approval nobody was asked for"
             )
 
+        detail = f"{state.tool_name} {'approved' if approved else 'denied'}"
+        if decided_by is not None:
+            detail = f"{detail} by {decided_by}"
         decided = state.evolve(
             approval="approved" if approved else "denied",
             events=state.events
@@ -282,17 +316,20 @@ class WorkflowRuntime:
                 TraceEvent(
                     node="approval",
                     kind="approval_recorded",
-                    detail=f"{state.tool_name} {'approved' if approved else 'denied'}",
+                    detail=detail,
                 ),
             ),
         )
+        self._observe(decided)
 
         if not approved:
-            return advance(
+            refused = advance(
                 decided,
                 "refuse",
                 response=DENIED_REPLY.format(tool=state.tool_name),
             )
+            self._observe(refused)
+            return refused
 
         return self.run(
             advance(decided, "call_tool", mutating=decided.tool_mutating)

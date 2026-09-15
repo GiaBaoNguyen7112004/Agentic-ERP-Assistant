@@ -1,0 +1,75 @@
+{
+  "_readme": "Who can use the dev chat, and as what. Synthetic people over the same synthetic corpus every other fixture in this repo uses. Scopes are the same vocabulary tools/registry.py and data/documents/manifest.json use; approvals.decide is read only by the web layer, not by the engine.",
+  "users": [
+    {
+      "actor": "priya",
+      "display_name": "Priya Raman",
+      "role": "Delivery lead",
+      "project_code": "atlas",
+      "scopes": [
+        "project.docs.read",
+        "project.status.read",
+        "project.sprint.read",
+        "project.budget.read",
+        "project.risk.read",
+        "project.risk.write",
+        "approvals.decide"
+      ]
+    },
+    {
+      "actor": "wei",
+      "display_name": "Wei Chen",
+      "role": "Finance business partner",
+      "project_code": "atlas",
+      "scopes": [
+        "project.docs.read",
+        "project.docs.finance.read",
+        "project.status.read",
+        "project.budget.read",
+        "project.risk.read"
+      ]
+    },
+    {
+      "actor": "tomas",
+      "display_name": "Tomas Lindqvist",
+      "role": "Warehouse engineer",
+      "project_code": "atlas",
+      "scopes": [
+        "project.docs.read",
+        "project.status.read",
+        "project.sprint.read"
+      ]
+    },
+    {
+      "actor": "sponsor",
+      "display_name": "Programme sponsor",
+      "role": "Approver",
+      "project_code": "atlas",
+      "scopes": [
+        "project.docs.read",
+        "project.status.read",
+        "approvals.decide"
+      ]
+    },
+    {
+      "actor": "orion.lead",
+      "display_name": "Orion delivery lead",
+      "role": "Delivery lead (Orion)",
+      "project_code": "orion",
+      "scopes": [
+        "project.docs.read",
+        "project.status.read",
+        "project.budget.read",
+        "project.risk.read",
+        "project.risk.write"
+      ]
+    },
+    {
+      "actor": "guest",
+      "display_name": "Guest",
+      "role": "No entitlements",
+      "project_code": "atlas",
+      "scopes": []
+    }
+  ]
+}

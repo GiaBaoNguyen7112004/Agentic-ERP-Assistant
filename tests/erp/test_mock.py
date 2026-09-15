@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from agentic_erp_assistant.erp.mock import (
     DEFAULT_DATASET_PATH,
+    ErpAccessError,
     ErpNotPersistedError,
     Milestone,
     MockErp,
@@ -75,6 +76,7 @@ def test_a_severity_outside_the_set_is_rejected() -> None:
                         "project_id": "atlas",
                         "title": "x",
                         "severity": "catastrophic",
+                        "status": "open",
                         "source_id": "risk-r-9",
                     }
                 ],
@@ -106,6 +108,42 @@ def test_a_project_with_no_risks_reads_as_none_open(erp: MockErp) -> None:
     assert erp.risks_for("no-such-project") == ()
 
 
+def test_closed_risks_are_kept_but_not_open(erp: MockErp) -> None:
+    """The dataset mirrors the register, which keeps closed rows on file --
+    a proposed risk duplicated against a closed one is still a duplicate --
+    but what list_risks promises is the open risks, and the store does the
+    filtering so the rule is not a check a handler has to remember."""
+    all_ids = [risk.risk_id for risk in erp.risks_for("atlas")]
+    open_ids = [risk.risk_id for risk in erp.open_risks_for("atlas")]
+
+    assert "R-5" in all_ids and "R-6" in all_ids
+    assert "R-5" not in open_ids and "R-6" not in open_ids
+    assert len(open_ids) == 6
+
+
+def test_a_risk_without_a_status_fails_at_load() -> None:
+    """Required, no default: the register distinguishes open from closed, and
+    a row that forgot to say which is a row list_risks would misreport."""
+    with pytest.raises(ValidationError, match="status"):
+        MockErp.from_mapping(
+            {
+                "projects": [],
+                "milestones": [],
+                "sprints": [],
+                "budgets": [],
+                "risks": [
+                    {
+                        "risk_id": "R-1",
+                        "project_id": "atlas",
+                        "title": "x",
+                        "severity": "high",
+                        "source_id": "risk-r-1",
+                    }
+                ],
+            }
+        )
+
+
 def test_the_budget_is_found_by_project(erp: MockErp) -> None:
     budget = erp.budget("atlas")
 
@@ -132,7 +170,74 @@ def test_creating_a_risk_records_it(erp: MockErp) -> None:
 def test_a_created_risk_can_be_cited(erp: MockErp) -> None:
     created = erp.create_risk(project_id="atlas", title="x", severity="low")
 
-    assert created.source_id == f"risk-r-{len(erp.risks)}"
+    assert created.risk_id == "R-9"
+    assert created.source_id == "risk-r-9"
+
+
+def test_the_id_continues_from_the_highest_suffix_not_the_row_count(
+    tmp_path,
+) -> None:
+    """A count-derived id collides the moment ids are not a dense 1..n run --
+    the register this dataset mirrors already owns R-3..R-8, so the next Atlas
+    risk must come from the largest suffix, wherever the gaps are."""
+    path = tmp_path / "project.json"
+    path.write_text(
+        json.dumps(
+            {
+                "projects": [
+                    {
+                        "project_id": "atlas",
+                        "name": "Atlas ERP rollout",
+                        "risk_id_prefix": "R",
+                        "source_id": "project-atlas",
+                    }
+                ],
+                "milestones": [],
+                "sprints": [],
+                "budgets": [],
+                "risks": [
+                    {
+                        "risk_id": "R-41",
+                        "project_id": "atlas",
+                        "title": "x",
+                        "severity": "low",
+                        "status": "open",
+                        "source_id": "risk-r-41",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    store = MockErp.load(path)
+
+    created = store.create_risk(project_id="atlas", title="x", severity="low")
+
+    assert created.risk_id == "R-42"
+    assert created.source_id == "risk-r-42"
+
+
+def test_a_risk_minted_for_orion_carries_orion_s_prefix(erp: MockErp) -> None:
+    """The report narrates Orion's unrecorded risk as O-1; the first write
+    against Orion should mint exactly that id, not an Atlas-colliding R-N."""
+    created = erp.create_risk(
+        project_id="orion",
+        title="Pipeline migration cannot be verified without the extract",
+        severity="medium",
+    )
+
+    assert created.risk_id == "O-1"
+    assert created.source_id == "risk-o-1"
+
+
+def test_no_id_is_minted_against_a_project_that_does_not_exist(erp: MockErp) -> None:
+    """The handler refuses unknown projects first; the store's own check is
+    what stops a direct call from writing a row naming no real project -- a
+    corruption the next load would carry forward."""
+    from agentic_erp_assistant.erp.mock import ErpAccessError
+
+    with pytest.raises(ErpAccessError):
+        erp.create_risk(project_id="no-such-project", title="x", severity="low")
 
 
 def test_the_store_enforces_no_policy_of_its_own(erp: MockErp) -> None:
@@ -154,6 +259,36 @@ def test_a_write_persists_to_the_file_on_disk(erp: MockErp, erp_file) -> None:
     assert "persisted, not just appended" in titles
 
 
+def test_concurrent_writes_do_not_collide_on_the_same_id(erp: MockErp) -> None:
+    """Two request threads can now reach one store; without the lock, both
+    could read ``len(self.risks)`` before either appended and hand out the
+    same id twice."""
+    import threading
+
+    errors: list[BaseException] = []
+
+    def write(title: str) -> None:
+        try:
+            erp.create_risk(project_id="atlas", title=title, severity="low")
+        except BaseException as error:  # noqa: BLE001 - captured, not swallowed
+            errors.append(error)
+
+    threads = [
+        threading.Thread(target=write, args=(f"concurrent risk {i}",))
+        for i in range(8)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    new_titles = {f"concurrent risk {i}" for i in range(8)}
+    written = [risk for risk in erp.risks if risk.title in new_titles]
+    assert len(written) == 8
+    assert len({risk.risk_id for risk in written}) == 8
+
+
 def test_a_write_keeps_the_documentation_keys(erp: MockErp, erp_file) -> None:
     """The ``_readme`` is review material; a rewrite that erased it would be a
     write that destroyed the thing it was writing to."""
@@ -173,6 +308,7 @@ def test_a_store_with_no_file_refuses_to_write() -> None:
                 {
                     "project_id": "atlas",
                     "name": "Atlas ERP rollout",
+                    "risk_id_prefix": "R",
                     "source_id": "project-atlas",
                 }
             ],
@@ -195,4 +331,83 @@ def test_the_repo_fixture_is_untouched_by_the_write_tests() -> None:
     being edited by a test."""
     raw = json.loads(DEFAULT_DATASET_PATH.read_text(encoding="utf-8"))
     risk_ids = [risk["risk_id"] for risk in raw["risks"]]
-    assert risk_ids == ["R-1", "R-2"]
+    assert risk_ids == ["R-1", "R-2", "R-3", "R-4", "R-5", "R-6", "R-7", "R-8"]
+
+
+# --------------------------------------------------------------------------
+# ProjectErp: a project's slice of the store, and nothing else
+# --------------------------------------------------------------------------
+
+
+def test_a_record_of_another_project_does_not_exist_through_the_view(
+    erp: MockErp,
+) -> None:
+    """The same "does not exist for you" a filtered document gets: a handler
+    bound to orion cannot see atlas's M2, even though the record is in the
+    file."""
+    orion = erp.for_project("orion")
+
+    assert orion.milestone("M2") is None
+    assert orion.sprint("SPR-12") is None
+    assert orion.budget("atlas") is None
+    assert orion.project("atlas") is None
+    assert orion.risks_for("atlas") == ()
+
+
+def test_a_record_of_the_bound_project_is_visible(erp: MockErp) -> None:
+    orion = erp.for_project("orion")
+
+    milestone = orion.milestone("O2")
+
+    assert milestone is not None
+    assert milestone.title == "Pipeline migration"
+
+    # The completed O1 and the future O3 are rows too: the Orion report names
+    # three milestones, and the tools serve the tracker's current rows.
+    assert orion.milestone("O1") is not None
+    assert orion.milestone("O1").schedule_status == "done"
+    assert orion.milestone("O3").due_on == "2027-01-15"
+
+
+def test_the_view_never_widens_what_the_store_would_answer(erp: MockErp) -> None:
+    """A milestone that does not exist anywhere reads the same through a view
+    as through the store directly -- the view narrows, it never invents."""
+    atlas = erp.for_project("atlas")
+
+    assert atlas.milestone("no-such-milestone") is None
+    assert erp.milestone("no-such-milestone") is None
+
+
+def test_create_risk_through_the_matching_view_succeeds(erp: MockErp) -> None:
+    orion = erp.for_project("orion")
+
+    created = orion.create_risk(
+        project_id="orion", title="Legal has not released the extract", severity="medium"
+    )
+
+    assert created.project_id == "orion"
+    assert created.risk_id == "O-1"
+    assert created in erp.risks
+
+
+def test_create_risk_through_the_wrong_view_is_refused(erp: MockErp) -> None:
+    """Defence in depth: the gateway's project check refuses this first, but
+    the view must still refuse if it is ever called directly."""
+    atlas = erp.for_project("atlas")
+    before = len(erp.risks)
+
+    with pytest.raises(ErpAccessError):
+        atlas.create_risk(project_id="orion", title="x", severity="low")
+
+    assert len(erp.risks) == before
+
+
+def test_for_project_returns_a_fresh_view_each_time_over_the_same_store(
+    erp: MockErp,
+) -> None:
+    """Two views of one store still see one write: for_project is a lens, not
+    a copy."""
+    atlas = erp.for_project("atlas")
+    atlas.create_risk(project_id="atlas", title="x", severity="low")
+
+    assert erp.for_project("atlas").risks_for("atlas")[-1].title == "x"

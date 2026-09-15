@@ -30,6 +30,8 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentic_erp_assistant.state.reply_contract import ReplyNeed
+
 __all__ = [
     "ASK_CLARIFICATION_TOOL",
     "AskClarificationArguments",
@@ -37,6 +39,8 @@ __all__ = [
     "CONTROL_TOOLS",
     "CREATE_RISK_TOOL",
     "CreateRiskArguments",
+    "DECLARE_REPLY_CONTRACT_TOOL",
+    "DeclareReplyContractArguments",
     "DEFAULT_TOOLS",
     "GET_BUDGET_SUMMARY_TOOL",
     "GET_PROJECT_STATUS_FLAKY_TOOL",
@@ -49,6 +53,7 @@ __all__ = [
     "REFUSE_TOOL",
     "RefuseArguments",
     "SEARCH_PROJECT_DOCUMENTS_TOOL",
+    "SEARCH_QUERY_LIMIT",
     "SearchProjectDocumentsArguments",
     "SprintProgressArguments",
     "StrictArguments",
@@ -204,7 +209,10 @@ class BudgetSummaryArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project to report on, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
     include_forecast: bool = Field(
         description=(
@@ -219,20 +227,54 @@ class ListRisksArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project whose open risks to list, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
+
+
+SEARCH_QUERY_LIMIT = 3
+"""How many queries one search call may carry (ADR 0027).
+
+A question naming more documents than this in one turn is not a shape this
+project is built to answer in one retrieval pass -- the corpus in this
+repo has seven documents, and a bound here is what lets ``engine/
+nodes.py::retrieve_and_answer`` run every query in one node with a step
+cost that does not grow with how many the model asks for. Enforced once,
+in this schema: strict function calling rejects a call over the limit
+before it ever reaches Python, and :class:`SearchProjectDocumentsArguments`
+rejects it again for anything that reaches ``validate_arguments`` some
+other way.
+"""
 
 
 class SearchProjectDocumentsArguments(StrictArguments):
-    """Arguments for ``search_project_documents``."""
+    """Arguments for ``search_project_documents`` (ADR 0027).
 
-    query: str = Field(
+    One query per document a compound question needs, not one blended
+    query for the whole request: a single query returns passages from
+    whichever document matches it best and starves the rest, which is
+    exactly the failure a multi-document request produces against a
+    single-query search.
+    """
+
+    queries: list[str] = Field(
         min_length=1,
+        max_length=SEARCH_QUERY_LIMIT,
         description=(
             "What to look for in the project documents, in the user's own "
-            "terms. Prefer the words the question used over a paraphrase."
+            "terms -- prefer the words the question used over a "
+            "paraphrase. One entry per document the question needs; a "
+            "question about only one document still gets a list of one."
         ),
     )
+
+    @model_validator(mode="after")
+    def _no_blank_queries(self) -> "SearchProjectDocumentsArguments":
+        if any(not query.strip() for query in self.queries):
+            raise ValueError("queries: entries must not be blank")
+        return self
 
 
 class AskClarificationArguments(StrictArguments):
@@ -269,7 +311,10 @@ class CreateRiskArguments(StrictArguments):
 
     project_id: str = Field(
         min_length=1,
-        description="The project to record the risk against, e.g. 'atlas'.",
+        description=(
+            "The project this user is bound to, exactly as named in the "
+            "system context (e.g. 'atlas')."
+        ),
     )
     title: str = Field(
         min_length=1,
@@ -367,11 +412,16 @@ the model, and is not what enforces anything."""
 SEARCH_PROJECT_DOCUMENTS_TOOL = ToolSpec(
     name="search_project_documents",
     description=(
-        "Search the project documents -- status reports, meeting notes, "
-        "contracts -- and return the passages that answer a question, each "
+        "Search the documents listed under 'Documents you can search' in the "
+        "system role, and return the passages that answer a question, each "
         "with the source it came from. Read-only. Use it for anything the ERP "
         "tools do not hold as a field: decisions, commitments, explanations, "
-        "and any question whose answer has to be quoted rather than looked up."
+        "and any question whose answer has to be quoted rather than looked up "
+        "-- whatever the document's own file format is (a spreadsheet, a PDF, "
+        "a report): every listed document is searched the same way. Takes a "
+        "list of queries, one per document a compound question needs -- a "
+        "single query blended across documents returns passages from "
+        "whichever one matches best and finds nothing in the rest."
     ),
     arguments=SearchProjectDocumentsArguments,
     mutating=False,
@@ -394,10 +444,11 @@ execution shape.
 ASK_CLARIFICATION_TOOL = ToolSpec(
     name="ask_clarification",
     description=(
-        "Ask the user one question instead of answering. Use it when the "
-        "request does not name what it is about -- no milestone, no project, "
-        "no sprint -- and guessing would produce a confident answer about the "
-        "wrong thing."
+        "Ask the user one question instead of answering. Use it only when the "
+        "request does not name what it is about -- no milestone, no sprint, "
+        "no risk -- and neither the history block nor the project context "
+        "resolves it, and guessing would produce a confident answer about the "
+        "wrong thing. Never ask which project: the project is given."
     ),
     arguments=AskClarificationArguments,
     mutating=False,
@@ -408,13 +459,76 @@ REFUSE_TOOL = ToolSpec(
     name="refuse",
     description=(
         "Decline the request. Use it when what is asked falls outside project "
-        "delivery operations, or when no available tool and no project "
-        "document could support an answer -- never as a way to avoid a hard "
-        "lookup."
+        "delivery operations, or when no available tool and no listed document "
+        "could support an answer -- never as a way to avoid a hard lookup, and "
+        "never because a document's file format (a CSV, a PDF, a spreadsheet) "
+        "looks hard to search: search it, the same as any other listed "
+        "document, before deciding nothing there could answer this. A "
+        "question about this conversation (what was asked, what was "
+        "answered) is not outside project delivery -- answer it from history "
+        "instead."
     ),
     arguments=RefuseArguments,
     mutating=False,
 )
+
+
+class DeclareReplyContractArguments(StrictArguments):
+    """Arguments for ``declare_reply_contract`` (ADR 0021).
+
+    ``document_query`` is required-and-nullable rather than optional, for the
+    reason ``BudgetSummaryArguments.include_forecast`` already states: strict
+    function calling requires every property to appear in ``required``, so an
+    argument that only sometimes applies has to be modelled as present-and-
+    possibly-null rather than absent. Whether the two fields actually agree
+    with each other (a query only when ``document_passage`` is among
+    ``needs``) is not checked here -- that is
+    :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`'s own
+    rule, applied once, by
+    :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare` when it
+    builds one from these.
+    """
+
+    needs: list[ReplyNeed] = Field(
+        description=(
+            "What kinds of fact the reply must rest on. 'document_passage' "
+            "for anything that has to be quoted from a project document -- an "
+            "explanation, a decision, a commitment. 'erp_field' for a live "
+            "value the ERP holds -- a status, a burn-down, a budget, the open "
+            "risks. Both, if the question asks for both. Neither (an empty "
+            "list) for a request to record something, a question outside the "
+            "project, or one too vague to act on yet."
+        ),
+    )
+    document_query: str | None = Field(
+        description=(
+            "The words a project document would have to contain to answer "
+            "this, in the user's own terms -- resolve a reference like 'that "
+            "milestone' from the history role first. Required exactly when "
+            "'document_passage' is in needs; null otherwise."
+        ),
+    )
+
+
+DECLARE_REPLY_CONTRACT_TOOL = ToolSpec(
+    name="declare_reply_contract",
+    description=(
+        "Before anything is looked up, say what a complete reply to this "
+        "question must rest on. Call it exactly once, first, for every turn."
+    ),
+    arguments=DeclareReplyContractArguments,
+    mutating=False,
+)
+"""The one function a declaration call offers, sent with ``tool_choice:
+'required'`` (ADR 0021) so the result is always a call, never prose.
+
+Deliberately absent from ``DEFAULT_TOOLS``, ``CONTROL_TOOLS`` and
+``PLANNING_TOOLS`` -- offered alone, the same way
+:data:`~agentic_erp_assistant.memory.extractor.PROPOSE_MEMORIES_TOOL` is. The
+planner offers the model what it may *do* during a turn; this is asked
+*before* any of that, in its own call, and a model shown it alongside the
+other nine would sometimes declare instead of acting.
+"""
 
 
 DEFAULT_TOOLS: tuple[ToolSpec, ...] = (

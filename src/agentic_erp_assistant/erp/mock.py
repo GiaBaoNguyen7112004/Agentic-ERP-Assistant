@@ -40,13 +40,16 @@ documentation keys are carried across a rewrite: they are review material, and
 a write that erased its own readme would be worse than one that never touched
 the file.
 
-No lock, because there is nothing to lock against yet: the engine runs one
-node at a time and there is no web layer. Revisit this when a second request
-can arrive while the first is mid-write.
+``create_risk`` holds a lock around its append-flush-rollback sequence: the
+web layer means a second request can now arrive while the first is
+mid-write, and without one, two threads reading ``len(self.risks)`` before
+either appends would hand out the same id twice.
 """
 
 import json
 import os
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, Self
 
@@ -55,10 +58,12 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "Budget",
     "DEFAULT_DATASET_PATH",
+    "ErpAccessError",
     "ErpNotPersistedError",
     "Milestone",
     "MockErp",
     "Project",
+    "ProjectErp",
     "Risk",
     "RiskSeverity",
     "Sprint",
@@ -99,6 +104,14 @@ class _Record(BaseModel):
 class Project(_Record):
     project_id: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    risk_id_prefix: str = Field(min_length=1, pattern=r"^[A-Z]{1,3}$")
+    """The letter a new risk's id is minted with: ``R`` for Atlas, ``O`` for
+    Orion, following the same per-project convention the milestone ids
+    already use (``M1``…, ``O2``). Data, not code, because which prefix a
+    project uses is a fact about the project, and the dataset is where the
+    project's facts live. It is what makes the first risk recorded against
+    Orion come out ``O-1`` -- the id its status report already narrates --
+    instead of a colliding ``R-N`` from the Atlas register."""
 
 
 class Milestone(_Record):
@@ -131,6 +144,14 @@ class Risk(_Record):
     project_id: str = Field(min_length=1)
     title: str = Field(min_length=1)
     severity: RiskSeverity
+    status: Literal["open", "closed"]
+    """Whether the risk is still live.
+
+    Required, with no default, for the same reason ``source_id`` is: the
+    register this dataset mirrors distinguishes open from closed rows, and a
+    row that forgot to say which is a row ``list_risks`` -- whose tool
+    description promises the *open* risks -- would silently misreport.
+    """
 
 
 class ErpNotPersistedError(RuntimeError):
@@ -143,6 +164,20 @@ class ErpNotPersistedError(RuntimeError):
     :class:`~agentic_erp_assistant.tools.models.ToolError` so nothing escapes
     the gateway; defined here rather than there so ``erp/`` stays importable
     without the tool layer.
+    """
+
+
+class ErpAccessError(RuntimeError):
+    """A write was attempted through a :class:`ProjectErp` view for a project
+    it is not bound to.
+
+    Defence in depth, not the first line: the tool gateway's project check
+    (``ToolDefinition.project_argument``) refuses a call naming another
+    project before a handler ever runs. This is what fires if that check were
+    ever bypassed or a handler were called directly -- the view itself must
+    still refuse, the same way :class:`ErpNotPersistedError` is a second,
+    independent guarantee rather than trust that every caller remembered the
+    first one.
     """
 
 
@@ -173,6 +208,7 @@ class MockErp:
         self.risks = list(risks)
         self._path = path
         self._documentation: dict[str, Any] = {}
+        self._lock = threading.Lock()
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any], path: Path | None = None) -> Self:
@@ -235,37 +271,88 @@ class MockErp:
         """
         return tuple(risk for risk in self.risks if risk.project_id == project_id)
 
+    def open_risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        """The live risks on a project -- what ``list_risks`` promises to list.
+
+        Closed rows stay in the dataset (they are in the register this dataset
+        mirrors, and a proposed risk duplicated against a closed one is still a
+        duplicate), but they are not live delivery exposure, so they are not
+        listed as open.
+        """
+        return tuple(
+            risk for risk in self.risks_for(project_id) if risk.status == "open"
+        )
+
+    def for_project(self, project_code: str) -> "ProjectErp":
+        """One project's slice of this store -- see :class:`ProjectErp`."""
+        return ProjectErp(store=self, project_code=project_code)
+
     # -- the one write -----------------------------------------------------
 
     def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
         """Record a new risk, persist it, and return it.
 
-        The id is derived from the count rather than randomly generated, so a
-        test can assert on the result and an audit row and a trace entry all
-        name the same thing. Nothing here checks permission or approval -- that
-        is the gateway's job, and a store that also enforced policy would be a
-        second place to look for the rule.
+        The id is minted per project -- ``self.project(project_id)`` supplies
+        the prefix (``R`` for Atlas, ``O`` for Orion) and the number continues
+        from the *largest suffix that project already has*, not from the row
+        count. A count-derived id collides the moment the ids are not a dense
+        ``1..n`` run, and the register this dataset mirrors already owns
+        ``R-3``..``R-8``; a row count is also shared across projects, which
+        would mint two different projects' risks the same id. Nothing here
+        checks permission or approval -- that is the gateway's job, and a
+        store that also enforced policy would be a second place to look for
+        the rule.
+
+        Raises:
+            ErpAccessError: ``project_id`` names no project this store knows.
+                The handler refuses unknown projects first; this is the
+                store's own guarantee that an id is never minted against a
+                project that does not exist -- a written row naming no real
+                project would be corruption the next load carries forward.
 
         Persists through :meth:`_flush` before returning, so a caller that was
         told "recorded" can reload the file and find it. A store without a path
         raises :class:`ErpNotPersistedError` instead -- and any flush failure
         rolls the append back, because a store that kept the row in memory
         after refusing to write it would be claiming a write it did not make.
+
+        Holds ``self._lock`` around the id-minting-append-flush-rollback
+        sequence: the web layer can have two approved writes reach this store
+        from two request threads, and without a lock both could read the same
+        largest suffix before either appends, handing out the same id twice.
         """
-        created = Risk(
-            risk_id=f"R-{len(self.risks) + 1}",
-            project_id=project_id,
-            title=title,
-            severity=severity,
-            source_id=f"risk-r-{len(self.risks) + 1}",
-        )
-        self.risks.append(created)
-        try:
-            self._flush()
-        except BaseException:
-            self.risks.pop()
-            raise
-        return created
+        with self._lock:
+            project = self.project(project_id)
+            if project is None:
+                raise ErpAccessError(
+                    f"no project {project_id!r} exists, so no risk id can be "
+                    "minted for it"
+                )
+            highest = max(
+                (
+                    int(risk.risk_id.rsplit("-", 1)[-1])
+                    for risk in self.risks
+                    if risk.project_id == project_id
+                    and risk.risk_id.rsplit("-", 1)[-1].isdigit()
+                ),
+                default=0,
+            )
+            risk_id = f"{project.risk_id_prefix}-{highest + 1}"
+            created = Risk(
+                risk_id=risk_id,
+                project_id=project_id,
+                title=title,
+                severity=severity,
+                status="open",
+                source_id=f"risk-{risk_id.lower()}",
+            )
+            self.risks.append(created)
+            try:
+                self._flush()
+            except BaseException:
+                self.risks.pop()
+                raise
+            return created
 
     def _flush(self) -> None:
         """Rewrite the file this store was loaded from, atomically.
@@ -303,3 +390,71 @@ class MockErp:
         except BaseException:
             temporary.unlink(missing_ok=True)
             raise
+
+
+@dataclass(frozen=True)
+class ProjectErp:
+    """One project's slice of the store -- the only thing a handler may read.
+
+    Records of another project do not exist through this view: :meth:`milestone`,
+    :meth:`sprint`, :meth:`budget`, and :meth:`project` return ``None`` for
+    them, and :meth:`risks_for` returns ``()`` -- the same "does not exist for
+    you" a filtered document gets (``rag/access.py``). The rule is decided
+    here, before a handler sees data, for the reason ``rag/access.py`` filters
+    before ranking: a check a handler has to remember to make is a check one
+    handler forgets.
+
+    Built by :meth:`MockErp.for_project`, never constructed directly by a
+    handler -- the constructor takes the whole store and a project code
+    rather than a filtered copy, so a write still lands on the one store
+    every other view and every other request shares.
+    """
+
+    store: MockErp
+    project_code: str
+
+    def milestone(self, milestone_id: str) -> Milestone | None:
+        record = self.store.milestone(milestone_id)
+        return record if record is not None and record.project_id == self.project_code else None
+
+    def sprint(self, sprint_id: str) -> Sprint | None:
+        record = self.store.sprint(sprint_id)
+        return record if record is not None and record.project_id == self.project_code else None
+
+    def budget(self, project_id: str) -> Budget | None:
+        if project_id != self.project_code:
+            return None
+        return self.store.budget(project_id)
+
+    def project(self, project_id: str) -> Project | None:
+        if project_id != self.project_code:
+            return None
+        return self.store.project(project_id)
+
+    def risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        if project_id != self.project_code:
+            return ()
+        return self.store.risks_for(project_id)
+
+    def open_risks_for(self, project_id: str) -> tuple[Risk, ...]:
+        if project_id != self.project_code:
+            return ()
+        return self.store.open_risks_for(project_id)
+
+    def create_risk(self, *, project_id: str, title: str, severity: RiskSeverity) -> Risk:
+        """Record a new risk, through the store this view wraps.
+
+        Raises:
+            ErpAccessError: ``project_id`` does not match this view's project.
+                Defence in depth -- the gateway's project check refuses a
+                mismatched call before a handler is ever reached; see
+                :class:`ErpAccessError`.
+        """
+        if project_id != self.project_code:
+            raise ErpAccessError(
+                f"this view is bound to project {self.project_code!r}; a "
+                f"write naming {project_id!r} does not belong to it"
+            )
+        return self.store.create_risk(
+            project_id=project_id, title=title, severity=severity
+        )

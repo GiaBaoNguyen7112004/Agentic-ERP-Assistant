@@ -126,6 +126,9 @@ RejectionReason = Literal[
     "instruction_like",  # it tries to steer future behaviour
     "sensitive",         # a secret, or personal data storing does not require
     "low_confidence",    # the proposer was not sure, and unsure means no
+    "not_established",   # the turn did not establish it: an absence, a
+                         # self-description, a restated reply, or a preference
+                         # the user never stated
     "not_relevant",      # there is nothing in it a later turn could act on
     "not_durable",       # true now, false shortly
     "belongs_to_rag",    # the documents already say this, and can be re-read
@@ -136,7 +139,10 @@ RejectionReason = Literal[
 
 Closed, and ordered as the policy evaluates it -- see
 :mod:`agentic_erp_assistant.memory.policy` for why that order is the security
-property and not a formality. Distinct members rather than one ``rejected``
+property and not a formality. ``not_established`` sits between the confidence
+floor and the content rules: it is a mistake about *whether this turn produced
+anything to store at all*, which outranks how durable or how relevant the
+proposed text would have been. Distinct members rather than one ``rejected``
 because they call for opposite responses: ``instruction_like`` is somebody
 attacking the assistant, ``belongs_to_rag`` is the assistant working correctly,
 and a reviewer counting the first must not be counting the second.
@@ -259,6 +265,20 @@ class MemoryCandidate(BaseModel):
     """What this turn's tool calls reported, for the same check against the other
     authority."""
 
+    request_text: str = ""
+    """The user's request this turn, verbatim. What a preference or a decision
+    must have been stated in -- see the policy's ``not_established`` checks.
+
+    Defaulting to empty is deliberate: a candidate built without it (every
+    caller written before the field existed, a replay of an old trace) is judged
+    exactly as before, rather than refused for evidence nobody thought to
+    attach."""
+
+    response_text: str = ""
+    """The reply this turn gave. What a fact must *not* merely restate --
+    ``MEMORY_CONTRACT`` item 4 ("a transcript is not memory"), enforced in code
+    rather than left to the model's agreement with its own contract."""
+
 
 class MemoryDecision(BaseModel):
     """One verdict on one candidate, in fields a reviewer can check.
@@ -279,6 +299,14 @@ class MemoryDecision(BaseModel):
 
     supersedes: tuple[str, ...] = ()
     """The stored records this decision retires. Non-empty only on ``update``."""
+
+    key: str | None = None
+    """The key to store the record under, when it differs from the candidate's
+    own. Set only by a same-topic preference update (see
+    :data:`~agentic_erp_assistant.memory.policy.TOPIC_OVERLAP_RATIO`): the key
+    the store already has wins over the one the proposer invented this turn,
+    so a rewritten preference stops drifting to a new key on every turn.
+    ``None`` means the candidate's own key, which is every other outcome."""
 
     reason: str = Field(default="", max_length=REASON_MAX_CHARS)
     """One line for a person reading the audit. Never parsed, never branched on;
@@ -315,6 +343,14 @@ class MemoryDecision(BaseModel):
             )
         if any(not identifier.strip() for identifier in self.supersedes):
             raise ValueError("supersedes: memory ids must not be blank")
+        if self.key is not None and self.decision != "update":
+            raise ValueError(
+                f"key: decision {self.decision!r} does not store the candidate "
+                f"under a different key, so naming one here is a rewrite nobody "
+                f"asked for"
+            )
+        if self.key is not None and not self.key.strip():
+            raise ValueError("key: must not be blank when given")
         return self
 
 

@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.14"
 dependencies = [
+    "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.5",
@@ -15,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "qdrant-client>=1.19.0",
     "tiktoken>=0.14.0",
+    "uvicorn>=0.52.4",
 ]
 
 [project.scripts]
@@ -36,8 +38,12 @@ consider_namespace_packages = true
 # marked `postgres`. They skip themselves when the database is not up, so the
 # default `uv run pytest` stays green on any machine -- and stays honest about
 # what it proved: only `uv run pytest -m postgres` claims the SQL adapters work.
+# `live` is the same idea for a real OpenAI call: skipped without
+# OPENAI_API_KEY, so `uv run pytest -m live` is what claims the estimate
+# actually tracks the invoice (ADR-adjacent to gap-plan.md's Phase K).
 markers = [
     "postgres: needs the Postgres service from docker-compose.yml; skipped when it is not reachable",
+    "live: makes a real call to the configured OpenAI account; skipped without OPENAI_API_KEY",
 ]
 
 [dependency-groups]

@@ -16,7 +16,7 @@ Three things live here:
   cannot silently swallow an auth or configuration failure and retry it forever.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Literal, Protocol, TypedDict, runtime_checkable
 
 from agentic_erp_assistant.llm.tools import ToolCallResult, ToolSpec
@@ -29,7 +29,9 @@ __all__ = [
     "Message",
     "ProviderAuthError",
     "Role",
+    "TokenEstimating",
     "ToolCallingClient",
+    "ToolChoice",
     "TransientProviderError",
     "Usage",
     "UsageReporting",
@@ -90,6 +92,29 @@ class Message(TypedDict):
     content: str
 
 
+ToolChoice = Literal["auto", "none", "required"]
+"""What :meth:`ToolCallingClient.call_with_tools` sends the wire's own
+``tool_choice`` field.
+
+The three values a real provider's function calling actually accepts, used
+here as the port's vocabulary rather than a boolean the adapter then
+translates. ``"auto"`` lets the model pick a tool or answer in content --
+the default, and every call before ADR 0019 sent nothing else. ``"none"``
+forces content back even though ``tools`` is still offered (ADR 0019): the
+model may need the definitions to make sense of what its own prior calls
+returned, but the wire will not let it call one. ``"required"`` forces the
+opposite: the model must call *some* offered function, and content alone
+cannot come back -- the shape a declaration call needs (ADR 0021), where
+answering in prose is exactly the failure the call exists to prevent.
+
+Not a *named* function (OpenAI's `{"type": "function", "function":
+{"name": ...}}`), which is a fourth, stronger value this port deliberately
+does not expose: forcing a specific function would let the caller choose
+which tool answers a question, and that choice belongs to the model being
+asked, not to the engine holding it to a contract it already declared.
+"""
+
+
 class Usage(TypedDict):
     """Token accounting for a single completion, for trace and budget records."""
 
@@ -130,6 +155,7 @@ class LargeLanguageModelClient(Protocol):
         messages: Sequence[Message],
         *,
         temperature: float,
+        on_delta: Callable[[str], None] | None = None,
     ) -> CompletionResponse:
         """Run one completion and return its normalized result.
 
@@ -141,6 +167,18 @@ class LargeLanguageModelClient(Protocol):
         concatenated into the user turn.** An adapter that joins them has undone
         the separation the roles exist to provide, and the prompt module's
         injection boundary becomes decorative.
+
+        Args:
+            messages: The prompt, by role.
+            temperature: Passed through to the provider unchanged.
+            on_delta: When given, the adapter *may* stream: it calls this with
+                each fragment of reply content, in order, as the provider
+                sends it, and still returns the complete, normalized result
+                once the call finishes. Never called with tool-call
+                arguments -- there are none on this path. An adapter that
+                cannot stream is free to ignore it entirely; every existing
+                fake remains a valid client precisely because this is
+                optional and advisory, never a second contract to satisfy.
 
         Raises:
             ClientConfigurationError: Required local configuration is missing, so
@@ -178,6 +216,8 @@ class ToolCallingClient(Protocol):
         *,
         tools: Sequence[ToolSpec],
         temperature: float,
+        on_delta: Callable[[str], None] | None = None,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Offer ``tools`` and report the single choice that came back.
 
@@ -192,12 +232,32 @@ class ToolCallingClient(Protocol):
         exactly what is about to run, so several is a provider contract
         violation and belongs in the transient-failure path.
 
+        ``tool_choice`` always passes ``tools`` on the wire -- even at
+        ``"none"``, the model may need the definitions to understand what its
+        own prior calls in ``observations`` were -- and only changes what the
+        model is permitted to *do* with them. ``"none"`` forces content back
+        (ADR 0019): this is how a planner call is made after a mutating tool
+        has already succeeded, ending the turn by taking the option to call
+        another tool away rather than asking the model in prose not to.
+        ``"required"`` forces a call back (ADR 0021): a declaration call
+        offers exactly one function and must not accept prose in its place.
+
         Args:
             messages: The same port-role messages ``complete`` takes.
             tools: What to offer. Never empty -- offering nothing while asking
                 the model to choose is a caller bug.
             temperature: A routing decision is not a place for variety; callers
                 pass 0.0.
+            on_delta: The same contract as ``complete``'s -- reply *content*
+                fragments only, in order, never tool-call arguments. A model
+                choosing a tool typically streams no content at all, so
+                ``on_delta`` may simply never be called on that path; a model
+                answering directly (no tool chosen) may stream normally.
+            tool_choice: ``"auto"`` (default) lets the model pick a tool or
+                answer in content. ``"none"`` sends `tool_choice: "none"` on
+                the wire, so the result is always content -- see above.
+                ``"required"`` sends `tool_choice: "required"`, so the result
+                is always a call -- see above.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`: a tool
@@ -228,6 +288,53 @@ class UsageReporting(Protocol):
     last_usage: dict[str, object] | None
     """The provider's own usage object from the most recent call that reported
     one, in the provider's own key names. ``None`` before the first call."""
+
+
+@runtime_checkable
+class TokenEstimating(Protocol):
+    """A client that knows what its own wire request spends beyond the
+    messages.
+
+    ``llm/tokenizer.py::count_message_tokens`` counts exactly what its name
+    says: the role and content of each port-role message, plus the
+    documented per-message chat-format overhead. It was, for a while, the
+    whole of the budget check's estimate -- and a request offering nine
+    tools, or carrying a structured-output schema, spends real tokens on
+    neither of those things, which is why the estimate ran roughly 50% under
+    the invoice on a tool-bearing call (ADR 0001's residual gap, closed
+    here).
+
+    This protocol is the other half: :meth:`estimate_extra_tokens` renders
+    exactly what the adapter's own request-builder would put on the wire for
+    ``tools`` and/or the structured-output schema -- the same code path, not
+    a second copy of it -- and counts it with the same encoding
+    ``count_message_tokens`` uses. ``LLMGateway`` adds the two together when
+    the client satisfies this protocol, and adds nothing when it does not:
+    optional, the same way :class:`UsageReporting` is, so a client written
+    before this protocol existed is still a valid one, merely estimated a
+    little low exactly as before.
+    """
+
+    def estimate_extra_tokens(
+        self,
+        *,
+        tools: Sequence[ToolSpec] | None = None,
+        structured: bool = False,
+    ) -> int:
+        """Tokens the wire request spends beyond the messages themselves.
+
+        Args:
+            tools: The tools that would be offered, if any -- the same
+                sequence a ``call_with_tools`` call would pass.
+            structured: Whether the call carries a structured-output schema
+                (``complete``'s ``response_format``).
+
+        Returns:
+            The token count of whichever of the two applies, rendered and
+            encoded the same way the real request is. ``0`` when neither
+            applies -- an untouched request costs nothing extra to estimate.
+        """
+        ...
 
 
 class LLMClientError(Exception):

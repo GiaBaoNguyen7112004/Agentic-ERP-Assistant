@@ -118,3 +118,15 @@ def test_a_well_formed_approval_request_constructs() -> None:
 def test_the_emitted_schema_is_usable_as_a_provider_response_format(model) -> None:
     """Structured output requires additionalProperties: false on every object."""
     assert model.model_json_schema()["additionalProperties"] is False
+
+
+def test_citation_fields_tell_the_model_not_to_combine_them() -> None:
+    """A live run once had the model write the whole '[doc#locator]' tag into
+    source_id alone, which made a genuinely grounded answer read as citing a
+    source that was never retrieved -- source_id and locator only exist as
+    separate model fields (title alone, no plain docstring) in the schema
+    the provider actually sees, so the field must carry its own guidance."""
+    schema = Citation.model_json_schema()
+
+    assert "#" in schema["properties"]["source_id"]["description"]
+    assert "#" in schema["properties"]["locator"]["description"]

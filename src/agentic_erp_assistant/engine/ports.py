@@ -153,6 +153,36 @@ class ToolGatewayPort(Protocol):
         """
         ...
 
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        """Every check that precedes execution, and nothing that is execution.
+
+        Exists so a write can be put to a human only after the checks that
+        would refuse it anyway have already passed (ADR 0016): the tool
+        exists, its arguments are valid, the actor holds its scope, any
+        project the call names matches the actor's, and there is budget left
+        -- with nothing counted and no handler reached. The answer a caller
+        wants is the status: ``"approval_required"`` means the call may be
+        put to a human; anything else is the refusal that human would
+        otherwise have been asked to rule on.
+
+        Args:
+            request: The call as it would be made, with the actor's scopes
+                and project -- ``approval`` is expected not yet
+                ``"approved"``, since this is called before a human has seen
+                the call.
+
+        Returns:
+            A :class:`ToolOutcome`: a refusal (``"failed"``,
+            ``"invalid_arguments"``, ``"denied"``, ``"rate_limited"``) or
+            ``"approval_required"`` when every check passes.
+
+        Raises:
+            ValueError: ``request`` names a tool that needs no approval, or
+                one that is already approved -- neither has an honest
+                outcome for this method to return.
+        """
+        ...
+
 
 @runtime_checkable
 class PlannerPort(Protocol):
@@ -209,6 +239,7 @@ class AnswerComposerPort(Protocol):
         evidence: Sequence[EvidenceSnippet],
         memories: Sequence[MemoryRecord] = (),
         history: Sequence[ConversationTurn] = (),
+        observations: Sequence[ToolOutcome] = (),
     ) -> "GroundedAnswer":
         """Answer ``question`` from ``evidence``, or refuse in a typed way.
 
@@ -223,6 +254,14 @@ class AnswerComposerPort(Protocol):
         than a hopeful one: neither carries a locator, so there is nothing in
         either a citation could be built from, and the caller's check against
         the retrieved evidence catches one that was invented anyway.
+
+        ``observations`` (ADR 0021) joins them on the same structural
+        footing -- no locator, so it cannot become a citation either -- but
+        for a sharper reason: a compound question redirected to retrieval
+        after this turn's own tool call already succeeded
+        (``engine/nodes.py::think``'s ``erp_field`` redirect) needs both
+        halves composed together, or the field the tool already established
+        is silently dropped from the reply.
 
         Raises:
             Exception: Provider failures and contract violations propagate. The

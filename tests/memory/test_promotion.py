@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from tests.memory.builders import RECORDED, make_turn
+from tests.memory.builders import RECORDED, make_record, make_turn
 
 from agentic_erp_assistant.llm.tools import DEFAULT_TOOLS, PLANNING_TOOLS, ToolCallResult, ToolSpec
 from agentic_erp_assistant.memory.promotion import (
@@ -23,6 +23,8 @@ from agentic_erp_assistant.memory.promotion import (
     conversation_state,
     structural_state,
 )
+from agentic_erp_assistant.memory.summary import SESSION_SUMMARY_KEY
+from agentic_erp_assistant.state.memory import MemoryRecord
 
 
 class FakeModel:
@@ -175,6 +177,135 @@ def test_lists_are_capped_after_merging() -> None:
     )
 
     assert len(state["unresolved_questions"]) == MAX_ITEMS_PER_SECTION
+
+
+# --------------------------------------------------------------------------
+# conversation_state: the previous summary is carried forward
+#
+# The dev database pinned the defect these pin in code: six promotions in one
+# session each wrote a summary that was only the newest evicted turn's request
+# -- "it seems just get the latest sentence". The previous summary must be
+# carried forward, and a model that proposes nothing must not be able to
+# destroy it.
+# --------------------------------------------------------------------------
+
+
+def previous_summary(statement: str) -> MemoryRecord:
+    """The session's current summary, built the way any record is built."""
+    return make_record(
+        memory_id="mem-previous-summary",
+        kind="session_summary",
+        key=SESSION_SUMMARY_KEY,
+        statement=statement,
+    )
+
+
+def test_a_null_goal_keeps_the_previous_summarys_goal() -> None:
+    """The contract says "leave it unset if these turns did not change it" --
+    which can only mean keep the current one. The structural guess (the newest
+    evicted request) must not become the session's goal."""
+    turn = make_turn(trace_id="run-1", request="and what about the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(),
+        previous=previous_summary(
+            "Goal: get the cutover scheduled. Decided: cutover moves to Thursday."
+        ),
+    )
+
+    assert state["user_goal"] == "get the cutover scheduled"
+    assert state["decisions"] == ["cutover moves to Thursday"]
+
+
+def test_an_empty_proposal_does_not_destroy_the_previous_summary() -> None:
+    turn = make_turn(trace_id="run-1", request="and what about the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(),
+        previous=previous_summary("Goal: get the cutover scheduled. Open: who signs off?."),
+    )
+
+    assert state["user_goal"] == "get the cutover scheduled"
+    assert state["unresolved_questions"] == ["who signs off?"]
+
+
+def test_a_proposed_goal_still_overwrites_the_previous_one() -> None:
+    """Precedence: proposal, then carried, then structural."""
+    turn = make_turn(trace_id="run-1", request="and what about the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(user_goal="close out sprint 13"),
+        previous=previous_summary("Goal: get the cutover scheduled."),
+    )
+
+    assert state["user_goal"] == "close out sprint 13"
+
+
+def test_list_sections_merge_newest_first_and_drop_the_oldest_at_the_cap() -> None:
+    """Newest content enters at the front: structural (this batch), then the
+    proposal, then the previous summary -- so when a section saturates at the
+    cap, the oldest previous item leaves. A sliding window, the honest
+    semantics for a record capped at 400 characters."""
+    turn = make_turn(trace_id="run-1", route="clarify", request="who signs off?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(unresolved_questions=["is the vendor confirmed?"]),
+        previous=previous_summary(
+            "Goal: get the cutover scheduled. "
+            "Open: does the vendor ship this week?; is the budget approved?"
+        ),
+    )
+
+    assert state["unresolved_questions"] == [
+        "who signs off?",  # structural -- this batch
+        "is the vendor confirmed?",  # proposed
+        "does the vendor ship this week?",  # carried; the oldest previous drops
+    ]
+    assert "is the budget approved?" not in state["unresolved_questions"]
+
+
+def test_a_carried_item_already_stored_is_not_duplicated() -> None:
+    """Deduplication preserves first occurrence: the carried copy of a fact
+    this batch re-proposes is the same fact, not a second one."""
+    turn = make_turn(trace_id="run-1", request="and the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(decisions=["cutover moves to Thursday"]),
+        previous=previous_summary("Decided: cutover moves to Thursday."),
+    )
+
+    assert state["decisions"] == ["cutover moves to Thursday"]
+
+
+def test_decisions_take_the_batch_first_then_the_newest_previous_items() -> None:
+    """The sliding window, on decisions: four carried items plus one proposed
+    keeps the proposed and the two newest carried -- the oldest previous
+    decision is what leaves."""
+    turn = make_turn(trace_id="run-1", request="and the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(decisions=["the budget was approved"]),
+        previous=previous_summary("Decided: d1; d2; d3; d4."),
+    )
+
+    assert state["decisions"] == ["the budget was approved", "d1", "d2"]
+
+
+def test_the_carried_goal_fills_in_where_the_structural_guess_sits_nowhere() -> None:
+    """previous=None keeps the structural behaviour every earlier test pins:
+    with no previous summary the goal is the oldest evicted request, which is
+    the right answer for a session's first promotion (ADR 0014's fallback)."""
+    turn = make_turn(trace_id="run-1", request="get the cutover scheduled")
+
+    state = conversation_state((turn,), None)
+
+    assert state["user_goal"] == "get the cutover scheduled"
 
 
 # --------------------------------------------------------------------------

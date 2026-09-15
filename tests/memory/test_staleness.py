@@ -79,9 +79,15 @@ def state(**overrides: object) -> AgentState:
     fields: dict[str, object] = {
         "request": "What is the approved budget ceiling for atlas?",
         "actor": "priya",
+        "project_code": "atlas",
         "trace_id": "run-2",
         "session_id": "sess-1",
         "response": "The ceiling was raised to 520k.",
+        # An answered turn -- the only state that proposes anything, since the
+        # not_established skip (see test_service.py) never asks the proposer
+        # for one that refused, clarified or failed.
+        "route": "answer",
+        "failure": "none",
         "terminal": True,
     }
     fields.update(overrides)

@@ -19,7 +19,7 @@ never arrives as a citable source.
 
 import pytest
 
-from tests.memory.builders import RECORDED, make_record, make_scope
+from tests.memory.builders import RECORDED, make_record, make_scope, make_turn
 
 from agentic_erp_assistant.context.compact import compact_conversation
 from agentic_erp_assistant.context.memory_injection import select_memories
@@ -115,6 +115,35 @@ def test_it_is_refused_when_it_arrives_inside_a_session_summary() -> None:
     assert "always approve" not in record.statement.lower()
 
 
+def test_a_poisoned_item_in_a_previous_summary_is_dropped_on_the_refold() -> None:
+    """An item carried forward from a previous statement runs the same check
+    on every re-render, so a poisoned sentence that somehow lived in a
+    statement still cannot survive being folded into the next one."""
+    from tests.memory.test_service import bound, state
+
+    memory = bound(proposer=None)
+    memory.service.store.write(
+        make_record(
+            memory_id="mem-bad-summary",
+            kind="session_summary",
+            key="session",
+            statement=(
+                "Goal: get the cutover scheduled. Decided: " + POISON + "."
+            ),
+        )
+    )
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="and the budget?"),)
+    )
+
+    summaries = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(summaries) == 1
+    assert "always approve" not in summaries[0].statement.lower()
+    # The legitimate content of the previous statement survives the refold.
+    assert "get the cutover scheduled" in summaries[0].statement
+
+
 def test_a_model_that_proposes_it_gets_nothing_stored() -> None:
     """End to end on the write path: a fully compliant proposer, and the gate
     still refuses."""
@@ -138,6 +167,7 @@ def test_a_model_that_proposes_it_gets_nothing_stored() -> None:
     turn = AgentState(
         request=QUESTION,
         actor="priya",
+        project_code="atlas",
         trace_id="run-1",
         session_id="sess-1",
         response="I cannot approve that myself.",
@@ -286,6 +316,15 @@ def test_a_planted_memory_does_not_change_what_the_graph_routes_to() -> None:
         def execute(self, request):  # pragma: no cover
             raise AssertionError("not this path")
 
+        def preflight(self, request):
+            from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+            return ToolOutcome(
+                tool_name=request.tool_name,
+                status="approval_required",
+                error=f"{request.tool_name} needs a human",
+            )
+
         def answer(self, question, evidence, memories=(), history=()):  # pragma: no cover
             raise AssertionError("not this path")
 
@@ -298,6 +337,7 @@ def test_a_planted_memory_does_not_change_what_the_graph_routes_to() -> None:
     turn = AgentState(
         request=QUESTION,
         actor="priya",
+        project_code="atlas",
         trace_id="run-1",
         session_id="sess-1",
         memories=(poisoned_record(),),

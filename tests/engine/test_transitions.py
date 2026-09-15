@@ -23,7 +23,7 @@ ROUTES: tuple[DecisionRoute, ...] = get_args(DecisionRoute)
 
 def at(route: DecisionRoute | None = None, **changes: object) -> AgentState:
     """A state sitting on ``route``, with whatever else the case needs."""
-    base = AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+    base = AgentState(request="How is M2 tracking?", actor="bao", project_code="atlas", trace_id="run-1")
     return base.evolve(route=route, **changes)
 
 
@@ -302,7 +302,7 @@ def test_transitions_is_the_one_module_that_does_set_route() -> None:
 
 
 def test_a_turn_starts_by_thinking() -> None:
-    state = AgentState(request="How is M2 tracking?", actor="bao", trace_id="run-1")
+    state = AgentState(request="How is M2 tracking?", actor="bao", project_code="atlas", trace_id="run-1")
 
     assert advance(state, "think").route == "think"
 
@@ -312,7 +312,7 @@ def test_a_read_tool_can_hand_its_observation_back_to_the_planner() -> None:
     nothing."""
     state = AgentState(
         request="q",
-        actor="bao",
+        actor="bao", project_code="atlas",
         trace_id="run-1",
         route="call_tool",
         tool_name="list_risks",
@@ -323,7 +323,7 @@ def test_a_read_tool_can_hand_its_observation_back_to_the_planner() -> None:
 
 def test_retrieval_can_hand_back_to_the_planner() -> None:
     state = AgentState(
-        request="q", actor="bao", trace_id="run-1", route="retrieve_project_documents"
+        request="q", actor="bao", project_code="atlas", trace_id="run-1", route="retrieve_project_documents"
     )
 
     assert advance(state, "think").route == "think"
@@ -331,7 +331,7 @@ def test_retrieval_can_hand_back_to_the_planner() -> None:
 
 def test_a_second_thought_is_not_a_move_the_table_allows() -> None:
     """A think that produced no route is a planner bug, not an edge."""
-    state = AgentState(request="q", actor="bao", trace_id="run-1", route="think")
+    state = AgentState(request="q", actor="bao", project_code="atlas", trace_id="run-1", route="think")
 
     with pytest.raises(IllegalTransition):
         advance(state, "think")
@@ -340,7 +340,7 @@ def test_a_second_thought_is_not_a_move_the_table_allows() -> None:
 def test_an_unapproved_write_still_cannot_leave_call_tool_for_a_new_thought() -> None:
     state = AgentState(
         request="q",
-        actor="bao",
+        actor="bao", project_code="atlas",
         trace_id="run-1",
         route="call_tool",
         tool_name="create_risk",

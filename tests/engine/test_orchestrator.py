@@ -37,6 +37,7 @@ from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.tools.gateway import ToolGateway
 from agentic_erp_assistant.tools.registry import build_default_registry
 from agentic_erp_assistant.trace import InMemoryPauseStore, InMemoryTraceStore
@@ -74,7 +75,15 @@ class ScriptedModel:
         self.shown_history: tuple = ()
 
     def decide(
-        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+        tool_choice="auto",
     ):
         self.calls += 1
         self.shown_history = tuple(history)
@@ -93,7 +102,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=(), history=()):
+    def answer(self, question: str, evidence, memories=(), history=(), observations=()):
         return self.answer_value
 
 
@@ -151,7 +160,11 @@ def an_orchestrator(*decisions, erp: MockErp | None = None) -> tuple[
 
 def start(request: str = "Record the risk.") -> AgentState:
     return AgentState(
-        request=request, actor="bao", trace_id="run-1", scopes=SCOPES
+        request=request,
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
 
 
@@ -161,6 +174,7 @@ def start_in_session(
     return AgentState(
         request=request,
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         scopes=SCOPES,
         session_id=session_id,
@@ -180,7 +194,7 @@ def a_write(title: str = "vendor risk") -> ToolCallResult:
 
 def test_a_finished_turn_is_filed_as_one_terminal_run() -> None:
     orchestrator, traces, pauses, _, _ = an_orchestrator(
-        called("search_project_documents", query="M2 cutover")
+        called("search_project_documents", queries=["M2 cutover"])
     )
 
     final = orchestrator.handle(start())
@@ -221,6 +235,19 @@ def test_an_approved_resume_completes_the_turn_and_empties_the_queue() -> None:
     assert traces.runs["run-1"].outcome == "terminal"
     assert pauses.pending("run-1") is None
     assert any(risk.title == "vendor risk" for risk in store.risks)
+
+
+def test_resume_records_who_decided_it() -> None:
+    orchestrator, _, pauses, _, _ = an_orchestrator(a_write(), answered("Risk recorded."))
+    orchestrator.handle(start())
+
+    final = orchestrator.resume("run-1", approved=True, decided_by="priya")
+
+    assert pauses.decided_by("run-1") == "priya"
+    assert any(
+        event.kind == "approval_recorded" and "by priya" in event.detail
+        for event in final.events
+    )
 
 
 def test_a_denied_resume_ends_the_turn_without_executing_anything() -> None:
@@ -279,6 +306,59 @@ def test_a_resumed_turn_can_pause_again_and_waits_anew() -> None:
     assert traces.runs["run-1"].outcome == "paused"
     assert [risk.title for risk in store.risks].count("first") == 1
     assert [risk.title for risk in store.risks].count("second") == 0
+
+
+# --------------------------------------------------------------------------
+# on_start: whoever is watching live learns what a turn is about to run
+# with, before the engine ever sees it
+# --------------------------------------------------------------------------
+
+
+def test_on_start_receives_the_declared_state_before_any_node_runs() -> None:
+    orchestrator, *_ = an_orchestrator(answered("Sure."))
+    seen: list[AgentState] = []
+    orchestrator.on_start = seen.append
+
+    orchestrator.handle(start())
+
+    assert len(seen) == 1
+    assert seen[0].step_count == 0
+    assert seen[0].request == "Record the risk."
+
+
+def test_on_start_receives_the_paused_state_on_resume() -> None:
+    orchestrator, *_ = an_orchestrator(a_write(), answered("Risk recorded."))
+    paused = orchestrator.handle(start())
+    seen: list[AgentState] = []
+    orchestrator.on_start = seen.append
+
+    orchestrator.resume("run-1", approved=True)
+
+    assert len(seen) == 1
+    assert seen[0] == paused
+
+
+def test_a_raising_on_start_is_logged_and_the_turn_still_completes() -> None:
+    orchestrator, traces, *_ = an_orchestrator(answered("Sure."))
+
+    def raises(state: AgentState) -> None:
+        raise RuntimeError("a screen went away")
+
+    orchestrator.on_start = raises
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal
+    assert traces.runs["run-1"].outcome == "terminal"
+
+
+def test_no_on_start_is_a_complete_configuration() -> None:
+    orchestrator, *_ = an_orchestrator(answered("Sure."))
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal
+
 
 # --------------------------------------------------------------------------
 # Memory: recall before the run, consolidation after it, and never a failure
@@ -453,6 +533,29 @@ def test_what_was_written_and_what_was_refused_are_separate_events() -> None:
     assert "instruction_like" in next(
         e.detail for e in events if e.kind == "memory_rejected"
     )
+
+
+def test_a_skipped_turns_rejection_is_traced_as_not_established() -> None:
+    """SessionMemory never asks the proposer on a turn that refused, clarified
+    or failed -- it returns one not_established decision without a candidate,
+    and the trace must say so in the same event shape any other refusal uses."""
+    memory = RecordingMemory(
+        decisions=(
+            MemoryDecision(
+                decision="reject",
+                rejection="not_established",
+                reason="turn ended in refuse (none); a turn that produced no answer established nothing",
+            ),
+        )
+    )
+    orchestrator, traces, _, _, _ = with_memory(memory, answered("Nothing to do."))
+
+    orchestrator.handle(start())
+
+    events = traces.load_run("run-1").events
+    assert next(
+        e.detail for e in events if e.kind == "memory_rejected"
+    ).startswith("not_established:")
 
 
 def test_the_memory_events_are_in_the_run_record_that_gets_filed() -> None:
@@ -735,3 +838,121 @@ def test_the_memory_layer_can_be_absent_while_history_is_present() -> None:
     kinds = [event.kind for event in traces.runs["run-1"].state.events]
     assert "history_recalled" in kinds
     assert "history_promoted" not in kinds
+
+
+# --------------------------------------------------------------------------
+# The reply contract, declared before the engine sees the state (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+class RecordingDeclarer:
+    """A ContractDeclarerPort that hands back what it was built with, and
+    counts."""
+
+    def __init__(self, contract: ReplyContract) -> None:
+        self.contract = contract
+        self.declares: list[AgentState] = []
+
+    def declare(self, state):
+        self.declares.append(state)
+        return self.contract
+
+
+class BrokenDeclarer:
+    def declare(self, state):
+        raise RuntimeError("the declaration call is unreachable")
+
+
+def with_declarer(declarer, *decisions, erp: MockErp | None = None):
+    orchestrator, traces, pauses, model, store = an_orchestrator(*decisions, erp=erp)
+    orchestrator.declarer = declarer
+    return orchestrator, traces, pauses, model, store
+
+
+def test_no_declarer_is_a_complete_configuration() -> None:
+    """A replay, an evaluation case and a one-shot script run exactly as
+    every turn did before this port existed."""
+    orchestrator, _, _, _, _ = an_orchestrator(answered("Nothing to do."))
+
+    assert orchestrator.declarer is None
+    final = orchestrator.handle(start())
+
+    assert final.terminal is True
+    assert final.contract is None
+
+
+def test_declaration_fills_the_state_before_the_engine_sees_it() -> None:
+    """Not the caller's job: a caller that supplied a contract would be a
+    second place declaration could happen."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset({"erp_field"})))
+    orchestrator, _, _, _, _ = with_declarer(declarer, answered("On track."))
+
+    final = orchestrator.handle(start())
+
+    assert final.contract == ReplyContract(needs=frozenset({"erp_field"}))
+    assert declarer.declares[0].contract is None
+
+
+def test_a_declared_turn_says_so_in_its_trace() -> None:
+    declarer = RecordingDeclarer(
+        ReplyContract(needs=frozenset({"document_passage"}), document_query="why")
+    )
+    orchestrator, traces, _, _, _ = with_declarer(declarer, answered("On track."))
+
+    orchestrator.handle(start())
+
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "contract_declared" in kinds
+
+
+def test_a_contract_with_no_needs_still_declares() -> None:
+    """Empty needs is a real answer -- a write, a refusal, a clarification --
+    and the trace records that it was checked, not skipped."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset()))
+    orchestrator, traces, _, _, _ = with_declarer(declarer, a_write())
+
+    final = orchestrator.handle(start())
+
+    assert final.contract == ReplyContract(needs=frozenset())
+    kinds = [event.kind for event in traces.load_run("run-1").events]
+    assert "contract_declared" in kinds
+
+
+def test_a_broken_declarer_cannot_fail_a_turn() -> None:
+    """The same never-fail rule recall follows: a declarer that is down costs
+    the turn its check, never its answer."""
+    orchestrator, _, _, _, _ = with_declarer(BrokenDeclarer(), answered("Fine."))
+
+    final = orchestrator.handle(start())
+
+    assert final.terminal is True
+    assert final.contract is None
+    assert final.failure == "none"
+
+
+def test_declaration_runs_after_both_recalls() -> None:
+    """So a declaration call can read what recall filled in, and a re-plan
+    mid-turn cannot change what it is held to."""
+    memory = RecordingMemory(recalled=(remembered(),))
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset({"erp_field"})))
+    orchestrator, _, _, _, _ = with_declarer(declarer, answered("On track."))
+    orchestrator.memory = memory
+
+    orchestrator.handle(start())
+
+    assert declarer.declares[0].memories == (remembered(),)
+
+
+def test_resume_does_not_declare_again() -> None:
+    """The paused state already carries what it had -- an approver's
+    decision must be judged against the same contract the pause was shown,
+    not a fresh one."""
+    declarer = RecordingDeclarer(ReplyContract(needs=frozenset()))
+    orchestrator, traces, pauses, _, _ = with_declarer(declarer, a_write())
+
+    paused = orchestrator.handle(start())
+    assert len(declarer.declares) == 1
+
+    orchestrator.resume(paused.trace_id, approved=True, decided_by="sponsor")
+
+    assert len(declarer.declares) == 1

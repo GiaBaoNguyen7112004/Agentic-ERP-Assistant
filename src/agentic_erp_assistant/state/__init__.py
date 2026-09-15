@@ -25,6 +25,11 @@ from agentic_erp_assistant.state.memory import (
     MemoryRecord,
     STATEMENT_MAX_CHARS,
 )
+from agentic_erp_assistant.state.reply_contract import (
+    EMPTY_CONTRACT,
+    ReplyContract,
+    ReplyNeed,
+)
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome, ToolStatus
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -32,6 +37,7 @@ __all__ = [
     "AgentState",
     "ApprovalDecision",
     "ConversationTurn",
+    "EMPTY_CONTRACT",
     "ERROR_DETAIL_MAX_CHARS",
     "EVENT_DETAIL_MAX_CHARS",
     "EventKind",
@@ -39,6 +45,8 @@ __all__ = [
     "KEY_MAX_CHARS",
     "MemoryKind",
     "MemoryRecord",
+    "ReplyContract",
+    "ReplyNeed",
     "STATEMENT_MAX_CHARS",
     "STATE_VERSION",
     "ToolOutcome",

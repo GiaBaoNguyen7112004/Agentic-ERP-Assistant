@@ -2,10 +2,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: agentic-erp-assistant",
+            "name": "Python: agentic-erp-assistant (serve)",
             "type": "python",
             "request": "launch",
             "module": "agentic_erp_assistant",
+            "args": ["serve"],
             "console": "integratedTerminal",
             "justMyCode": true,
             "env": {

@@ -96,6 +96,21 @@ class ToolOutcome(BaseModel):
     """Which tool ran. Repeated here rather than inferred from surrounding
     context, so a trace or audit entry stands on its own."""
 
+    arguments_summary: str = ""
+    """The call that produced this outcome, rendered the way an approver or
+    an auditor reads one -- ``summarize_tool_call(tool_name, arguments)``.
+
+    Added so a later call can be told apart from an *identical* earlier one
+    without the caller keeping its own copy of the arguments: ``engine/
+    nodes.py``'s repeated-call guard (ADR 0019) compares a fresh decision's
+    rendering against this field on every prior observation, structurally,
+    rather than trusting the model not to ask twice. A default of ``""``
+    rather than a required field: a state written before this field existed
+    still validates (no ``STATE_VERSION`` bump -- see that constant's own
+    docstring), and an outcome with no comparable rendering simply never
+    matches anything, which is the correct, conservative reading of "unknown".
+    """
+
     status: ToolStatus
     """How it ended. See :data:`ToolStatus`."""
 

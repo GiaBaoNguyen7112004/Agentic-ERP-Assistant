@@ -10,8 +10,8 @@ is folded here into the session's one ``session_summary`` record, through the
 same allow-list and the same per-item safety check every other summary goes
 through.
 
-The model proposes; code decides -- the same split as everywhere else
------------------------------------------------------------------------
+The model proposes; code decides -- and code also carries
+-----------------------------------------------------------
 
 :class:`LLMSessionSummaryProposer` asks a model what the evicted turns are
 worth, exactly as
@@ -20,14 +20,24 @@ finished turn is worth. Its answer is never trusted directly:
 :func:`conversation_state` overlays only four named fields onto what code
 alone can already say about the turns (:func:`structural_state`), and
 ``pending_approvals`` -- whether a write is still waiting on a human -- is
-never taken from the model at all. The result is a plain mapping that
+never taken from the model at all. And because the contract asks the model
+only for the *delta* -- what these turns add, never a restatement of what the
+session already wrote down -- :func:`conversation_state` also carries the
+session's previous summary forward, parsing its statement back into sections
+(:func:`~agentic_erp_assistant.memory.summary.parse_summary`) and merging it
+beneath what this batch contributes. Without that, a proposal of nothing
+would be the one thing a summary could not survive: the model is told to
+leave the goal unset when the turns did not change it, and code must make
+that true. The result is a plain mapping that
 :func:`~agentic_erp_assistant.context.compact.compact_conversation` then
 narrows to its own allow-list, and
 :func:`~agentic_erp_assistant.memory.summary.summarize_session` still runs
 :func:`~agentic_erp_assistant.memory.policy.unsafe_to_store` over every item
-before it reaches the statement. A proposer that is down, or not configured
-at all, degrades to the structural half alone -- a summary is still written,
-just a plainer one.
+before it reaches the statement -- carried items included, so a poisoned
+sentence inside a previous statement cannot survive being folded again. A
+proposer that is down, or not configured at all, degrades to the structural
+half alone -- a summary is still written, just a plainer one, and the
+previous one is still carried forward.
 """
 
 import logging
@@ -40,6 +50,7 @@ from pydantic import Field, ValidationError
 from agentic_erp_assistant.llm.prompts import build_promotion_messages
 from agentic_erp_assistant.llm.tools import StrictArguments, ToolSpec
 from agentic_erp_assistant.memory.extractor import ProposalModel
+from agentic_erp_assistant.memory.summary import parse_summary
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import STATEMENT_MAX_CHARS, MemoryRecord
 
@@ -152,8 +163,9 @@ class SessionSummaryProposerPort(Protocol):
         Args:
             turns: The turns leaving the window, oldest first. Never empty --
                 the caller does not ask about an empty promotion.
-            previous: The session's current summary, if it has one, so the
-                model can extend or correct it rather than starting over.
+            previous: The session's current summary, if it has one, shown to
+                the model for context -- code carries it forward, so the model
+                is asked only for what the turns add or change.
 
         Returns:
             A proposal, or ``None`` when the model said nothing is worth
@@ -236,7 +248,8 @@ def structural_state(turns: Sequence[ConversationTurn]) -> dict[str, object]:
 
     * ``user_goal`` -- the oldest evicted turn's own request. The best guess
       code can make at what the batch was about, without inventing a summary
-      of it.
+      of it. A fallback, not a default: :func:`conversation_state` uses it
+      only when neither the proposal nor the previous summary names a goal.
     * ``pending_approvals`` -- named here, not in a proposal, because whether a
       write is still waiting on a human is a fact this code already has and a
       model restating it adds a chance of getting it wrong. Ordinarily empty:
@@ -272,30 +285,67 @@ def structural_state(turns: Sequence[ConversationTurn]) -> dict[str, object]:
 
 
 def conversation_state(
-    turns: Sequence[ConversationTurn], proposal: SessionSummaryProposal | None
+    turns: Sequence[ConversationTurn],
+    proposal: SessionSummaryProposal | None,
+    previous: MemoryRecord | None = None,
 ) -> dict[str, object]:
     """The mapping :func:`~agentic_erp_assistant.context.compact.compact_conversation`
-    will narrow to its allow-list: structure first, a proposal overlaid on top.
+    will narrow to its allow-list: structure first, the proposal and the
+    previous summary overlaid on top.
 
     Only :data:`PROPOSABLE_SECTIONS` can move. ``pending_approvals`` is never
-    touched here, whatever the proposal says -- see :func:`structural_state`.
-    Each list is capped at :data:`MAX_ITEMS_PER_SECTION` after the proposal's
-    items are appended to whatever structure already supplied, so a model's
-    own facts do not push a code-derived one out silently past the point both
-    are meant to be trimmed to.
-    """
-    state = structural_state(turns)
-    if proposal is None:
-        return state
+    touched here, whatever the proposal says -- see :func:`structural_state` --
+    and it is never carried either: a superseded summary must not resurrect a
+    settled approval, so it is re-derived from the turns every promotion.
 
-    if proposal.user_goal:
-        state["user_goal"] = proposal.user_goal
+    Args:
+        proposal: What the model proposed about this batch, or ``None`` when
+            there is no proposer, it failed, or it said nothing. All three are
+            ordinary, not failures.
+        previous: The session's current summary, if it has one. Its parsed
+            statement is what a proposal of nothing still carries forward;
+            without it an empty proposal would be the one thing a summary
+            could not survive.
+
+    Precedence and the sliding window
+    ---------------------------------
+
+    ``user_goal``: the proposal's, else the previous summary's, else the
+    structural guess -- the oldest evicted request, which is the right answer
+    only for a session's first promotion, where there is nothing to carry.
+
+    Each list field merges ``[*structural (this batch), *proposed,
+    *previous]``, whitespace-collapsed, deduplicated preserving first
+    occurrence, capped at :data:`MAX_ITEMS_PER_SECTION`. Newest content
+    enters at the front, so when a section saturates the **oldest** previous
+    item leaves: a sliding window, the honest semantics for a record capped
+    at 400 characters. Items that were dropped as attacks before they were
+    rendered are not re-parsed as facts; whatever survives parsing is checked
+    again by ``summarize_session`` before it reaches the statement.
+    """
+    carried = parse_summary(previous.statement) if previous is not None else {}
+    state = structural_state(turns)
+
+    goal = proposal.user_goal if proposal is not None and proposal.user_goal else None
+    if goal is None:
+        carried_goal = carried.get("user_goal") or ()
+        goal = carried_goal[0] if carried_goal else None
+    if goal is None and state.get("user_goal"):
+        goal = state["user_goal"]
+    if goal is not None:
+        state["user_goal"] = goal
 
     for field in ("decisions", "unresolved_questions", "accepted_facts"):
-        proposed = getattr(proposal, field)
-        if not proposed:
-            continue
-        combined = [*state.get(field, []), *proposed]
-        state[field] = combined[:MAX_ITEMS_PER_SECTION]
+        structural = list(state.get(field, []))
+        proposed = list(getattr(proposal, field)) if proposal is not None else []
+        previous_items = list(carried.get(field) or ())
+
+        merged: list[str] = []
+        for item in [*structural, *proposed, *previous_items]:
+            text = " ".join(item.split()) if isinstance(item, str) else item
+            if text and text not in merged:
+                merged.append(text)
+        if merged:
+            state[field] = merged[:MAX_ITEMS_PER_SECTION]
 
     return state

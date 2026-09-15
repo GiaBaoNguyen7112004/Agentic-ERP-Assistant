@@ -9,6 +9,7 @@ from tests.memory.builders import RECORDED, make_record, make_scope, make_turn
 
 from agentic_erp_assistant.memory.audit import InMemoryMemoryAudit
 from agentic_erp_assistant.memory.models import MemoryCandidate, MemoryScope
+from agentic_erp_assistant.memory.promotion import SessionSummaryProposal
 from agentic_erp_assistant.memory.service import MemoryService, SessionMemory
 from agentic_erp_assistant.memory.store import InMemoryMemoryStore
 from agentic_erp_assistant.memory.vector_store import InMemoryMemoryVectorStore
@@ -61,6 +62,26 @@ class Refuses:
         raise RuntimeError("the provider is down")
 
 
+class SummaryProposer:
+    """Returns one scripted answer per promotion, recording what it was shown.
+
+    A raise is a scripted outage, not a scripted "nothing to add" -- the
+    service treats the two the same, and both must leave the previous summary
+    standing.
+    """
+
+    def __init__(self, *answers: object) -> None:
+        self.answers = list(answers)
+        self.shown: list[object] = []
+
+    def propose(self, turns, *, previous):
+        self.shown.append(previous)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer  # type: ignore[return-value]
+
+
 def candidate(**overrides: object) -> MemoryCandidate:
     fields: dict[str, object] = {
         "kind": "preference",
@@ -77,9 +98,15 @@ def state(**overrides: object) -> AgentState:
     fields: dict[str, object] = {
         "request": "Please reply in Vietnamese. How is the cutover looking?",
         "actor": "priya",
+        "project_code": "atlas",
         "trace_id": "run-1",
         "session_id": "sess-1",
         "response": "The cutover is on Thursday.",
+        # An answered turn: the only state consolidate() is called with in
+        # production that proposes anything. An unanswered one is never asked
+        # -- the tests for that are the not_established skip below.
+        "route": "answer",
+        "failure": "none",
         "terminal": True,
     }
     fields.update(overrides)
@@ -261,6 +288,54 @@ def test_two_candidates_for_one_key_become_a_write_and_an_update() -> None:
     ]
 
 
+def test_a_preference_proposed_under_a_drifted_key_replaces_the_stored_one() -> None:
+    """End to end, with the real store: the dev database's actual defect. A
+    preference is already live under one key; the proposer, this turn,
+    invents a *different* key for what is unmistakably the same preference
+    restated. The stored key wins (D3), so the id derived for the new record
+    matches what the store already had it under."""
+    memory = bound(
+        candidate(
+            kind="preference", key="budget_reporting_currency",
+            statement="The user prefers budget numbers to be reported in "
+            "thousands of VND.",
+        ),
+    )
+    existing = make_record(
+        memory_id="mem-usd",
+        kind="preference",
+        key="budget_reporting_format",
+        statement="The user prefers budget numbers to be reported in "
+        "thousands of USD.",
+    )
+    memory.service.store.write(existing)
+
+    decisions = memory.consolidate(state())
+
+    assert [d.decision for d in decisions] == ["update"]
+    live = memory.service.store.live(make_scope())
+    assert [record.key for record in live] == ["budget_reporting_format"]
+    assert [record.statement for record in live] == [
+        "The user prefers budget numbers to be reported in thousands of VND."
+    ]
+    assert memory.service.store.records["mem-usd"].superseded_at is not None
+    assert [row.decision for row in memory.service.audit.rows] == ["update", "forget"]
+    audit_row = memory.service.audit.rows[0]
+    assert "budget_reporting_format" in audit_row.reason
+    assert "budget_reporting_currency" in audit_row.reason
+    # The id is derived from what is actually stored -- the adopted key --
+    # not from the key the proposer invented this turn.
+    assert live[0].memory_id != "mem-usd"
+    from agentic_erp_assistant.memory.models import memory_id
+
+    expected_candidate = candidate(
+        kind="preference", key="budget_reporting_format",
+        statement="The user prefers budget numbers to be reported in "
+        "thousands of VND.",
+    )
+    assert live[0].memory_id == memory_id(expected_candidate, make_scope())
+
+
 def test_consolidation_embeds_everything_it_stored_in_one_request() -> None:
     memory = bound(
         candidate(),
@@ -302,6 +377,72 @@ def test_no_proposer_is_a_complete_configuration() -> None:
 
 
 # --------------------------------------------------------------------------
+# The not_established skip: a turn that established nothing is never asked
+# --------------------------------------------------------------------------
+
+
+def test_a_turn_that_refused_is_never_asked_and_returns_the_skip() -> None:
+    """A refusal ends with the user no better informed; asking the proposer
+    what the turn was worth is how the absence-claim junk got written."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(route="refuse", response="I cannot answer that."))
+
+    assert memory.service.proposer.seen == []
+    assert len(decisions) == 1
+    assert decisions[0].rejection == "not_established"
+    assert decisions[0].reason.startswith("turn ended in refuse")
+    assert memory.service.store.live(make_scope()) == ()
+
+
+def test_a_turn_that_asks_for_clarification_is_skipped_too() -> None:
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(route="clarify", response="Which sprint do you mean?"))
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions] == ["not_established"]
+
+
+def test_an_answered_turn_that_failed_is_skipped_too() -> None:
+    """route is not enough on its own: an answer marked incomplete_reply left
+    the user without the thing they asked for."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(state(failure="incomplete_reply"))
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions] == ["not_established"]
+
+
+def test_the_skip_leaves_no_audit_row() -> None:
+    """The audit table's memory_id/kind describe a candidate, and the skip has
+    none -- the trace event the orchestrator derives is the record."""
+    memory = bound(candidate())
+
+    memory.consolidate(state(route="refuse", response="I cannot answer that."))
+
+    assert memory.service.audit.rows == []
+
+
+def test_a_skipped_turn_still_promotes_its_evicted_turns() -> None:
+    """Promotion is about *older* turns; how this one ended does not bear on
+    whether the window's overflow gets folded."""
+    memory = bound(candidate())
+
+    decisions = memory.consolidate(
+        state(route="refuse", response="I cannot answer that."),
+        evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),),
+    )
+
+    assert memory.service.proposer.seen == []
+    assert [d.rejection for d in decisions if d.rejection] == ["not_established"]
+    summaries = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(summaries) == 1
+    assert "Goal: get the cutover scheduled." in summaries[0].statement
+
+
+# --------------------------------------------------------------------------
 # The session summary, from turns the short-term window evicted
 # --------------------------------------------------------------------------
 
@@ -333,6 +474,113 @@ def test_a_second_promotion_supersedes_the_first_summary() -> None:
     )
 
     assert len(memory.service.store.live(make_scope(), kinds=("session_summary",))) == 1
+
+
+def test_consecutive_promotions_extend_one_summary_with_no_proposer() -> None:
+    """The dev-database defect, pinned as a test. Six promotions in one session
+    each wrote a summary that was only the newest evicted turn's request -- the
+    user's words: "it seems just get the latest sentence". A promotion extends
+    the session's summary; it never restarts it."""
+    memory = bound(proposer=None)
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="give me project status"),)
+    )
+    first = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert [record.statement for record in first] == ["Goal: give me project status."]
+
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="currrent status of milestone 1"),),
+    )
+
+    live = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(live) == 1
+    # Today this reads "Goal: currrent status of milestone 1." -- the dev-DB
+    # row. The carried goal wins, and turn 2's request is not the session's
+    # goal merely because it was evicted last.
+    assert live[0].statement == "Goal: give me project status."
+    assert live[0].supersedes == (first[0].memory_id,)
+
+
+def _promoted(memory: SessionMemory) -> str:
+    summaries = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(summaries) == 1
+    return summaries[0].statement
+
+
+def test_a_proposal_on_the_second_promotion_extends_the_carried_summary() -> None:
+    """With a proposer present: the proposal's goal wins over the carried one,
+    and what the batch contributes is folded beneath what the session already
+    wrote down."""
+    proposer = SummaryProposer(
+        None,  # first promotion: the model proposed nothing
+        SessionSummaryProposal(
+            user_goal="close out sprint 13",
+            decisions=["cutover moves to Thursday"],
+            unresolved_questions=[],
+            accepted_facts=[],
+        ),
+    )
+    memory = bound(summary_proposer=proposer)
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(
+            trace_id="run-1", route="clarify", request="who signs the cutover off?"
+        ),),
+    )
+
+    assert _promoted(memory) == (
+        "Goal: close out sprint 13. Decided: cutover moves to Thursday. "
+        "Open: who signs the cutover off?."
+    )
+    # And the proposer was shown the summary it was extending.
+    assert proposer.shown[1] is not None
+    assert proposer.shown[1].statement == "Goal: get the cutover scheduled."  # type: ignore[union-attr]
+
+
+def test_a_summary_proposer_failure_no_longer_wipes_the_summary() -> None:
+    """A proposer outage mid-session degrades to the structural fold, which
+    now includes the previous content: the summary no longer resets to one
+    sentence about the newest evicted turn."""
+    memory = bound(summary_proposer=SummaryProposer(RuntimeError("provider down")))
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="reschedule the cutover"),),
+    )
+
+    assert _promoted(memory) == "Goal: get the cutover scheduled."
+
+
+def test_the_decision_reason_tells_an_extension_from_a_first_write() -> None:
+    """A reviewer of the evidence can tell the two apart without reading code
+    -- the same move as ADR 0024's decision reasons."""
+    memory = bound()
+
+    first = memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    second = memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="reschedule the cutover"),),
+    )
+
+    summary_rows = [d for d in [*first, *second] if d.decision in ("write", "update")]
+    assert [row.decision for row in summary_rows] == ["write", "update"]
+    assert summary_rows[0].reason == "session summary folded 1 evicted turn(s)"
+    # run-1 is the run that wrote the first summary; run-0 is only the turn
+    # it folded.
+    assert summary_rows[1].reason == (
+        "session summary folded 1 evicted turn(s) over the summary from run run-1"
+    )
 
 
 def test_nothing_evicted_means_no_summary_and_no_decision() -> None:

@@ -201,6 +201,19 @@ class ToolDefinition:
     every field that has one.
     """
 
+    project_argument: str | None = field(default=None, kw_only=True)
+    """The argument that names the project this call is about, if any.
+
+    ``None`` for a tool whose arguments do not name a project at all
+    (``get_project_status``, ``get_sprint_progress`` -- a milestone or a
+    sprint id is unambiguous without one). When set, the gateway reads this
+    attribute off the *validated* arguments and refuses the call as
+    ``denied`` if it does not match the request's ``project_code`` -- the
+    same principle ``rag/access.py`` applies to documents, enforced here
+    because a tool argument is data the model chose and never the authority
+    on which project an actor is entitled to touch.
+    """
+
     handler: Handler
     """The code that runs, already bound to its data store.
 
@@ -287,11 +300,22 @@ class ToolRegistry:
         return len(self._by_name)
 
 
-def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
+def build_default_registry(
+    erp: MockErp | None = None,
+    *,
+    read_rate_limit: RateLimitPolicy = DEFAULT_RATE_LIMIT,
+) -> ToolRegistry:
     """The six tools, with their policy, bound to one ERP store.
 
     ``erp`` is injectable so a test can hand in its own data and so two tests
     cannot see each other's writes. Defaults to the repo fixture.
+
+    ``read_rate_limit`` overrides the budget every read tool gets (writes keep
+    :data:`WRITE_RATE_LIMIT` regardless -- a mutating tool's budget is a
+    safety backstop, not something a dev toggle should loosen). The
+    composition root uses this to tighten reads for a browser demo, where a
+    person clicking around can exhaust the default budget in a way a scripted
+    test never does.
 
     The scopes are namespaced by what they grant rather than by who holds them
     (``project.risk.write``, not ``pm``), so an entitlement can be read without
@@ -301,7 +325,11 @@ def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
     handlers = build_handlers(store)
 
     def read(
-        spec: ToolSpec, scope: str, *, retry: RetryPolicy = NO_RETRY
+        spec: ToolSpec,
+        scope: str,
+        *,
+        retry: RetryPolicy = NO_RETRY,
+        project_argument: str | None = None,
     ) -> ToolDefinition:
         return ToolDefinition(
             spec=spec,
@@ -309,6 +337,8 @@ def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
             approval_required=False,
             timeout_seconds=5.0,
             retry=retry,
+            rate_limit=read_rate_limit,
+            project_argument=project_argument,
             handler=handlers[spec.name],
         )
 
@@ -325,13 +355,20 @@ def build_default_registry(erp: MockErp | None = None) -> ToolRegistry:
                 retry=RetryPolicy(max_attempts=2),
             ),
             read(GET_SPRINT_PROGRESS_TOOL, "project.sprint.read"),
-            read(GET_BUDGET_SUMMARY_TOOL, "project.budget.read"),
-            read(LIST_RISKS_TOOL, "project.risk.read"),
+            read(
+                GET_BUDGET_SUMMARY_TOOL,
+                "project.budget.read",
+                project_argument="project_id",
+            ),
+            read(
+                LIST_RISKS_TOOL, "project.risk.read", project_argument="project_id"
+            ),
             ToolDefinition(
                 spec=CREATE_RISK_TOOL,
                 required_scope="project.risk.write",
                 approval_required=True,
                 timeout_seconds=5.0,
+                project_argument="project_id",
                 # One attempt, on purpose. A retried write is how one approved
                 # risk becomes three, and the approval was for one.
                 retry=NO_RETRY,

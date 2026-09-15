@@ -22,15 +22,22 @@ that never happened.
 
 import logging
 import os
+from urllib.parse import urlsplit
 
 import psycopg
 from dotenv import load_dotenv
 
 __all__ = [
     "CONNECT_TIMEOUT_SECONDS",
+    "DEFAULT_POSTGRES_TEST_URL",
     "DEFAULT_POSTGRES_URL",
+    "TEST_DATABASE_SUFFIX",
+    "StoreConfigurationError",
     "StoreConnectionError",
+    "assert_test_database",
     "connect",
+    "database_name_in",
+    "test_url_from_environment",
     "url_from_environment",
 ]
 
@@ -41,6 +48,20 @@ DEFAULT_POSTGRES_URL = "postgresql://agentic_erp:agentic_erp@localhost:5432/agen
 the same throwaway credential, so the two agree by construction and a fresh
 checkout needs no ``.env``. A real deployment replaces the whole URL through
 ``POSTGRES_URL`` and these values never leave the compose file."""
+
+TEST_DATABASE_SUFFIX = "_test"
+"""What a database name must end in for :func:`assert_test_database` to
+accept it. A suffix check is a fact a fixture can enforce before it opens a
+connection, not a discipline that depends on every test author remembering
+which URL means what (ADR 0018)."""
+
+DEFAULT_POSTGRES_TEST_URL = (
+    "postgresql://agentic_erp:agentic_erp@localhost:5432/agentic_erp_test"
+)
+"""The compose default for the *test* database -- same server, same
+throwaway credential as :data:`DEFAULT_POSTGRES_URL`, different database, so
+``scripts/init_postgres.py --test`` can create it with the connection the
+dev database already has."""
 
 CONNECT_TIMEOUT_SECONDS = 3
 """How long one connect attempt may hang before the answer is "no database".
@@ -61,6 +82,20 @@ class StoreConnectionError(RuntimeError):
     """
 
 
+class StoreConfigurationError(RuntimeError):
+    """The caller asked to connect somewhere the code refuses to, on principle.
+
+    Distinct from :class:`StoreConnectionError`: that one means "the database
+    named is unreachable", a deployment fact nothing here can fix. This one
+    means "the database named is the wrong one to be naming here at all" --
+    today, exclusively :func:`assert_test_database` refusing a URL whose
+    database is not a ``_test`` one. It is raised before any connection is
+    attempted, because the mistake it catches (a test suite pointed at the
+    database a running server writes to) is not one a connection failure
+    would ever surface -- the connection succeeds; the truncation is the bug.
+    """
+
+
 def url_from_environment() -> str:
     """``POSTGRES_URL``, or the compose default when blank or unset.
 
@@ -71,6 +106,48 @@ def url_from_environment() -> str:
     load_dotenv(override=False)
     url = (os.environ.get("POSTGRES_URL") or "").strip()
     return url or DEFAULT_POSTGRES_URL
+
+
+def test_url_from_environment() -> str:
+    """``POSTGRES_TEST_URL``, or the compose default when blank or unset.
+
+    The counterpart to :func:`url_from_environment` that only a test fixture
+    or ``scripts/init_postgres.py --test`` should call. Reading it does not
+    make a URL safe to use -- :func:`assert_test_database` is what a caller
+    runs before connecting.
+    """
+    load_dotenv(override=False)
+    url = (os.environ.get("POSTGRES_TEST_URL") or "").strip()
+    return url or DEFAULT_POSTGRES_TEST_URL
+
+
+def database_name_in(url: str) -> str:
+    """The database segment of a ``postgresql://`` URL, or ``""`` if absent."""
+    return urlsplit(url).path.lstrip("/")
+
+
+def assert_test_database(url: str) -> None:
+    """Refuse any ``url`` whose database is not named ``*_test``.
+
+    The one guard that makes ADR 0018 a fact rather than a convention: every
+    fixture in ``tests/persistence/`` calls this before it opens a connection,
+    so pointing a test run at ``POSTGRES_URL`` by mistake -- an unset
+    ``POSTGRES_TEST_URL``, a copy-pasted ``.env`` line -- fails loudly here
+    rather than truncating whatever the dev database holds.
+
+    Raises:
+        StoreConfigurationError: ``url``'s database does not end in
+            :data:`TEST_DATABASE_SUFFIX`, including when it names none at all.
+    """
+    name = database_name_in(url)
+    if not name.endswith(TEST_DATABASE_SUFFIX):
+        raise StoreConfigurationError(
+            f"refusing to treat {url!r} as a test database: its database "
+            f"{name or '(none)'!r} does not end in {TEST_DATABASE_SUFFIX!r}. "
+            f"Set POSTGRES_TEST_URL to a database whose name does, or run "
+            f"`uv run python scripts/init_postgres.py --test` to create the "
+            f"default one."
+        )
 
 
 def connect(url: str | None = None) -> psycopg.Connection:

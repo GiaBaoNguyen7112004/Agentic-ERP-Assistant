@@ -131,18 +131,43 @@ FailureMode = Literal[
     "insufficient_evidence",
     "tool_failure",
     "max_steps_exceeded",
+    "planner_loop",
+    "incomplete_reply",
     "none",
 ]
 """Why a turn could not produce a grounded answer -- including "it could".
 
-The last two are not produced by :func:`classify_failure`, and cannot be: that
-function reads three signals from one attempted answer, while ``tool_failure``
-is assigned by the node that watched a call come back unusable and
-``max_steps_exceeded`` by the loop guard, which is not answering anything at
-all. Both are still :data:`FailureMode` members rather than free text in
-``error_detail`` -- a reviewer counting how runs end has to be counting typed
-values, and the loop guard firing is exactly the outcome nobody wants to
-discover by grepping prose.
+None of the last four are produced by :func:`classify_failure`, and cannot
+be: that function reads three signals from one attempted answer, while
+``tool_failure`` is assigned by the node that watched a call come back
+unusable, ``max_steps_exceeded`` by the loop guard (not answering anything at
+all), ``planner_loop`` by ``engine/nodes.py::think`` itself, the one time
+it forces a planner call with every tool withheld (ADR 0019) and the model
+still names one -- which the real provider's ``tool_choice: "none"`` cannot
+produce, so seeing it at all means the guard caught something a fake or a
+future provider actually did wrong -- and ``incomplete_reply`` by ``think``
+and ``retrieve_and_answer``, never each other's business: a reply the
+planner's own declared contract (ADR 0021) says needs a document passage or
+an ERP field that this turn never produced, delivered anyway, once the one
+redirect a missing need gets has already been spent. Deliberately not
+``insufficient_evidence``: that mode means retrieval came back empty for
+what the composer was trying to say; this one means the planner itself
+declared, before anything ran, that the reply needed something this turn
+never fetched -- evidence was not lacking for what was said, something the
+model itself called necessary was never called for. All four are still
+:data:`FailureMode` members rather than free text in ``error_detail`` -- a
+reviewer counting how runs end has to be counting typed values, and a guard
+firing is exactly the outcome nobody wants to discover by grepping prose.
+
+``planner_loop`` is deliberately its own member rather than folded into
+``max_steps_exceeded``: the latter means the budget ran out with the turn
+still undecided, and the former means the turn was refused a repeat before
+the budget ever had to. A trace that reads ``max_steps_exceeded`` after an
+approved write is a different, worse story than one that reads
+``planner_loop`` after the same write -- the first looks like the runtime
+gave the model room to answer and it never did; the second says plainly that
+the model tried to act again after a write had already succeeded, and the
+guard stopped it in one extra call rather than eight.
 
 ``"none"`` is the string, not ``None``. A ``None`` return invites callers to
 write ``if failure:`` and quietly collapse four outcomes into two; a Literal
@@ -250,18 +275,26 @@ class ReasoningDecision(BaseModel):
     write always needs approval.
     """
 
-    search_query: str | None = Field(default=None, min_length=1)
-    """What to search for, on the one route that searches.
+    search_queries: tuple[str, ...] = ()
+    """What to search for, on the one route that searches (ADR 0027).
 
-    The model picks retrieval by calling a function with a query argument, and
-    that query is usually a better one than the raw request -- it is the part
-    of the question that has to be looked up. Carried in its own field rather
-    than in ``required_tool``/arguments because retrieval is not executed by
-    the tool gateway: it has no registry entry, and a name plus a loose
+    The model picks retrieval by calling a function with a ``queries``
+    argument, one entry per document its own reply will need -- a single
+    blended query returns passages from whichever document matches best
+    and starves the rest, which is exactly the shape a compound,
+    multi-document request takes. Carried in its own field rather than in
+    ``required_tool``/arguments because retrieval is not executed by the
+    tool gateway: it has no registry entry, and a name plus a loose
     argument bag here would imply it did.
 
-    Required on ``retrieve_project_documents`` and rejected everywhere else, so
-    a search can never be routed without saying what it searches for.
+    Non-empty on ``retrieve_project_documents`` and empty everywhere else,
+    so a search can never be routed without saying what it searches for.
+    The upper bound (three) is not enforced here, deliberately, on the same
+    grounds the module docstring gives for not validating ``required_tool``
+    against the registry: it is
+    :class:`~agentic_erp_assistant.llm.tools.SearchProjectDocumentsArguments`'s
+    own schema constraint, checked once at the boundary that actually
+    receives it from the wire, not a second copy of that check here.
     """
 
     message: str | None = Field(default=None, min_length=1)
@@ -330,16 +363,19 @@ class ReasoningDecision(BaseModel):
                 "straight past the gate"
             )
 
-        if self.route == _RETRIEVAL_ROUTE and self.search_query is None:
+        if self.route == _RETRIEVAL_ROUTE and not self.search_queries:
             raise ValueError(
-                "search_query: a retrieval decision must say what it searches "
-                "for; the route alone leaves the query to be invented later"
+                "search_queries: a retrieval decision must say what it "
+                "searches for; the route alone leaves the query to be "
+                "invented later"
             )
-        if self.search_query is not None and self.route != _RETRIEVAL_ROUTE:
+        if self.search_queries and self.route != _RETRIEVAL_ROUTE:
             raise ValueError(
-                f"search_query: route {self.route!r} searches nothing, so a "
-                f"query here is an input no branch will ever read"
+                f"search_queries: route {self.route!r} searches nothing, so "
+                f"a query here is an input no branch will ever read"
             )
+        if any(not query.strip() for query in self.search_queries):
+            raise ValueError("search_queries: entries must not be blank")
 
         if self.route in _MESSAGE_REQUIRED_ROUTES and self.message is None:
             raise ValueError(

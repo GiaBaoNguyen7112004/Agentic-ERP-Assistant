@@ -22,23 +22,42 @@ Telemetry is written on every path that reached the provider, including the ones
 that failed. A rejected reply was still generated and still billed.
 """
 
+import json
 import logging
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 from pydantic import ValidationError
 
+from agentic_erp_assistant.context.catalogue import DocumentCatalogue
+from agentic_erp_assistant.llm.inspection import (
+    ModelCallInspector,
+    ModelRequestSnapshot,
+    ModelResponseSnapshot,
+    snapshot_request,
+    snapshot_response,
+)
 from agentic_erp_assistant.llm.ports import (
     LargeLanguageModelClient,
     Message,
+    TokenEstimating,
     ToolCallingClient,
+    ToolChoice,
     Usage,
     UsageReporting,
 )
-from agentic_erp_assistant.llm.prompts import build_messages, build_planner_messages
+from agentic_erp_assistant.llm.prompts import (
+    PLANNER_CONTRACT,
+    Principal,
+    build_declaration_messages,
+    build_messages,
+    build_planner_messages,
+)
 from agentic_erp_assistant.llm.retry import retry_with_backoff
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
+from agentic_erp_assistant.llm.streaming import AnswerStreamSink, JsonStringFieldExtractor
 from agentic_erp_assistant.llm.telemetry import (
     InMemoryTelemetry,
     ModelCallRecord,
@@ -48,7 +67,12 @@ from agentic_erp_assistant.llm.telemetry import (
     price,
 )
 from agentic_erp_assistant.llm.tokenizer import TiktokenCounter, TokenCounter
-from agentic_erp_assistant.llm.tools import PLANNING_TOOLS, ToolCallResult, ToolSpec
+from agentic_erp_assistant.llm.tools import (
+    DECLARE_REPLY_CONTRACT_TOOL,
+    PLANNING_TOOLS,
+    ToolCallResult,
+    ToolSpec,
+)
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.memory import MemoryRecord
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
@@ -81,6 +105,50 @@ class ContextWindowExceeded(Exception):
     """
 
 
+def _on_delta_kwarg(on_delta: Callable[[str], None] | None) -> dict[str, object]:
+    """``{"on_delta": on_delta}``, or nothing at all.
+
+    Not ``{"on_delta": None}`` when there is no sink: a client that never
+    declared the parameter (every fake predating streaming) would raise
+    ``TypeError`` on an unexpected keyword. Omitting the key entirely is
+    what keeps every such fake a valid client, exactly as the port's
+    docstring promises -- the gateway only asks a client to stream when a
+    sink is actually bound.
+    """
+    return {"on_delta": on_delta} if on_delta is not None else {}
+
+
+def _extra_tokens(
+    client: object, *, tools: Sequence[ToolSpec] | None = None, structured: bool = False
+) -> int:
+    """What :class:`~agentic_erp_assistant.llm.ports.TokenEstimating` adds to
+    the message count, or ``0`` for a client that does not satisfy it.
+
+    The optional-capability pattern :class:`~agentic_erp_assistant.llm.ports.
+    UsageReporting` already uses in this file: a client written before this
+    protocol existed is still a valid one, merely estimated a little low
+    exactly as before -- never a ``TypeError`` for lacking a method nothing
+    required of it.
+    """
+    if isinstance(client, TokenEstimating):
+        return client.estimate_extra_tokens(tools=tools, structured=structured)
+    return 0
+
+
+def _tool_choice_kwarg(tool_choice: ToolChoice) -> dict[str, object]:
+    """``{"tool_choice": "none"}`` / ``{"tool_choice": "required"}``, or
+    nothing at all.
+
+    The same reasoning as :func:`_on_delta_kwarg`, for the same reason: a
+    fake client written before ADR 0019/0021 declared no ``tool_choice``
+    parameter, and passing the default value explicitly would raise
+    ``TypeError`` on every one of them for a call that changes nothing about
+    what they should do. Only a non-default choice is ever worth a client
+    knowing about.
+    """
+    return {} if tool_choice == "auto" else {"tool_choice": tool_choice}
+
+
 def _as_snippets(evidence: Evidence) -> list[EvidenceSnippet]:
     """Normalize whichever evidence shape the caller had."""
     if isinstance(evidence, Mapping):
@@ -89,6 +157,54 @@ def _as_snippets(evidence: Evidence) -> list[EvidenceSnippet]:
             for source_id, text in evidence.items()
         ]
     return list(evidence)
+
+
+def _salvage_unresolvable_citations(text: str) -> tuple[str, int]:
+    """Drop citations an empty source id or locator leaves unresolvable.
+
+    The provider does not enforce the schema's ``min_length`` (structured
+    output accepts the schema but ignores the constraint), so a composer can
+    emit ``{"source_id": "doc-1", "locator": ""}`` -- observed in the wild as
+    ``citations.N.locator string_too_short`` failing a turn whose other three
+    citations and answer text were fine. An empty field is not a resolvable
+    reference -- the citation rule's own words -- so the honest repair is to
+    drop the pointer, not the turn: dropping only ever removes a citation that
+    could not have been checked by a reader, never adds or rewrites one, and
+    the schema's grounded-but-uncited rule still rejects what is left if no
+    resolvable citation survives. Prose, malformed JSON, and shape errors
+    deeper than an empty field are returned untouched -- those are the
+    schema's own reports to make.
+
+    Returns the (possibly repaired) payload and how many citations were
+    dropped, so the repair is visible in the trace rather than silent.
+    """
+    try:
+        payload = json.loads(text)
+    except ValueError:
+        return text, 0
+    if not isinstance(payload, dict):
+        return text, 0
+    citations = payload.get("citations")
+    if not isinstance(citations, list):
+        return text, 0
+
+    def unresolvable(citation: object) -> bool:
+        # A non-dict entry is a shape error, not an empty field: the schema
+        # reports it, unchanged.
+        if not isinstance(citation, dict):
+            return False
+        return any(
+            not isinstance(citation.get(field_name), str)
+            or not citation.get(field_name, "").strip()
+            for field_name in ("source_id", "locator")
+        )
+
+    kept = [citation for citation in citations if not unresolvable(citation)]
+    dropped = len(citations) - len(kept)
+    if dropped == 0:
+        return text, 0
+    payload["citations"] = kept
+    return json.dumps(payload), dropped
 
 
 @dataclass
@@ -133,6 +249,21 @@ class LLMGateway:
     telemetry: TelemetrySink = field(default_factory=InMemoryTelemetry)
     """Where the cost record goes. Swapped for the trace store when it exists."""
 
+    inspector: ModelCallInspector | None = None
+    """Where a call's live I/O goes, beside its cost record. ``None`` --
+    the default -- means nobody is watching this gateway's calls live, and
+    every call site in this class skips building a snapshot at all rather
+    than building one nobody reads. Bound the same way ``stream`` is
+    (``composition/turn.py``): per turn, to whatever is watching it."""
+
+    inspect_io: bool = False
+    """Whether a snapshot actually carries the request/reply text, when an
+    :attr:`inspector` is bound at all. ``False`` -- the default -- means
+    :attr:`inspector` still learns about every call (paired with ``None``,
+    ``None`` for its request and response), but the prompt and reply
+    themselves never leave this process. The one caller that sets this is
+    ``composition/turn.py``, reading ``DEV_TRACE_MODEL_IO``."""
+
     counter: TokenCounter = field(default_factory=TiktokenCounter)
     """How the pre-call estimate is made."""
 
@@ -145,12 +276,64 @@ class LLMGateway:
     jitter: Callable[[], float] | None = None
     """Passed to the retry engine when set; ``None`` keeps its full-jitter default."""
 
+    stream: AnswerStreamSink | None = None
+    """Where reply text goes while it is still arriving. ``None`` -- the
+    default -- means this gateway never asks the client to stream at all.
+
+    Bound here rather than threaded through :meth:`answer` and
+    :meth:`call_tools` as a parameter: the planner and the composer stay
+    ignorant of streaming either way, and a second gateway built for memory
+    work (:class:`~agentic_erp_assistant.memory.extractor.LLMMemoryProposer`
+    and its summary sibling) is built with no sink, so a memory proposal can
+    never stream into the chat. Each retried
+    attempt gets ``reset()`` called on it before its first delta -- a stream
+    that died partway is replayed from the top on the next attempt, and a
+    sink that was not told would show the reply twice.
+    """
+
+    planner_contract: str = PLANNER_CONTRACT
+    """The developer block :meth:`decide` builds its prompt with.
+
+    Defaults to the production constant; nothing in ``composition/`` sets it
+    to anything else. The one caller that does is ``eval/routing.py``'s
+    comparison (ADR 0020) -- one gateway per candidate contract, so a
+    three-way comparison is three constructor calls, not three copies of
+    :meth:`decide`.
+    """
+
+    principal: Principal | None = None
+    """Who this turn is for, appended to the system block of every prompt
+    this gateway builds. ``None`` -- the default -- sends
+    :data:`~agentic_erp_assistant.llm.prompts.SYSTEM_POLICY` byte-for-byte.
+
+    Bound at construction, like :attr:`stream` and :attr:`inspector`, so
+    :meth:`decide` and the composer stay ignorant of it: the planner asks
+    for a decision, and who the turn is for is standing session context,
+    not something a decision carries. ``call_tools`` takes messages already
+    built, so it needs nothing here."""
+
+    catalogue: DocumentCatalogue | None = None
+    """Which documents this turn's actor may search (ADR 0026), appended to
+    the system block of :meth:`decide`'s own prompt only. ``None`` -- the
+    default -- omits the block, the same as an unset :attr:`principal` does
+    for the whole system role.
+
+    Bound at construction, exactly like :attr:`principal` -- which document
+    catalogue applies is standing session context, decided once by
+    ``composition/turn.py`` from the actor's own entitlements, never
+    something a single decision carries. :meth:`answer`, :meth:`declare` and
+    a memory-proposal gateway built without one never see this field at
+    all: composing from evidence already retrieved, and declaring what a
+    reply needs in the abstract, have no occasion to weigh whether a
+    specific document exists."""
+
     def answer(
         self,
         question: str,
         evidence: Evidence,
         memories: Sequence[MemoryRecord] = (),
         history: Sequence[ConversationTurn] = (),
+        observations: Sequence[ToolOutcome] = (),
         *,
         temperature: float = 0.0,
     ) -> GroundedAnswer:
@@ -169,12 +352,23 @@ class LLMGateway:
                 Reaches the answering call for the same reason memory does: an
                 answer resolving a follow-up needs the antecedent it was
                 resolved against, and it cannot become a citation either.
+            observations: What this turn's own tool calls returned, in order
+                (ADR 0021). Empty on a turn that never called one before
+                retrieving. Cannot become a citation either, for the same
+                structural reason -- no locator -- but reaches this call for a
+                sharper one: a compound question redirected to retrieval
+                after a tool call already succeeded needs both composed
+                together, not just the passage half.
             temperature: Defaults to 0.0. A grounded answer is not a place for
                 variety, and a reproducible trace is worth more here than range.
 
         Returns:
             A validated :class:`GroundedAnswer` -- which, by construction, either
-            carries citations or says why it refused.
+            carries citations or says why it refused. A citation whose source
+            id or locator arrives empty is dropped before validation rather
+            than allowed to fail the turn -- it is not a resolvable reference,
+            and the drop is recorded in the call's trace detail. A reply left
+            with no resolvable citation still fails the schema below.
 
         Raises:
             ContextWindowExceeded: The estimate does not leave room for a reply.
@@ -187,13 +381,17 @@ class LLMGateway:
             ValueError: ``question`` is blank (from ``build_messages``).
         """
         # 1. Build.
-        messages = build_messages(question, _as_snippets(evidence), memories, history)
+        messages = build_messages(
+            question, _as_snippets(evidence), memories, history, observations,
+            principal=self.principal,
+        )
 
         # 2. Budget, before anything is sent.
         estimated = self.counter.count_message_tokens(
             messages, model=self.client.model_name
-        )
-        self._check_budget(estimated)
+        ) + _extra_tokens(self.client, structured=True)
+        request_snapshot = self._snapshot_request("answer", messages, temperature=temperature)
+        self._check_budget(estimated, request=request_snapshot)
 
         # 3. Call, with retry.
         attempts = 0
@@ -201,7 +399,21 @@ class LLMGateway:
         def one_attempt():
             nonlocal attempts
             attempts += 1
-            return self.client.complete(messages, temperature=temperature)
+            on_delta = None
+            if self.stream is not None:
+                if attempts > 1:
+                    self.stream.reset()
+                extractor = JsonStringFieldExtractor("answer")
+                sink = self.stream
+
+                def on_delta(fragment: str) -> None:
+                    piece = extractor.feed(fragment)
+                    if piece:
+                        sink.delta(piece)
+
+            return self.client.complete(
+                messages, temperature=temperature, **_on_delta_kwarg(on_delta)
+            )
 
         started = time.perf_counter()
         try:
@@ -222,13 +434,17 @@ class LLMGateway:
                 latency=time.perf_counter() - started,
                 attempts=attempts,
                 detail=f"{type(error).__name__}: {error}",
+                request=request_snapshot,
             )
             raise
         latency = time.perf_counter() - started
 
-        # 4. Validate, and record what it really cost.
+        # 4. Validate, and record what it really cost. One repair runs first
+        # (see _salvage_unresolvable_citations): a citation an empty field
+        # leaves unresolvable is dropped, and the drop itself is recorded.
+        salvaged, dropped = _salvage_unresolvable_citations(response["text"])
         try:
-            answer = GroundedAnswer.model_validate_json(response["text"])
+            answer = GroundedAnswer.model_validate_json(salvaged)
         except ValidationError as error:
             self._record(
                 outcome="invalid_schema",
@@ -238,6 +454,8 @@ class LLMGateway:
                 attempts=attempts,
                 model=response["model"],
                 detail=f"{error.error_count()} validation error(s)",
+                request=request_snapshot,
+                response=self._snapshot_response(content=response["text"]),
             )
             raise
 
@@ -248,6 +466,15 @@ class LLMGateway:
             latency=latency,
             attempts=attempts,
             model=response["model"],
+            detail=(
+                f"dropped {dropped} citation(s) with an empty source id or locator"
+                if dropped
+                else None
+            ),
+            request=request_snapshot,
+            response=self._snapshot_response(
+                content=response["text"], stop_reason=response["stop_reason"]
+            ),
         )
         return answer
 
@@ -261,6 +488,7 @@ class LLMGateway:
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Ask the model what to do next, and report the one choice it made.
 
@@ -285,6 +513,9 @@ class LLMGateway:
             tools: What to offer. Defaults to
                 :data:`~agentic_erp_assistant.llm.tools.PLANNING_TOOLS`.
             temperature: 0.0. A routing decision is not a place for variety.
+            tool_choice: ``"auto"`` (default), ``"none"`` (ADR 0019 -- forces
+                content back even though ``tools`` is still offered), or
+                ``"required"`` (ADR 0021 -- forces a call back).
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
@@ -301,10 +532,60 @@ class LLMGateway:
         """
         return self.call_tools(
             build_planner_messages(
-                question, _as_snippets(evidence), observations, memories, history
+                question,
+                _as_snippets(evidence),
+                observations,
+                memories,
+                history,
+                contract=self.planner_contract,
+                catalogue=self.catalogue,
+                principal=self.principal,
             ),
             tools=tools,
             temperature=temperature,
+            tool_choice=tool_choice,
+        )
+
+    def declare(
+        self, question: str, history: Sequence[ConversationTurn] = ()
+    ) -> ToolCallResult:
+        """Ask what a complete reply to ``question`` must rest on (ADR 0021).
+
+        The sibling of :meth:`decide`, offering exactly one function
+        (:data:`~agentic_erp_assistant.llm.tools.DECLARE_REPLY_CONTRACT_TOOL`)
+        with ``tool_choice="required"``, so the result is always a call, never
+        the prose a declaration call exists to prevent. Goes through
+        :meth:`call_tools` like every other function-calling path in this
+        class, so it is budgeted, retried and recorded exactly like a routing
+        decision -- a declaration call costs real tokens and can fail exactly
+        like one.
+
+        Args:
+            question: The user's words, verbatim.
+            history: The session's recent turns, already clipped and
+                budgeted -- so a reference like "that milestone" can be
+                resolved the same way a routing decision resolves it.
+
+        Returns:
+            A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`
+            naming ``declare_reply_contract`` with parsed arguments.
+            :meth:`~agentic_erp_assistant.reasoning.planner.Planner.declare`
+            is what turns this into a
+            :class:`~agentic_erp_assistant.state.reply_contract.ReplyContract`,
+            never-fail.
+
+        Raises:
+            ContextWindowExceeded: The estimate does not leave room for a
+                reply.
+            TransientProviderError: Retries were exhausted.
+            ProviderAuthError: A definitive rejection from the provider.
+            ValueError: ``question`` is blank.
+        """
+        return self.call_tools(
+            build_declaration_messages(question, history, principal=self.principal),
+            tools=(DECLARE_REPLY_CONTRACT_TOOL,),
+            temperature=0.0,
+            tool_choice="required",
         )
 
     def call_tools(
@@ -313,6 +594,7 @@ class LLMGateway:
         *,
         tools: Sequence[ToolSpec] = PLANNING_TOOLS,
         temperature: float = 0.0,
+        tool_choice: ToolChoice = "auto",
     ) -> ToolCallResult:
         """Offer ``tools`` against an already-built prompt and return the choice.
 
@@ -340,6 +622,10 @@ class LLMGateway:
             tools: What to offer.
             temperature: 0.0. Neither a routing decision nor a memory proposal
                 is a place for variety.
+            tool_choice: ``"auto"`` (default), ``"none"`` (ADR 0019), or
+                ``"required"`` (ADR 0021). A non-default choice is recorded in
+                the telemetry row's ``detail`` so a trace shows a call was
+                forced, not merely answered.
 
         Returns:
             A :class:`~agentic_erp_assistant.llm.tools.ToolCallResult`.
@@ -361,16 +647,33 @@ class LLMGateway:
 
         estimated = self.counter.count_message_tokens(
             messages, model=client.model_name
+        ) + _extra_tokens(client, tools=tools)
+        request_snapshot = self._snapshot_request(
+            "tools",
+            messages,
+            tools=[tool.name for tool in tools],
+            tool_choice=tool_choice,
+            temperature=temperature,
         )
-        self._check_budget(estimated)
+        self._check_budget(estimated, request=request_snapshot)
 
         attempts = 0
 
         def one_attempt() -> ToolCallResult:
             nonlocal attempts
             attempts += 1
+            on_delta = None
+            if self.stream is not None:
+                if attempts > 1:
+                    self.stream.reset()
+                on_delta = self.stream.delta
+
             return client.call_with_tools(
-                messages, tools=tools, temperature=temperature
+                messages,
+                tools=tools,
+                temperature=temperature,
+                **_on_delta_kwarg(on_delta),
+                **_tool_choice_kwarg(tool_choice),
             )
 
         started = time.perf_counter()
@@ -389,6 +692,7 @@ class LLMGateway:
                 latency=time.perf_counter() - started,
                 attempts=attempts,
                 detail=f"{type(error).__name__}: {error}",
+                request=request_snapshot,
             )
             raise
         latency = time.perf_counter() - started
@@ -407,11 +711,20 @@ class LLMGateway:
                 f"chose {decision.tool_name}"
                 if decision.tool_name
                 else "answered without a tool"
+            )
+            + ("" if tool_choice == "auto" else f" (tool_choice={tool_choice})"),
+            request=request_snapshot,
+            response=self._snapshot_response(
+                tool_name=decision.tool_name,
+                arguments=decision.arguments,
+                content=decision.content,
             ),
         )
         return decision
 
-    def _check_budget(self, estimated: int) -> None:
+    def _check_budget(
+        self, estimated: int, *, request: ModelRequestSnapshot | None = None
+    ) -> None:
         """Refuse a request that cannot fit, before it costs anything.
 
         The comparison is strictly greater than: a request that fills the window
@@ -435,9 +748,49 @@ class LLMGateway:
             latency=0.0,
             attempts=0,
             detail=detail,
+            request=request,
         )
         logger.warning("refusing request locally: %s", detail)
         raise ContextWindowExceeded(detail)
+
+    # -- the live inspector, off by default -----------------------------
+
+    def _snapshot_enabled(self) -> bool:
+        """Whether building a snapshot at all is worth the caller's while --
+        `inspector` bound and `inspect_io` on. Checked at every call site
+        before building one, so a gateway nobody is watching, or one only
+        counting calls without their text, never pays for a snapshot
+        nothing will read."""
+        return self.inspector is not None and self.inspect_io
+
+    def _snapshot_request(
+        self,
+        kind: Literal["answer", "tools"],
+        messages: Sequence[Message],
+        *,
+        tools: Sequence[str] = (),
+        tool_choice: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelRequestSnapshot | None:
+        if not self._snapshot_enabled():
+            return None
+        return snapshot_request(
+            kind, messages, tools=tools, tool_choice=tool_choice, temperature=temperature
+        )
+
+    def _snapshot_response(
+        self,
+        *,
+        content: str | None = None,
+        tool_name: str | None = None,
+        arguments: Mapping[str, object] | None = None,
+        stop_reason: str | None = None,
+    ) -> ModelResponseSnapshot | None:
+        if not self._snapshot_enabled():
+            return None
+        return snapshot_response(
+            content=content, tool_name=tool_name, arguments=arguments, stop_reason=stop_reason
+        )
 
     def _reported_usage(self) -> Usage:
         """What the provider last said it billed, when no response survived.
@@ -471,8 +824,12 @@ class LLMGateway:
         attempts: int,
         model: str | None = None,
         detail: str | None = None,
+        request: ModelRequestSnapshot | None = None,
+        response: ModelResponseSnapshot | None = None,
     ) -> None:
-        """Price one call and hand it to the sink.
+        """Price one call, hand it to the cost sink, and -- if anyone is
+        watching this gateway live -- hand the same record to the inspector
+        alongside whatever request/response snapshot the call site built.
 
         Prices from the provider's reported counts, never from the estimate --
         the estimate is what decided whether to send, and the invoice is what
@@ -486,18 +843,26 @@ class LLMGateway:
             output_tokens=usage["output_tokens"],
         )
 
-        self.telemetry.record(
-            ModelCallRecord(
-                model=served_model,
-                outcome=outcome,
-                estimated_input_tokens=estimated,
-                input_tokens=usage["input_tokens"],
-                output_tokens=usage["output_tokens"],
-                cost_usd=cost,
-                latency_seconds=latency,
-                attempts=attempts,
-                occurred_at=now(),
-                detail="; ".join(part for part in (detail, price_detail) if part)
-                or None,
-            )
+        record = ModelCallRecord(
+            model=served_model,
+            outcome=outcome,
+            estimated_input_tokens=estimated,
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            cost_usd=cost,
+            latency_seconds=latency,
+            attempts=attempts,
+            occurred_at=now(),
+            detail="; ".join(part for part in (detail, price_detail) if part) or None,
         )
+        self.telemetry.record(record)
+
+        if self.inspector is not None:
+            try:
+                self.inspector.model_call(record, request, response)
+            except Exception:  # noqa: BLE001 - telemetry never fails a request
+                logger.warning(
+                    "model call inspector raised; dropping this call's live "
+                    "snapshot",
+                    exc_info=True,
+                )

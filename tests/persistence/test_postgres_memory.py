@@ -28,9 +28,7 @@ from agentic_erp_assistant.memory.store import IntentStorePort, MemoryStorePort
 from agentic_erp_assistant.persistence import (
     PostgresMemoryAudit,
     PostgresMemoryStore,
-    StoreConnectionError,
     apply_schema,
-    connect,
 )
 from agentic_erp_assistant.state.memory import MemoryRecord
 
@@ -38,19 +36,6 @@ pytestmark = pytest.mark.postgres
 
 RECORDED = datetime(2026, 9, 8, 9, 0, tzinfo=UTC)
 LATER = datetime(2026, 9, 9, 9, 0, tzinfo=UTC)
-
-
-@pytest.fixture(scope="module")
-def database():
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    with connection.cursor() as cursor:
-        with connection.transaction():
-            apply_schema(cursor)
-    yield connection
-    connection.close()
 
 
 @pytest.fixture

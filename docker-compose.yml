@@ -8,16 +8,26 @@
 # audit row and a pending approval must survive the process that produced them,
 # which an in-process store cannot promise.
 #
+# One command brings up the whole system:
+#
+#   docker compose up --build
+#
+# ...which builds the app image from the repo-root Dockerfile (multi-stage:
+# the React UI, a uv.lock-resolved venv, a slim runtime -- see ADR 0029),
+# starts qdrant and postgres, applies the schema and ingests the corpus
+# through two one-shot services, and only then starts the app, which serves
+# the built UI at http://localhost:8000. The one-shots are idempotent, so
+# every later `up` re-runs them as cheap no-ops. The per-piece commands
+# below remain the dev loop -- during development the thing being changed
+# every minute should not be behind an image rebuild.
+#
 #   docker compose up -d qdrant
 #   uv run python scripts/ingest_documents.py
 #
 #   docker compose up -d postgres
-#   uv run python scripts/init_postgres.py
+#   uv run python scripts/init_postgres.py         # the dev database the server writes to
+#   uv run python scripts/init_postgres.py --test  # a second, _test database -- see ADR 0018
 #   uv run pytest -m postgres
-#
-# The application is run with uv against both, because during development the
-# thing being changed every minute should not be behind an image rebuild. When
-# the web layer lands, an app service is a decision to record then.
 
 services:
   qdrant:
@@ -82,6 +92,79 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  # -- One-shot services -------------------------------------------------------
+  #
+  # Two idempotent setup steps that must run before the app starts. Each exits
+  # when done; `depends_on` with `condition: service_completed_successfully`
+  # is what orders them, and every later `up` re-runs them as cheap no-ops
+  # (init_postgres' schema is CREATE TABLE IF NOT EXISTS; ingest skips
+  # unchanged documents by content hash). They share the app image -- the
+  # scripts and the venv they run against already ship in it -- so there is no
+  # second image to keep in step with the first.
+  postgres-init:
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # In-network addresses. These override any localhost-flavoured value an
+      # .env carries (compose: `environment` wins over `env_file`), because a
+      # URL pointed at the host's published port is unreachable from inside
+      # the compose network's DNS.
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    command: ["python", "scripts/init_postgres.py"]
+
+  ingest:
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: "no"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+    env_file:
+      # The one-shot that spends money: it needs OPENAI_API_KEY and
+      # OPENAI_EMBEDDING_MODEL. `required: false` so a checkout without a key
+      # still brings up qdrant and postgres and can run the ingest --dry-run
+      # inside the container -- the same "skips itself gracefully when the
+      # resource it needs is not there" contract the live marker follows.
+      - path: .env
+        required: false
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    command: python scripts/ingest_documents.py
+
+  app:
+    # The web layer, as a built image. The multi-stage Dockerfile builds the
+    # React UI, resolves the venv from uv.lock and ships a slim runtime -- see
+    # ADR 0029. workers=1 stays (ADR 0004: the rate limiter, the flaky-tool
+    # counter and the ERP lock are in-process state), and restart:
+    # unless-stopped matches the two stores it depends on.
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    ports:
+      - "8000:8000"
 
 volumes:
   qdrant_storage:

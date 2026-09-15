@@ -61,6 +61,7 @@ class InMemoryPauseStore:
     def __init__(self) -> None:
         self._pending: dict[str, AgentState] = {}
         self._settled: dict[str, AgentState] = {}
+        self._decided_by: dict[str, str | None] = {}
 
     def save(self, state: AgentState) -> None:
         if not _is_paused(state):
@@ -79,15 +80,24 @@ class InMemoryPauseStore:
     def pending(self, trace_id: str) -> AgentState | None:
         return self._pending.get(trace_id)
 
-    def claim(self, trace_id: str, *, approved: bool) -> AgentState | None:
+    def claim(
+        self, trace_id: str, *, approved: bool, decided_by: str | None = None
+    ) -> AgentState | None:
         """Compare-and-set on the pending dict.
 
         The fake's version of the SQL ``UPDATE ... WHERE status='pending'
         RETURNING``: only one caller finds the state still in the dict, and
         every caller after that gets ``None`` -- whatever ``approved`` they
-        brought.
+        brought. ``decided_by`` is kept beside the settled state, mirroring
+        the Postgres store's column, so a test can assert who claimed a pause
+        without a database.
         """
         state = self._pending.pop(trace_id, None)
         if state is not None:
             self._settled[trace_id] = state
+            self._decided_by[trace_id] = decided_by
         return state
+
+    def decided_by(self, trace_id: str) -> str | None:
+        """Who settled this pause, once it has been claimed."""
+        return self._decided_by.get(trace_id)

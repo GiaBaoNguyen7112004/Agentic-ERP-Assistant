@@ -41,9 +41,7 @@ from agentic_erp_assistant.persistence import (
     PostgresAuditLog,
     PostgresPauseStore,
     PostgresTraceStore,
-    StoreConnectionError,
     apply_schema,
-    connect,
 )
 from agentic_erp_assistant.reasoning.planner import Planner
 from agentic_erp_assistant.state.agent_state import AgentState
@@ -77,27 +75,8 @@ EVENTS = (
 
 
 # --------------------------------------------------------------------------
-# The database, once per module; a clean one per test
+# The database (tests/persistence/conftest.py); a clean one per test
 # --------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="module")
-def database():
-    """One connection for the module, skipped entirely without the database.
-
-    The schema is applied rather than assumed: ``IF NOT EXISTS`` makes that a
-    no-op on an initialized store, and it keeps these tests runnable on a
-    fresh container without pretending the init script ran.
-    """
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    with connection.cursor() as cursor:
-        with connection.transaction():
-            apply_schema(cursor)
-    yield connection
-    connection.close()
 
 
 @pytest.fixture
@@ -124,6 +103,7 @@ def finished_state(trace_id: str = "run-1") -> AgentState:
     return AgentState(
         request="How is M2 tracking?",
         actor="bao",
+        project_code="atlas",
         trace_id=trace_id,
         route="answer",
         terminal=True,
@@ -136,6 +116,7 @@ def paused_state(trace_id: str = "run-1") -> AgentState:
     return AgentState(
         request="Record the vendor risk.",
         actor="bao",
+        project_code="atlas",
         trace_id=trace_id,
         route="request_approval",
         tool_name="create_risk",
@@ -174,6 +155,21 @@ def test_a_run_round_trips_into_its_identical_state(store_connection) -> None:
         "SELECT count(*) FROM trace_events WHERE trace_id = 'run-1'"
     ).fetchone()
     assert events[0] == len(EVENTS)
+
+
+def test_a_saved_run_writes_its_project_code_as_its_own_column(
+    store_connection,
+) -> None:
+    """Not only inside the jsonb state -- a screen listing runs by project
+    should not have to parse the state to filter on it."""
+    traces = PostgresTraceStore(store_connection)
+
+    traces.save_run(a_record(finished_state()))
+
+    row = store_connection.execute(
+        "SELECT project_code FROM runs WHERE trace_id = 'run-1'"
+    ).fetchone()
+    assert row[0] == "atlas"
 
 
 def test_a_run_that_never_happened_loads_as_none(store_connection) -> None:
@@ -357,6 +353,18 @@ def test_the_first_claim_wins_the_second_gets_nothing(store_connection) -> None:
     assert row[2] is not None
 
 
+def test_claim_records_who_decided_it(store_connection) -> None:
+    pauses = PostgresPauseStore(store_connection)
+    pauses.save(paused_state())
+
+    pauses.claim("run-1", approved=True, decided_by="priya")
+
+    row = store_connection.execute(
+        "SELECT decided_by FROM pauses WHERE trace_id = 'run-1'"
+    ).fetchone()
+    assert row[0] == "priya"
+
+
 # --------------------------------------------------------------------------
 # The whole story: pause, restart, approve, and settle exactly once
 # --------------------------------------------------------------------------
@@ -370,7 +378,15 @@ class ScriptedModel:
         self.calls = 0
 
     def decide(
-        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+        tool_choice="auto",
     ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
@@ -470,6 +486,7 @@ def test_a_pause_answers_after_a_restart_and_settles_once(
     state = AgentState(
         request="Record the vendor risk.",
         actor="bao",
+        project_code="atlas",
         trace_id="run-1",
         scopes=SCOPES,
     )
@@ -490,10 +507,18 @@ def test_a_pause_answers_after_a_restart_and_settles_once(
     reread = MockErp.load(tmp_path / "project.json")
     assert any(risk.title == "vendor slipped" for risk in reread.risks)
 
-    audit_row = store_connection.execute(
-        "SELECT trace_id, tool_name, approval FROM audit_rows"
-    ).fetchone()
-    assert audit_row == ("run-1", "create_risk", "approved")
+    # Two rows now: the preflight's approval_required row, written when the
+    # turn first paused (ADR 0016), and the execution row written on resume.
+    audit_rows = store_connection.execute(
+        "SELECT trace_id, tool_name, approval, status FROM audit_rows "
+        "ORDER BY id"
+    ).fetchall()
+    assert [row[:2] for row in audit_rows] == [
+        ("run-1", "create_risk"),
+        ("run-1", "create_risk"),
+    ]
+    assert audit_rows[0][2:] == ("not_required", "approval_required")
+    assert audit_rows[1][2:] == ("approved", "ok")
 
     with pytest.raises(ApprovalAlreadySettled):
         restarted.resume("run-1", approved=True)

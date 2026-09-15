@@ -75,7 +75,15 @@ class ScriptedModel:
         self.calls = 0
 
     def decide(
-        self, question, evidence=(), observations=(), memories=(), history=(), *, tools=()
+        self,
+        question,
+        evidence=(),
+        observations=(),
+        memories=(),
+        history=(),
+        *,
+        tools=(),
+        tool_choice="auto",
     ):
         self.calls += 1
         return self.results[min(self.calls - 1, len(self.results) - 1)]
@@ -93,7 +101,7 @@ class FakeComposer:
     def __init__(self, answer: GroundedAnswer) -> None:
         self.answer_value = answer
 
-    def answer(self, question: str, evidence, memories=(), history=()):
+    def answer(self, question: str, evidence, memories=(), history=(), observations=()):
         return self.answer_value
 
 
@@ -165,7 +173,11 @@ def runtime(
 
 def start(request: str = "How is M2 tracking?") -> AgentState:
     return AgentState(
-        request=request, actor="bao", trace_id="run-1", scopes=SCOPES
+        request=request,
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
 
 
@@ -179,7 +191,7 @@ def kinds(state: AgentState) -> list[str]:
 
 
 def test_a_document_question_is_answered_with_its_sources() -> None:
-    engine = runtime(called("search_project_documents", query="M2 cutover"))
+    engine = runtime(called("search_project_documents", queries=["M2 cutover"]))
 
     final = engine.run(start())
 
@@ -192,7 +204,7 @@ def test_a_document_question_is_answered_with_its_sources() -> None:
 
 def test_a_document_question_with_no_passages_refuses_instead_of_guessing() -> None:
     engine = runtime(
-        called("search_project_documents", query="M2 cutover"),
+        called("search_project_documents", queries=["M2 cutover"]),
         retriever=FakeRetriever(),
     )
 
@@ -480,7 +492,7 @@ def test_a_route_with_no_node_is_a_bug_and_says_so() -> None:
 
 def test_every_run_ends_terminal_or_paused_and_never_in_between() -> None:
     cases = [
-        (runtime(called("search_project_documents", query="M2")), start()),
+        (runtime(called("search_project_documents", queries=["M2"])), start()),
         (runtime(create_risk_call()), start("Record a risk.")),
         (
             runtime(called("refuse", reason="Out of scope.")),
@@ -494,7 +506,7 @@ def test_every_run_ends_terminal_or_paused_and_never_in_between() -> None:
 
 
 def test_a_finished_turn_carries_a_response_or_a_failure() -> None:
-    engine = runtime(called("search_project_documents", query="M2"))
+    engine = runtime(called("search_project_documents", queries=["M2"]))
 
     final = engine.run(start())
 
@@ -502,7 +514,7 @@ def test_a_finished_turn_carries_a_response_or_a_failure() -> None:
 
 
 def test_the_trace_records_entering_and_leaving_every_node() -> None:
-    engine = runtime(called("search_project_documents", query="M2"))
+    engine = runtime(called("search_project_documents", queries=["M2"]))
 
     final = engine.run(start())
 

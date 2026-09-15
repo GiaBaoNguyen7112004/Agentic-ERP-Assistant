@@ -39,21 +39,33 @@ be able to defend every trade-off verbally.
 
 ```bash
 uv sync                      # install/refresh the environment
-uv run agentic-erp-assistant # run the CLI entry point
+uv run agentic-erp-assistant serve # start the web layer (FastAPI + the built React app)
 uv run pytest                # tests (once pytest is a dev dependency)
 uv add <pkg>                 # add a runtime dependency
 uv add --dev <pkg>           # add a dev dependency
+
+docker compose up --build                        # the whole system from a fresh checkout (ADR 0029)
 
 docker compose up -d qdrant                          # the vector store
 uv run python scripts/ingest_documents.py --dry-run  # what would be embedded
 uv run python scripts/ingest_documents.py            # embed and store, for real
 uv run python scripts/run_retrieval_evaluation.py    # write the evidence report
+uv run python scripts/run_routing_comparison.py      # three planner contracts vs six cases (ADR 0020), plus a declaration row per case (ADR 0021)
 uv run python scripts/build_pdf_fixtures.py          # re-render the PDF fixture
 
 docker compose up -d postgres                        # the evidence store
-uv run python scripts/init_postgres.py               # create the nine tables
-uv run pytest -m postgres                            # the SQL adapters, for real
+uv run python scripts/init_postgres.py               # create the nine tables (the dev database)
+uv run python scripts/init_postgres.py --test        # a second, _test database -- ADR 0018
+uv run pytest -m postgres                            # the SQL adapters, against the _test one only
+uv run pytest -m live                                # a real OpenAI call; skipped without OPENAI_API_KEY
 uv run python scripts/demo_memory_session.py         # two turns, the window, and what was kept
+uv run python scripts/demo_pause_across_restart.py   # a pause survives a restart, for real
+
+uv run python scripts/run_turn.py --actor priya "Why is milestone M2 late?"   # one real turn
+uv run python scripts/run_turn.py --actor priya --approve <trace_id>          # resume a pause
+
+npm --prefix ui install && npm --prefix ui run build # the React app -> web/static/
+uv run agentic-erp-assistant serve                   # http://127.0.0.1:8000
 ```
 
 Never edit `[project.dependencies]` by hand — use `uv add` so the lockfile stays in sync.
@@ -81,11 +93,18 @@ src/agentic_erp_assistant/
   llm/adapters/  vendor adapters (openai_chat.py); the only place a provider is named
   rag/         ingestion, chunking, index, retrieval, citation objects
   tools/       MCP-style tool boundary: typed schemas, router, approval gating
-  erp/         optional ERP provider plugin over mock project data
+  erp/         mock ERP provider over project data, project-bound (ProjectErp, ADR 0017)
   guardrails/  input/output checks, refusal + escalation paths
   trace/       structured trace records, run store, export for evidence
+  persistence/ the Postgres adapters behind trace/memory's ports, schema, and
+               EvidenceQueries -- the plain-SQL read model web/ uses
   eval/        offline eval harness, datasets, scored runs
-  web/         HTTP/SSE surface + the browser chat UI (accessible, responsive)
+  composition/ where the environment becomes typed config (settings.py), the
+               process-wide clients get built once (resources.py), and one
+               turn's ports get assembled per request (turn.py) -- the one
+               place engine/llm/tools/rag/memory's ports meet a real adapter
+  web/         FastAPI + hand-written SSE over the engine, and the built React
+               app (ui/) it serves -- ADR 0015
 ```
 
 Design rules:
@@ -139,16 +158,18 @@ uv run pytest -q                     # once tests exist
 Add `uv run mypy src` / `uv run ruff check src` to this list as soon as those tools are
 installed, and update this file when they are.
 
-Frontend — the exact command depends on the web stack (see Open decisions); use whichever
-applies and record the real command here once the stack lands:
+Frontend — React + TypeScript + Vite in `ui/` (see Open decisions):
 
 ```bash
-npm run build          # or: npx tsc --noEmit   (bundled/TypeScript UI)
+npm --prefix ui run typecheck && npm --prefix ui test && npm --prefix ui run build
+uv run agentic-erp-assistant serve        # then open http://127.0.0.1:8000 and use it
 ```
 
-If the UI stays dependency-free browser JS with no build step, the check is: start the
-server, load the chat page, and confirm the browser console is free of errors and a
-message round-trips. A UI that was never loaded has not been verified.
+The build writes to `src/agentic_erp_assistant/web/static/` (git-ignored) and the last
+step is not optional: load the page, send a message as an actor with document access,
+watch it stream and end with clickable citations, and confirm the browser console is
+free of errors. A UI that was never loaded in a browser has not been verified —
+`npm run build` succeeding proves the code compiles, not that it works.
 
 ### 2. Commit the step
 
@@ -180,9 +201,30 @@ Rules:
 
 Not yet chosen; ask before assuming, and update this file once settled.
 
-- Web layer: no HTTP framework or JS tooling is present yet. Default suggestion is a
-  Python framework serving SSE plus a dependency-free browser UI, matching the
-  Python-only repo — confirm before scaffolding.
+- ~~Web layer~~ — settled: FastAPI + uvicorn, one worker (the rate limiter, the
+  flaky-tool counter, and the ERP lock are in-process state, ADR 0004), hand-written
+  SSE (`web/protocol.py`'s nine event types, `web/stream.py`'s thread → asyncio
+  bridge) over the engine, which stays synchronous — a turn runs on a worker thread
+  via `loop.run_in_executor`, never on the event loop. React 18+ TypeScript + Vite in
+  `ui/`, building into `web/static/` (git-ignored); `ui/src/turnReducer.ts` is the
+  pure, tested core every rendered turn goes through, and
+  `tests/web/test_protocol_drift.py` fails the Python suite the day
+  `web/protocol.py` and `ui/src/protocol.ts` disagree. `AgentState.project_code`
+  is required (`STATE_VERSION = 2`, ADR 0017) and a write is put to a human only
+  after the gateway's own checks already passed (ADR 0016) — see ADR 0015 for the
+  web layer itself. `agentic-erp-assistant serve [--host] [--port] [--reload]`
+  starts it; `scripts/run_turn.py --actor <name> [--session ...] "<question>"` (or
+  `--approve`/`--deny <trace_id>`) proves the composition root from the terminal,
+  no browser required. `data/users.json` is the dev-only actor directory (no
+  login); `OPENAI_CONTEXT_WINDOW` is required in `.env` alongside `OPENAI_MODEL`;
+  the `DEV_*` toggles (`DEV_TOOL_RATE_LIMIT`, `DEV_FLAKY_STATUS`, `DEV_MAX_STEPS`,
+  `DEV_HISTORY_TURN_LIMIT`) exist only so a browser session can reach paths a
+  scripted test reaches with a fake clock instead — see `.env.example` and
+  `composition/settings.py`. `DEV_TRACE_MODEL_IO` is a fifth, differently-shaped
+  toggle (`docs/trace-inspector-plan.md`): it streams a turn's model call
+  prompts and replies to the trace panel live, through
+  `llm/inspection.py::ModelCallInspector` — never persisted, off by default,
+  and unrelated to any budget a person could otherwise exhaust by hand.
 - ~~LLM provider~~ — settled: OpenAI Chat Completions, called with plain `httpx` in
   `llm/adapters/openai_chat.py` (no `openai` SDK anywhere). The model itself is **not** chosen by the
   repo: `OPENAI_MODEL` comes from `.env` with no default, and whatever model is set there
@@ -196,7 +238,25 @@ Not yet chosen; ask before assuming, and update this file once settled.
   (ADR 0009). `OPENAI_EMBEDDING_MODEL` comes from `.env` with no default.
   Still open behind that: `MIN_COSINE_SIMILARITY` in `rag/retriever.py` is
   provisional until the evidence run measures the gap it should sit in, and the
-  index router and graph slice (reference steps 13 and 14) are deferred.
+  index router and graph slice (reference steps 13 and 14) are deferred. Since
+  ADR 0026, the planner's own routing prompt (and only that prompt) carries a
+  `DocumentCatalogue` -- every document this turn's actor is authorized to
+  search, filtered from the manifest by the same `rag/access.py::
+  is_authorized` check retrieval itself enforces -- so a refusal or a search
+  choice is made against what actually exists and what this actor may open,
+  never a guess from a tool description alone. A document outside the
+  catalogue is never named to the model; the wording only tells it to say a
+  named-but-absent document is inaccessible, never that it does not exist.
+  Since ADR 0027, `search_project_documents` takes `queries: list[str]` (one
+  to three, `SEARCH_QUERY_LIMIT` in `llm/tools.py`) instead of a single
+  `query`, and `retrieve_and_answer` runs every one of them in the same node
+  — `EVIDENCE_LIMIT` stays a per-query budget, not a total — unions the hits
+  in query order and dedupes by citation tag (`GraphNodes._dedupe_by_tag`)
+  before composing once. `ReplyContract.document_query` stays a single
+  string: it is only the redirect fallback for a model that never searched
+  at all (ADR 0021/0025), and one query is the honest size of that
+  fallback. A state built before ADR 0027 still runs — `GraphNodes._queries`
+  falls back to the legacy singular `query` key, then to the request itself.
 - ~~Memory topology~~ — settled: Postgres holds the records (`memories`,
   `intents`, `memory_audit`), a second Qdrant collection indexes them for
   semantic recall, and graph memory is rejected because the required queries are
@@ -209,10 +269,62 @@ Not yet chosen; ask before assuming, and update this file once settled.
   structurally — and turns evicted from the window are folded into the session's
   `session_summary` through the compaction allow-list, with an audit row.
   `QDRANT_MEMORY_COLLECTION` and `MemoryService.required_scope` are
-  the two configuration points.
+  the two configuration points. Since the 2026-09 memory refactor (ADR 0022)
+  the model is told who it is talking to via a principal block in the system
+  role, history is the authority on the conversation itself, and memory is
+  only what the user established — the pure policy refuses absence claims,
+  self-descriptions, restated replies and unstated preferences under the
+  `not_established` rejection reason (ADR 0023), and a turn that refused,
+  clarified or failed is never asked to propose at all. A `preference` is
+  additionally replaced by *topic*, not only by the exact `(kind, key)` match
+  every other kind uses: the proposer's `key` is not enforced stable across
+  turns, so `_resolve_conflict` supersedes a live preference whose statement
+  shares enough content words with a new one (`TOPIC_OVERLAP_RATIO`,
+  preference-only) and keeps the record under the key already stored rather
+  than the one just proposed (ADR 0024). Since ADR 0028, a promotion
+  *extends* the session summary rather than replacing it: code carries the
+  previous statement forward by parsing it
+  (`summary.py::parse_summary`, the inverse of the renderer), the goal
+  resolves as proposal > carried > structural, the per-section cap acts as a
+  sliding window, and the model is asked only for the delta.
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
-  are driven by the caller — and the `think -> answer` route has no structural
-  grounding check, so a planner answering from the history block remains
-  model-dependent (ADR 0014's stated residual risk).
-- Trace persistence (files vs. SQLite) and eval report format.
+  are driven by the caller. The `think -> answer` route is held to the reply
+  contract the planner declared before the graph ran (ADR 0021): a missing
+  need is redirected once, and a reply still short after that is delivered
+  marked `failure=incomplete_reply`, never silently. Since ADR 0025, `think ->
+  refuse` is held to the same contract -- a refusal with a declared need still
+  unmet is redirected exactly once, the same as an answer, except the
+  refusal's own message is never kept as a fallback draft, so a redirected
+  search that still finds nothing ends in an ordinary, now-tested
+  `insufficient_evidence` refusal rather than delivering the model's untested
+  claim. A turn with no declaration (`contract=None` — a replay, a hand-built
+  state, a declarer that raised) is unchecked, and its trace says so plainly
+  rather than looking indistinguishable from one that passed.
+- ~~Trace persistence~~ — settled: Postgres (`persistence/schema.py`, nine tables,
+  `docker compose up -d postgres && uv run python scripts/init_postgres.py`).
+  `web/`'s read model (`persistence/postgres_queries.py::EvidenceQueries`) is
+  plain SQL over those tables, deliberately not new methods on the write-side
+  ports — a listing query is a screen's need, and widening a port to serve it
+  would give every fake standing in for it in an engine test a method the engine
+  never calls.
+- ~~Eval report format~~ — settled: a JSON report under `evidence/`, one
+  subdirectory per harness. `evidence/rag/retrieval-report.json` (hit rate,
+  latency, the similarity gap) and `evidence/routing/routing-comparison-
+  <date>.json` (ADR 0020: match rate, hallucination count, cost, and every
+  row, per planner contract — joined by ADR 0021's declaration match rate,
+  one row per case×repeat rather than per prompt, since the declaration
+  call does not vary by which routing contract is under comparison) are
+  both produced by a script under `scripts/` that never hand-writes a
+  number into the file. The planner contract itself is whichever ADR 0020
+  names — currently the unedited production `PLANNER_CONTRACT`; no
+  candidate in that comparison beat it.
+- Test database isolation (ADR 0018) and the `live` marker (ADR-adjacent,
+  `tests/live/`): settled as of the gap-plan.md walkthrough.
+  `POSTGRES_TEST_URL` points `uv run pytest -m postgres` at a `_test`-suffixed
+  database, refused otherwise before a connection opens. `uv run pytest -m
+  live` makes a real OpenAI call and is skipped without `OPENAI_API_KEY` --
+  like `postgres`, its tests also run as part of a bare `uv run pytest -q`
+  whenever the resource they need happens to be present (a real key, a
+  reachable container); neither marker excludes itself from the default run,
+  it just skips itself gracefully when the thing it needs is not there.

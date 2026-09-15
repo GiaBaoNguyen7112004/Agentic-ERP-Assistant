@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS runs (
     state jsonb NOT NULL
 );
 
+-- Added after the table first shipped, alongside AgentState.project_code
+-- (STATE_VERSION 2). Idempotent, like the pauses.decided_by column above.
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS project_code text;
+
 CREATE TABLE IF NOT EXISTS trace_events (
     trace_id text NOT NULL REFERENCES runs (trace_id) ON DELETE CASCADE,
     seq integer NOT NULL,
@@ -182,6 +186,11 @@ CREATE TABLE IF NOT EXISTS pauses (
 CREATE UNIQUE INDEX IF NOT EXISTS pauses_one_pending_per_run
     ON pauses (trace_id) WHERE status = 'pending';
 
+-- Added after the table first shipped: who claimed the pause, beside what
+-- they decided. Idempotent, like the constraint re-apply above, so a
+-- database initialised before this column gains it on the next init run.
+ALTER TABLE pauses ADD COLUMN IF NOT EXISTS decided_by text;
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id text PRIMARY KEY,
     kind text NOT NULL
@@ -248,6 +257,17 @@ CREATE INDEX IF NOT EXISTS memory_audit_by_run ON memory_audit (trace_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_session ON memory_audit (session_id);
 CREATE INDEX IF NOT EXISTS memory_audit_by_decision ON memory_audit (decision);
 
+-- RejectionReason grew on a database that already existed (not_established,
+-- 2026-09, the memory refactor). Same reasoning as trace_events_kind_check
+-- above: the inline CHECK names the constraint implicitly
+-- (memory_audit_rejection_check), a guarded table creation never touches it,
+-- and memory consolidation logs an audit-insert failure rather than raising --
+-- exactly the combination that would let the old CHECK keep refusing the new
+-- reason forever while every turn looked fine.
+ALTER TABLE memory_audit DROP CONSTRAINT IF EXISTS memory_audit_rejection_check;
+ALTER TABLE memory_audit ADD CONSTRAINT memory_audit_rejection_check
+    CHECK (rejection IS NULL OR rejection IN ({_sql_list(REJECTION_REASONS)}));
+
 CREATE TABLE IF NOT EXISTS session_turns (
     trace_id text PRIMARY KEY,
     session_id text NOT NULL,
@@ -255,8 +275,10 @@ CREATE TABLE IF NOT EXISTS session_turns (
     request text NOT NULL,
     response text,
     route text
+        CONSTRAINT session_turns_route_check
         CHECK (route IS NULL OR route IN ({_sql_list(DECISION_ROUTES)})),
     failure text NOT NULL
+        CONSTRAINT session_turns_failure_check
         CHECK (failure IN ({_sql_list(FAILURE_MODES)})),
     tool_name text,
     approval text NOT NULL
@@ -268,6 +290,23 @@ CREATE TABLE IF NOT EXISTS session_turns (
 
 CREATE INDEX IF NOT EXISTS session_turns_by_session
     ON session_turns (session_id, actor, started_at);
+
+-- DecisionRoute and FailureMode are closed sets that have grown before
+-- (FailureMode gained planner_loop, ADR 0019) and will again. The same
+-- reasoning as trace_events_kind_check above applies here: a guarded table
+-- creation never touches an existing constraint, so a database initialised
+-- before a growth would silently keep rejecting the new member forever --
+-- and this is the table RunOrchestrator writes to on every turn, logging
+-- and eating the failure rather than surfacing it (never-fail, by design),
+-- which is exactly what would let this kind of drift go unnoticed. Naming
+-- both constraints and re-applying them here on every init run is what
+-- makes the growth a schema update instead of a silent split.
+ALTER TABLE session_turns DROP CONSTRAINT IF EXISTS session_turns_route_check;
+ALTER TABLE session_turns ADD CONSTRAINT session_turns_route_check
+    CHECK (route IS NULL OR route IN ({_sql_list(DECISION_ROUTES)}));
+ALTER TABLE session_turns DROP CONSTRAINT IF EXISTS session_turns_failure_check;
+ALTER TABLE session_turns ADD CONSTRAINT session_turns_failure_check
+    CHECK (failure IN ({_sql_list(FAILURE_MODES)}));
 """
 
 SCHEMA_STATEMENTS: tuple[str, ...] = tuple(

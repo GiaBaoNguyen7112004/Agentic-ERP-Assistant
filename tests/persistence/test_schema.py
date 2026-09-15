@@ -14,9 +14,7 @@ import pytest
 
 from agentic_erp_assistant.persistence import (
     SCHEMA_STATEMENTS,
-    StoreConnectionError,
     apply_schema,
-    connect,
     tables_in,
 )
 
@@ -36,16 +34,8 @@ def test_the_schema_declares_nine_tables() -> None:
 # --------------------------------------------------------------------------
 # The constraint re-application survives a database that already exists
 # --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def database():
-    try:
-        connection = connect()
-    except StoreConnectionError as error:
-        pytest.skip(f"no Postgres to test against: {error}")
-    yield connection
-    connection.close()
+# `database` (module-scoped, already applies the schema once) comes from
+# tests/persistence/conftest.py.
 
 
 @pytest.mark.postgres
@@ -87,3 +77,117 @@ def test_apply_schema_twice_still_accepts_every_declared_event_kind(database) ->
         ("run-schema-test",),
     ).fetchall()
     assert [row[0] for row in rows] == ["history_recalled", "history_promoted"]
+
+
+@pytest.mark.postgres
+def test_apply_schema_twice_still_accepts_every_declared_failure_mode(database) -> None:
+    """The same migration hazard as the kind constraint above, for
+    ``session_turns.failure`` -- named and re-applied for the same reason:
+    FailureMode grew (``planner_loop``, ADR 0019) after this column shipped,
+    and a database initialised before that growth must not be left with a
+    CHECK that still rejects it."""
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    when = datetime(2026, 9, 12, tzinfo=UTC)
+    database.execute("TRUNCATE session_turns CASCADE")
+    database.execute(
+        "INSERT INTO session_turns (trace_id, session_id, actor, request, "
+        "response, route, failure, tool_name, approval, started_at, "
+        "finished_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            "run-schema-test-failure",
+            "session-schema-test",
+            "bao",
+            "hi",
+            None,
+            "think",
+            "none",
+            None,
+            "not_required",
+            when,
+            when,
+        ),
+    )
+
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    # The constraint was just re-applied; a failure mode added since this
+    # column shipped must still be insertable, and the row inserted before
+    # re-applying it must still be there.
+    database.execute(
+        "INSERT INTO session_turns (trace_id, session_id, actor, request, "
+        "response, route, failure, tool_name, approval, started_at, "
+        "finished_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            "run-schema-test-planner-loop",
+            "session-schema-test",
+            "bao",
+            "hi again",
+            None,
+            "fail",
+            "planner_loop",
+            "list_risks",
+            "not_required",
+            when,
+            when,
+        ),
+    )
+    rows = database.execute(
+        "SELECT failure FROM session_turns WHERE session_id = %s ORDER BY trace_id",
+        ("session-schema-test",),
+    ).fetchall()
+    assert {row[0] for row in rows} == {"none", "planner_loop"}
+
+
+@pytest.mark.postgres
+def test_apply_schema_twice_still_accepts_every_declared_rejection(database) -> None:
+    """The same migration hazard as the two constraints above, for
+    ``memory_audit.rejection``: it grew (``not_established``, the memory
+    refactor) on a database that already existed, and a database initialised
+    before that growth must not be left with a CHECK that still rejects it --
+    consolidation logs an audit-insert failure rather than raising, which is
+    exactly what would let the refusal go unnoticed."""
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    when = datetime(2026, 9, 14, tzinfo=UTC)
+    database.execute("TRUNCATE memory_audit CASCADE")
+    database.execute(
+        "INSERT INTO memory_audit (occurred_at, trace_id, session_id, "
+        "project_code, actor, memory_id, kind, decision, rejection, reason, "
+        "statement_summary) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            when, "run-schema-test-rejection", "session-schema-test", "atlas",
+            "bao", "mem-schema-test", "fact", "reject", "not_established",
+            "the turn established nothing", "absence claim",
+        ),
+    )
+
+    with database.cursor() as cursor:
+        with database.transaction():
+            apply_schema(cursor)
+
+    # The constraint was just re-applied; a rejection added since this column
+    # shipped must still be insertable, and the row inserted before
+    # re-applying it must still be there.
+    database.execute(
+        "INSERT INTO memory_audit (occurred_at, trace_id, session_id, "
+        "project_code, actor, memory_id, kind, decision, rejection, reason, "
+        "statement_summary) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            when, "run-schema-test-rejection", "session-schema-test", "atlas",
+            "bao", "mem-schema-test-2", "fact", "reject", "not_established",
+            "the turn established nothing again", "another absence claim",
+        ),
+    )
+    rows = database.execute(
+        "SELECT memory_id FROM memory_audit WHERE session_id = %s "
+        "ORDER BY memory_id",
+        ("session-schema-test",),
+    ).fetchall()
+    assert [row[0] for row in rows] == ["mem-schema-test", "mem-schema-test-2"]

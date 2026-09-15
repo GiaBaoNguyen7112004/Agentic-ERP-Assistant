@@ -8,6 +8,7 @@ source nobody retrieved never reaches a user.
 
 from datetime import UTC, datetime
 
+import pydantic
 import pytest
 
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
@@ -21,6 +22,7 @@ from agentic_erp_assistant.engine.nodes import (
 from agentic_erp_assistant.state.agent_state import AgentState
 from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
+from agentic_erp_assistant.state.reply_contract import ReplyContract
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 from agentic_erp_assistant.state.tool_request import ToolRequest
 
@@ -38,14 +40,49 @@ class FakeRetriever:
         return self.snippets[:limit]
 
 
+class QueryAwareRetriever:
+    """Unlike FakeRetriever, returns different hits for different queries --
+    what proving ADR 0027's union and dedup actually needs."""
+
+    def __init__(self, by_query: dict[str, tuple[EvidenceSnippet, ...]]) -> None:
+        self.by_query = by_query
+        self.calls: list[tuple[str, int]] = []
+
+    def search(self, query: str, *, limit: int):
+        self.calls.append((query, limit))
+        return self.by_query.get(query, ())[:limit]
+
+
+class RaisingRetriever:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def search(self, query: str, *, limit: int):
+        raise self.error
+
+
 class FakeGateway:
-    def __init__(self, *outcomes: ToolOutcome) -> None:
+    def __init__(
+        self, *outcomes: ToolOutcome, preflight_outcome: ToolOutcome | None = None
+    ) -> None:
         self.outcomes = list(outcomes)
         self.requests: list[ToolRequest] = []
+        self.preflight_requests: list[ToolRequest] = []
+        self.preflight_outcome = preflight_outcome
 
     def execute(self, request: ToolRequest) -> ToolOutcome:
         self.requests.append(request)
         return self.outcomes[min(len(self.requests) - 1, len(self.outcomes) - 1)]
+
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        self.preflight_requests.append(request)
+        if self.preflight_outcome is not None:
+            return self.preflight_outcome
+        return ToolOutcome(
+            tool_name=request.tool_name,
+            status="approval_required",
+            error=f"{request.tool_name} needs a human",
+        )
 
 
 class FakePlanner:
@@ -67,10 +104,12 @@ class FakeComposer:
         self.raises = raises
         self.calls: list[tuple] = []
         self.history_calls: list[tuple] = []
+        self.observation_calls: list[tuple] = []
 
-    def answer(self, question: str, evidence, memories=(), history=()):
+    def answer(self, question: str, evidence, memories=(), history=(), observations=()):
         self.calls.append((question, tuple(evidence)))
         self.history_calls.append(tuple(history))
+        self.observation_calls.append(tuple(observations))
         if self.raises is not None:
             raise self.raises
         return self.answer_value
@@ -119,7 +158,11 @@ def nodes(**overrides) -> GraphNodes:
 
 def state(**changes) -> AgentState:
     base = AgentState(
-        request="How is M2 tracking?", actor="bao", trace_id="run-1", scopes=SCOPES
+        request="How is M2 tracking?",
+        actor="bao",
+        project_code="atlas",
+        trace_id="run-1",
+        scopes=SCOPES,
     )
     return base.evolve(**changes) if changes else base
 
@@ -133,14 +176,14 @@ def kinds(result: AgentState) -> list[str]:
 # --------------------------------------------------------------------------
 
 
-def test_a_retrieval_decision_carries_its_query_onto_the_state() -> None:
+def test_a_retrieval_decision_carries_its_queries_onto_the_state() -> None:
     """Chosen like a tool, recorded like a tool, executed by the retriever."""
     graph = nodes(
         planner=FakePlanner(
             ReasoningDecision(
                 route="retrieve_project_documents",
                 confidence=0.5,
-                search_query="M2 delivery commitments",
+                search_queries=("M2 delivery commitments",),
             )
         )
     )
@@ -149,7 +192,26 @@ def test_a_retrieval_decision_carries_its_query_onto_the_state() -> None:
 
     assert result.route == "retrieve_project_documents"
     assert result.tool_name == RETRIEVAL_TOOL
-    assert result.tool_arguments == {"query": "M2 delivery commitments"}
+    assert result.tool_arguments == {"queries": ["M2 delivery commitments"]}
+
+
+def test_a_retrieval_decision_with_several_queries_carries_all_of_them() -> None:
+    """ADR 0027: one query per document, in order, all reaching the state."""
+    graph = nodes(
+        planner=FakePlanner(
+            ReasoningDecision(
+                route="retrieve_project_documents",
+                confidence=0.5,
+                search_queries=("risk register severity", "sprint 13 schedule slip"),
+            )
+        )
+    )
+
+    result = graph.think(state())
+
+    assert result.tool_arguments == {
+        "queries": ["risk register severity", "sprint 13 schedule slip"]
+    }
 
 
 def test_a_write_decision_pauses_the_turn_and_says_so_in_the_trace() -> None:
@@ -172,6 +234,46 @@ def test_a_write_decision_pauses_the_turn_and_says_so_in_the_trace() -> None:
     assert result.tool_mutating
     assert "approval_requested" in kinds(result)
     assert not result.terminal
+    assert result.observations[-1].status == "approval_required"
+
+
+def test_a_write_the_preflight_refuses_never_pauses() -> None:
+    """ADR 0016: a human is asked only after the checks that would refuse the
+    call anyway have already passed. A missing scope is exactly such a check,
+    so the turn ends here instead of pausing on a call the gateway will
+    refuse whatever the human says."""
+    gateway = FakeGateway(
+        preflight_outcome=ToolOutcome(
+            tool_name="create_risk", status="denied", error="missing scope"
+        )
+    )
+    graph = nodes(
+        tools=gateway,
+        planner=FakePlanner(
+            ReasoningDecision(
+                route="request_approval",
+                confidence=0.5,
+                required_tool="create_risk",
+                tool_arguments={"project_id": "atlas", "title": "x", "severity": "low"},
+                mutating=True,
+                approval_required=True,
+            )
+        ),
+    )
+
+    result = graph.think(state())
+
+    assert (result.route, result.failure) == ("fail", "tool_failure")
+    assert result.terminal
+    assert result.approval != "pending"
+    assert result.observations[-1].status == "denied"
+    assert "create_risk -> denied" in (result.error_detail or "")
+    assert any(
+        event.kind == "failed" and "refused before approval" in event.detail
+        for event in result.events
+    )
+    assert gateway.requests == [], "execute() must never be reached"
+    assert len(gateway.preflight_requests) == 1
 
 
 def test_a_read_decision_goes_straight_to_execution() -> None:
@@ -270,6 +372,37 @@ def test_a_document_answer_carries_the_sources_it_rests_on() -> None:
     assert "evidence_retrieved" in kinds(result)
 
 
+def test_the_composer_is_shown_this_turns_own_observations() -> None:
+    """ADR 0021: a compound question redirected to retrieval after a tool
+    call already succeeded needs the composer to see what that call
+    returned, or the field it established is silently dropped."""
+    composer = FakeComposer(grounded("m2-status.md"))
+    graph = nodes(composer=composer)
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    graph.retrieve_and_answer(
+        state(route="retrieve_project_documents", observations=(field,))
+    )
+
+    assert composer.calls[0][0] == "How is M2 tracking?"
+    assert composer.observation_calls[0] == (field,)
+
+
+def test_sources_merge_citations_and_observed_ids_citations_first() -> None:
+    """Deduped, citations first -- the reply names what it quoted before
+    what it merely read off a live field."""
+    graph = nodes(composer=FakeComposer(grounded("m2-status.md")))
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    result = graph.retrieve_and_answer(
+        state(route="retrieve_project_documents", observations=(field,))
+    )
+
+    assert result.response.endswith(
+        f"{SOURCES_PREFIX}[m2-status.md#p.2], milestone-m2"
+    )
+
+
 def test_the_composer_is_shown_the_history_on_the_state() -> None:
     composer = FakeComposer(grounded("m2-status.md"))
     graph = nodes(composer=composer)
@@ -292,6 +425,8 @@ def test_the_composer_is_shown_the_history_on_the_state() -> None:
 
 
 def test_the_planner_query_is_what_gets_searched() -> None:
+    """A state built before ADR 0027 (or hand-built with the legacy singular
+    key) still runs, as one query."""
     retriever = FakeRetriever(snippet())
     graph = nodes(retriever=retriever)
 
@@ -304,6 +439,88 @@ def test_the_planner_query_is_what_gets_searched() -> None:
     )
 
     assert retriever.calls == [("M2 delivery commitments", graph.evidence_limit)]
+
+
+def test_every_planner_query_is_searched_in_order() -> None:
+    """ADR 0027: one query per document, each actually searched -- not just
+    the first or a blend of all of them."""
+    retriever = QueryAwareRetriever(
+        {
+            "risk register severity": (snippet("risk-register"),),
+            "sprint 13 schedule slip": (snippet("sprint-13-report"),),
+        }
+    )
+    graph = nodes(retriever=retriever)
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            tool_name=RETRIEVAL_TOOL,
+            tool_arguments={
+                "queries": ["risk register severity", "sprint 13 schedule slip"]
+            },
+        )
+    )
+
+    assert [call[0] for call in retriever.calls] == [
+        "risk register severity",
+        "sprint 13 schedule slip",
+    ]
+    assert {snip.source_id for snip in result.evidence} == {
+        "risk-register",
+        "sprint-13-report",
+    }
+
+
+def test_a_passage_two_queries_both_match_is_shown_to_the_composer_once() -> None:
+    """Union, deduped by citation tag -- first occurrence wins, so the
+    passage keeps the rank its earlier query gave it."""
+    shared = snippet("risk-register")
+    retriever = QueryAwareRetriever(
+        {
+            "risk severity": (shared, snippet("sprint-13-report")),
+            "schedule slip": (snippet("sprint-13-report"), shared),
+        }
+    )
+    composer = FakeComposer(grounded("risk-register", "sprint-13-report"))
+    graph = nodes(retriever=retriever, composer=composer)
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            tool_name=RETRIEVAL_TOOL,
+            tool_arguments={"queries": ["risk severity", "schedule slip"]},
+        )
+    )
+
+    # Two queries, three raw hits each turned up, only two distinct tags.
+    assert len(result.evidence) == 2
+    assert composer.calls[0][1] == result.evidence
+    assert any(
+        event.kind == "evidence_retrieved"
+        and "2+2 passage(s) for 2 queries" in event.detail
+        for event in result.events
+    )
+
+
+def test_the_evidence_retrieved_event_names_every_query() -> None:
+    retriever = QueryAwareRetriever(
+        {"risk severity": (snippet("risk-register"),), "schedule slip": ()}
+    )
+    graph = nodes(retriever=retriever)
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            tool_name=RETRIEVAL_TOOL,
+            tool_arguments={"queries": ["risk severity", "schedule slip"]},
+        )
+    )
+
+    (event,) = [e for e in result.events if e.kind == "evidence_retrieved"]
+    assert "1+0 passage(s) for 2 queries" in event.detail
+    assert "'risk severity'" in event.detail
+    assert "'schedule slip'" in event.detail
 
 
 def test_a_state_with_no_query_falls_back_to_the_request() -> None:
@@ -324,6 +541,171 @@ def test_nothing_retrieved_is_a_refusal_and_not_a_guess() -> None:
     assert (result.route, result.failure) == ("refuse", "insufficient_evidence")
     assert result.response == NO_EVIDENCE_REPLY
     assert result.terminal
+
+
+def test_a_redirected_search_finding_nothing_delivers_the_withheld_draft() -> None:
+    """ADR 0021: the check's own redirect sent this search out and it found
+    nothing -- the planner's withheld reply is delivered anyway, marked,
+    never a bare refusal of a question the ERP already half-answered."""
+    graph = nodes(retriever=FakeRetriever())
+    field = outcome(tool_name="get_project_status", source_ids=("milestone-m2",))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            observations=(field,),
+            draft="Two days late.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("Two days late.")
+    assert "milestone-m2" in result.response
+    assert "contract needs a document passage" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced"
+        and "unmet after redirect: document_passage" in event.detail
+        for event in result.events
+    )
+
+
+def _schema_violation() -> Exception:
+    """What the gateway raises when the composer answered from memory or
+    history rather than the passages: grounded, and citing nothing."""
+    try:
+        GroundedAnswer.model_validate(
+            {"answer": "It meets every second Thursday.", "grounded": True, "confidence": 0.8}
+        )
+    except pydantic.ValidationError as error:
+        return error
+    raise AssertionError("expected a schema violation")  # pragma: no cover
+
+
+def test_a_redirected_search_whose_reply_breaks_the_schema_delivers_the_draft() -> None:
+    """The gap sess-25f74ac93cd6 fell through (2026-09-15): the planner
+    answered from a recalled memory, the check withheld it and searched, the
+    search found passages that never state the fact, and the composer --
+    answering from memory again -- came back grounded with no citation. The
+    gateway raises on that, and the turn used to end as provider_failure:
+    strictly worse than it would have been without the check, which is the
+    one thing ADR 0021 promised a redirect would never be."""
+    graph = nodes(composer=FakeComposer(raises=_schema_violation()))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("It meets every second Thursday.")
+    assert result.evidence == (snippet(),)
+    assert "did not ground a reply" in (result.error_detail or "")
+    assert "ValidationError" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced"
+        and "unmet after redirect: document_passage" in event.detail
+        for event in result.events
+    )
+
+
+def test_a_redirected_search_the_composer_refuses_delivers_the_draft() -> None:
+    """Same landing when the composer plays by the rules and refuses: the
+    passages the redirect found do not support the reply, so the withheld
+    draft is delivered marked incomplete rather than the question refused."""
+    graph = nodes(
+        composer=FakeComposer(
+            GroundedAnswer(
+                answer="",
+                grounded=False,
+                confidence=0.2,
+                refusal_reason="The minutes do not state a weekday.",
+            )
+        )
+    )
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("It meets every second Thursday.")
+    assert "the composer refused" in (result.error_detail or "")
+
+
+def test_a_redirected_search_that_the_provider_fails_is_still_a_provider_failure() -> None:
+    """The softer landing is for a reply that came back and did not ground;
+    a provider that never answered is a real failure, redirect or not."""
+    graph = nodes(composer=FakeComposer(raises=ConnectionError("reset")))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+
+
+def test_a_model_chosen_search_whose_reply_breaks_the_schema_still_fails() -> None:
+    """No draft, no landing: a search the model chose that comes back with a
+    schema-breaking reply is the contract failure it always was."""
+    graph = nodes(composer=FakeComposer(raises=_schema_violation()))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents"))
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+    assert "ValidationError" in (result.error_detail or "")
+
+
+def test_a_model_chosen_search_finding_nothing_still_refuses() -> None:
+    """The softer landing is only for the check's own redirect -- draft is
+    never set by anything else, so a model-chosen search that finds nothing
+    refuses exactly as test_nothing_retrieved_is_a_refusal_and_not_a_guess
+    already proves. This asserts the second half of the guard directly:
+    redirected_needs alone, with no draft, is not enough either."""
+    graph = nodes(retriever=FakeRetriever())
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert (result.route, result.failure) == ("refuse", "insufficient_evidence")
+
+
+def test_the_defensive_field_check_marks_a_reply_still_missing_it() -> None:
+    """Belt and suspenders: unreachable against a well-behaved PlannerPort
+    (see reasoning/completeness.py's module docstring), reachable only
+    against a fake that redirects to retrieval with erp_field still unmet."""
+    contract = ReplyContract(
+        needs=frozenset({"document_passage", "erp_field"}), document_query="why"
+    )
+    graph = nodes(composer=FakeComposer(grounded("m2-status.md")))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents", contract=contract))
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert "erp_field" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced" and "unmet after redirect: erp_field" in event.detail
+        for event in result.events
+    )
 
 
 def test_a_composer_refusal_is_passed_through_as_a_refusal() -> None:
@@ -365,6 +747,17 @@ def test_a_composer_that_raises_ends_the_turn_as_a_provider_failure() -> None:
 
     assert (result.route, result.failure) == ("fail", "provider_failure")
     assert result.evidence == (snippet(),)
+
+
+def test_a_retriever_that_raises_ends_the_turn_as_a_provider_failure() -> None:
+    graph = nodes(retriever=RaisingRetriever(RuntimeError("embeddings down")))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents"))
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+    assert result.evidence == ()
+    assert "embeddings down" in (result.error_detail or "")
+    assert kinds(result)[-1] == "failed"
 
 
 # --------------------------------------------------------------------------

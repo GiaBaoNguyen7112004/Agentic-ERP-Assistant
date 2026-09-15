@@ -36,6 +36,7 @@ from agentic_erp_assistant.llm.ports import (
 )
 from agentic_erp_assistant.llm.prompts import build_messages
 from agentic_erp_assistant.llm.schemas import EvidenceSnippet, GroundedAnswer
+from agentic_erp_assistant.llm.tokenizer import count_tokens
 from agentic_erp_assistant.llm.tools import (
     DEFAULT_TOOLS,
     GET_PROJECT_STATUS_TOOL,
@@ -192,6 +193,7 @@ def test_evidence_is_relabeled_developer_and_stays_its_own_message(messages) -> 
         "system",
         "developer",
         "user",
+        "developer",
         "developer",
         "developer",
         "developer",
@@ -663,6 +665,81 @@ def test_call_with_tools_leaves_the_choice_to_the_model(messages) -> None:
     assert recorder.body["tool_choice"] == "auto"
 
 
+def test_tool_choice_none_forces_content(messages) -> None:
+    """ADR 0019: the mechanism ``engine/nodes.py`` uses to end a turn's
+    planning loop after a mutating tool has already succeeded."""
+    recorder = Recorder(httpx.Response(200, json=success_body(content="Done.")))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages, tool_choice="none")
+
+    assert recorder.body["tool_choice"] == "none"
+    assert "tools" in recorder.body  # still offered -- see the port's docstring
+
+
+def test_tool_choice_required_forces_a_call(messages) -> None:
+    """ADR 0021: the mechanism a reply-contract declaration call uses -- the
+    model must call the one function offered, never answer in prose."""
+    recorder = Recorder(httpx.Response(200, json=tool_call_body()))
+    with make_client(recorder) as client:
+        client.call_with_tools(messages, tool_choice="required")
+
+    assert recorder.body["tool_choice"] == "required"
+
+
+# --------------------------------------------------------------------------
+# estimate_extra_tokens: the budget's other half (gap-plan.md gap 12)
+# --------------------------------------------------------------------------
+
+
+def test_estimate_extra_tokens_is_zero_for_a_plain_request() -> None:
+    """No tools, no schema: count_message_tokens already sees everything
+    this kind of request spends."""
+    client = OpenAIChatClient(api_key=API_KEY, model=MODEL)
+
+    assert client.estimate_extra_tokens() == 0
+
+
+def test_estimate_extra_tokens_for_tools_matches_what_call_with_tools_sends() -> None:
+    """Rendered by the same _tool_payload call_with_tools uses -- an
+    estimate computed any other way could quietly drift from the request."""
+    client = OpenAIChatClient(api_key=API_KEY, model=MODEL)
+    tools_json = json.dumps(
+        [client._tool_payload(spec) for spec in DEFAULT_TOOLS],
+        separators=(",", ":"),
+    )
+    expected = count_tokens(tools_json, model=MODEL)
+
+    assert client.estimate_extra_tokens(tools=DEFAULT_TOOLS) == expected
+    assert expected > 0
+
+
+def test_estimate_extra_tokens_for_the_schema_matches_what_complete_sends() -> None:
+    client = OpenAIChatClient(api_key=API_KEY, model=MODEL)
+    schema_json = json.dumps(
+        GroundedAnswer.model_json_schema(), separators=(",", ":")
+    )
+    expected = count_tokens(schema_json, model=MODEL)
+
+    assert client.estimate_extra_tokens(structured=True) == expected
+    assert expected > 0
+
+
+def test_estimate_extra_tokens_adds_both_when_both_apply() -> None:
+    client = OpenAIChatClient(api_key=API_KEY, model=MODEL)
+
+    tools_only = client.estimate_extra_tokens(tools=DEFAULT_TOOLS)
+    schema_only = client.estimate_extra_tokens(structured=True)
+    both = client.estimate_extra_tokens(tools=DEFAULT_TOOLS, structured=True)
+
+    assert both == tools_only + schema_only
+
+
+def test_the_real_adapter_satisfies_token_estimating() -> None:
+    from agentic_erp_assistant.llm.ports import TokenEstimating
+
+    assert isinstance(OpenAIChatClient(api_key=API_KEY, model=MODEL), TokenEstimating)
+
+
 def test_call_with_tools_forbids_parallel_calls(messages) -> None:
     """Reading tool_calls[0] is only honest if a second one cannot arrive."""
     recorder = Recorder(httpx.Response(200, json=tool_call_body()))
@@ -691,6 +768,7 @@ def test_call_with_tools_folds_roles_the_same_way_complete_does(messages) -> Non
         "system",
         "developer",
         "user",
+        "developer",
         "developer",
         "developer",
         "developer",

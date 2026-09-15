@@ -4,7 +4,11 @@ import pytest
 from pydantic import ValidationError
 
 from agentic_erp_assistant.llm.tools import GET_PROJECT_STATUS_TOOL
-from agentic_erp_assistant.state.tool_request import ToolRequest
+from agentic_erp_assistant.state.tool_request import (
+    ARGUMENTS_SUMMARY_MAX_CHARS,
+    ToolRequest,
+    summarize_tool_call,
+)
 
 
 def request(**overrides: object) -> ToolRequest:
@@ -13,6 +17,7 @@ def request(**overrides: object) -> ToolRequest:
         "tool_name": "close_milestone",
         "arguments": {"milestone_id": "M2"},
         "actor": "bao",
+        "project_code": "atlas",
         "scopes": frozenset({"erp:write"}),
     }
     fields.update(overrides)
@@ -25,22 +30,30 @@ def request(**overrides: object) -> ToolRequest:
 
 
 @pytest.mark.parametrize(
-    "field", ["trace_id", "tool_name", "arguments", "actor", "scopes"]
+    "field", ["trace_id", "tool_name", "arguments", "actor", "project_code", "scopes"]
 )
 def test_a_request_cannot_be_built_without_it(field: str) -> None:
-    """None of the five has a default. A call missing any of them is one no
+    """None of the six has a default. A call missing any of them is one no
     check downstream could make a decision about."""
     fields = {
         "trace_id": "run-1",
         "tool_name": "t",
         "arguments": {},
         "actor": "bao",
+        "project_code": "atlas",
         "scopes": frozenset(),
     }
     del fields[field]
 
     with pytest.raises(ValidationError, match=field):
         ToolRequest(**fields)  # type: ignore[arg-type]
+
+
+def test_a_request_bound_to_no_project_is_rejected() -> None:
+    """The same argument scopes already makes: a call unbindable to a project
+    is one the gateway's project check has nothing to compare against."""
+    with pytest.raises(ValidationError, match="project_code"):
+        request(project_code="")
 
 
 def test_an_anonymous_request_is_rejected() -> None:
@@ -139,3 +152,40 @@ def test_the_tool_layer_re_exports_the_same_class() -> None:
     from agentic_erp_assistant.tools import models
 
     assert models.ToolRequest is ToolRequest
+
+
+# --------------------------------------------------------------------------
+# summarize_tool_call: the one rendering the gateway, the audit row, and
+# the engine's repeated-call guard (ADR 0019) all read
+# --------------------------------------------------------------------------
+
+
+def test_summarize_tool_call_includes_values_not_just_keys() -> None:
+    line = summarize_tool_call("create_risk", {"project_id": "orion", "severity": "high"})
+
+    assert line == "create_risk(project_id=orion, severity=high)"
+
+
+def test_summarize_tool_call_elides_a_long_value() -> None:
+    line = summarize_tool_call("create_risk", {"title": "x" * 100})
+
+    assert "x" * 100 not in line
+    assert line.endswith("…)")
+
+
+def test_summarize_tool_call_caps_the_whole_line() -> None:
+    arguments = {f"key{i}": "value" * 10 for i in range(20)}
+
+    line = summarize_tool_call("create_risk", arguments)
+
+    assert len(line) <= ARGUMENTS_SUMMARY_MAX_CHARS
+
+
+def test_summarize_tool_call_with_no_arguments_still_names_the_tool() -> None:
+    assert summarize_tool_call("list_risks", {}) == "list_risks()"
+
+
+def test_the_tool_layer_re_exports_the_same_cap() -> None:
+    from agentic_erp_assistant.tools import models
+
+    assert models.ARGUMENTS_SUMMARY_MAX_CHARS is ARGUMENTS_SUMMARY_MAX_CHARS

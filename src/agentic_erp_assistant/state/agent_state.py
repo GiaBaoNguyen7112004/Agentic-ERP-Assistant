@@ -58,6 +58,7 @@ from agentic_erp_assistant.state.conversation import ConversationTurn
 from agentic_erp_assistant.state.evidence import EvidenceSnippet
 from agentic_erp_assistant.state.events import TraceEvent
 from agentic_erp_assistant.state.memory import MemoryRecord
+from agentic_erp_assistant.state.reply_contract import ReplyContract, ReplyNeed
 from agentic_erp_assistant.state.tool_outcome import ToolOutcome
 
 __all__ = [
@@ -68,7 +69,7 @@ __all__ = [
 ]
 
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 """The shape this module writes and is willing to read.
 
 Carried in the state and checked at construction so a state serialized by an
@@ -82,6 +83,12 @@ state written before the field existed still validates, and the default is the
 truthful reading of it -- ``memories=()`` on a run that had no memory layer, and
 ``session_id=None`` on a run that belonged to no session. The version guards
 against fields whose *meaning* changed, which is the case no default can rescue.
+
+v2 added the required :attr:`AgentState.project_code`: a v1 state refuses to
+load rather than being read as a turn on no project. There is no honest
+default to give it -- every authorization decision downstream of this field
+is "this project and this entitlement", and guessing one would let a v1 run
+resume with a project it never had.
 """
 
 
@@ -116,6 +123,16 @@ class AgentState(BaseModel):
     Carried from the first state because approval routing has to know who a
     write would be performed on behalf of, and a decision recorded without an
     actor cannot be audited afterwards.
+    """
+
+    project_code: str = Field(min_length=1)
+    """The project this turn works on, snapshotted with the actor and the scopes.
+
+    Required for the reason ``actor`` is: every authorization decision -- a
+    document, a memory, an ERP record -- is "this project and this
+    entitlement", and a turn that could exist without a project is a turn
+    whose tool calls cannot be bound to one. The composition root reads it
+    off the user record, next to the scopes.
     """
 
     scopes: frozenset[str] = frozenset()
@@ -214,6 +231,51 @@ class AgentState(BaseModel):
     Empty on a turn with no session, and on the first turn of one. Unlike
     :attr:`memories`, nothing here is judged by a policy: it is this actor's
     own words, kept verbatim within the window rather than accepted or refused.
+    """
+
+    contract: ReplyContract | None = None
+    """What the planner declared a complete reply to this turn must rest on
+    (ADR 0021), or ``None``.
+
+    Filled by the orchestrator before the graph runs, never by a node -- the
+    same rule :attr:`memories` and :attr:`history` follow, and for the same
+    reason: what the reply is being held to must not change mid-turn because
+    a re-plan happened to run. ``None`` means "this turn was never checked" --
+    a replay, a hand-built test state, a state paused before this field
+    existed, or a declaration call that raised outright (as opposed to one
+    that merely answered unreadably, which is
+    :data:`~agentic_erp_assistant.state.reply_contract.EMPTY_CONTRACT`, a real
+    declaration of nothing needed) -- and every completeness check in
+    :mod:`agentic_erp_assistant.reasoning.completeness` treats it exactly
+    like a contract with no needs at all: nothing to hold the turn to.
+    """
+
+    redirected_needs: frozenset[ReplyNeed] = frozenset()
+    """Which of :attr:`contract`'s needs ``engine/nodes.py::think`` has
+    already spent its one redirect on (ADR 0021).
+
+    Set by ``think`` the moment it redirects a need, never read back by
+    anyone but :func:`~agentic_erp_assistant.reasoning.completeness.next_redirect`
+    -- which is the whole point of carrying it: a need is redirected *once*
+    per turn, and without this field on the state, a resumed or replayed
+    turn would have no way to know a redirect had already been spent and
+    could spend it again.
+    """
+
+    draft: str | None = Field(default=None, min_length=1)
+    """The reply the planner offered, and the completeness check withheld,
+    on its way to redirecting a missing ``document_passage`` to a search
+    (ADR 0021).
+
+    Set once, by ``think``, at the same transition that routes to
+    ``retrieve_project_documents`` for that redirect -- never by any other
+    node, and never read by anyone but ``retrieve_and_answer``, which
+    delivers it, marked ``incomplete_reply``, if the redirected search finds
+    nothing to compose from -- or finds passages the composer cannot ground
+    a reply on. A retrieval the *model* chose on its own never
+    sets this: only the check's own redirect does, which is exactly how
+    ``retrieve_and_answer`` tells "the model wanted to search anyway" apart
+    from "the check made it search instead of answering".
     """
 
     observations: tuple[ToolOutcome, ...] = ()

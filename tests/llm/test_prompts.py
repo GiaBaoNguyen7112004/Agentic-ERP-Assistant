@@ -14,23 +14,33 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from agentic_erp_assistant.context.catalogue import CatalogueEntry, DocumentCatalogue
 from agentic_erp_assistant.llm.ports import Role
 from agentic_erp_assistant.llm.prompts import (
+    DECLARATION_CONTRACT,
     DEVELOPER_CONTRACT,
     MEMORY_CONTRACT,
     NO_EVIDENCE,
     NO_HISTORY,
     NO_MEMORY,
+    NO_OBSERVATIONS,
     NO_REPLY,
+    PLANNER_CONTRACT,
     PROMOTION_CONTRACT,
     SYSTEM_POLICY,
+    Principal,
+    build_declaration_messages,
     build_memory_messages,
     build_messages,
     build_planner_messages,
     build_promotion_messages,
+    render_catalogue,
+    render_principal,
+    system_content,
 )
 from agentic_erp_assistant.llm.schemas import Citation, EvidenceSnippet, GroundedAnswer
 from agentic_erp_assistant.state.conversation import ConversationTurn
+from agentic_erp_assistant.state.memory import MemoryRecord
 
 QUESTION = "When does sprint 12 close?"
 
@@ -78,6 +88,7 @@ def test_the_roles_appear_in_order() -> None:
         "developer",
         "user",
         "evidence",
+        "observation",
         "history",
         "memory",
     ]
@@ -161,15 +172,49 @@ def test_no_evidence_still_produces_every_block() -> None:
     """The shape is constant; the model is told there is nothing to ground on."""
     messages = build_messages(QUESTION, [])
 
-    assert len(messages) == 6
+    assert len(messages) == 7
     assert messages[3]["content"] == NO_EVIDENCE
+
+
+def test_no_observations_still_produces_the_observation_block() -> None:
+    """The shape is constant; the model is told there is nothing observed --
+    the same reason NO_EVIDENCE is emitted rather than the block omitted."""
+    messages = build_messages(QUESTION, EVIDENCE)
+
+    assert messages[4] == {"role": "observation", "content": NO_OBSERVATIONS}
+
+
+def test_this_turns_own_tool_call_reaches_the_observation_block() -> None:
+    """ADR 0021: the composer has to see what this turn's own tool call
+    returned, or a compound reply drops the half it did not retrieve."""
+    from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+
+    outcome = ToolOutcome(
+        tool_name="get_project_status",
+        status="ok",
+        summary="Two days late.",
+        source_ids=("milestone-m2",),
+    )
+
+    messages = build_messages(QUESTION, EVIDENCE, observations=(outcome,))
+
+    assert messages[4]["role"] == "observation"
+    assert "get_project_status" in messages[4]["content"]
+    assert "Two days late." in messages[4]["content"]
+
+
+def test_system_policy_tells_the_model_what_an_observation_is_for() -> None:
+    """Rule 8: a current value to state plainly, never a substitute for a
+    passage that has to be quoted."""
+    assert "observation role" in SYSTEM_POLICY
+    assert "never a substitute for a passage" in SYSTEM_POLICY
 
 
 def test_no_history_still_produces_every_block() -> None:
     """The shape is constant; the first turn of a session says so plainly."""
     messages = build_messages(QUESTION, EVIDENCE)
 
-    assert messages[4] == {"role": "history", "content": NO_HISTORY}
+    assert messages[5] == {"role": "history", "content": NO_HISTORY}
 
 
 def test_no_memory_still_produces_a_memory_block() -> None:
@@ -177,7 +222,7 @@ def test_no_memory_still_produces_a_memory_block() -> None:
     saying so is what separates "nothing was established" from "recall broke"."""
     messages = build_messages(QUESTION, EVIDENCE)
 
-    assert messages[5] == {"role": "memory", "content": NO_MEMORY}
+    assert messages[6] == {"role": "memory", "content": NO_MEMORY}
 
 
 @pytest.mark.parametrize("question", ["", "   ", "\n"])
@@ -270,6 +315,43 @@ def test_every_role_a_memory_prompt_uses_is_one_the_port_declares() -> None:
     assert roles <= set(get_args(Role))
 
 
+def test_the_memory_prompt_shows_each_recalled_memorys_key() -> None:
+    """The proposer can only reuse a key it is shown -- see
+    ``memory.policy.TOPIC_OVERLAP_RATIO`` for what happens when it invents a
+    new one for a preference that already has one."""
+    preference = a_memory_record(key="budget_reporting_format")
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    messages = build_memory_messages(QUESTION, memories=(preference, fact))
+    block = messages[5]["content"]
+
+    assert "key: budget_reporting_format" in block
+    assert "key: vendor_contact" in block
+
+
+def test_the_memory_contract_asks_to_reuse_the_key_shown() -> None:
+    assert "propose it under that memory's key, exactly as shown" in MEMORY_CONTRACT
+
+
+def test_only_the_memory_prompt_shows_keys() -> None:
+    """An answer or a routing decision must never mention a key -- it is not a
+    source, and reciting one would look like a citation of nothing."""
+    memory = a_memory_record(key="budget_reporting_format")
+
+    answering_block = build_messages(QUESTION, EVIDENCE, memories=(memory,))[6][
+        "content"
+    ]
+    planner_block = build_planner_messages(QUESTION, memories=(memory,))[6][
+        "content"
+    ]
+
+    assert "key:" not in answering_block
+    assert "key:" not in planner_block
+
+
 # --------------------------------------------------------------------------
 # build_planner_messages: seven blocks, history between observation and memory
 # --------------------------------------------------------------------------
@@ -295,6 +377,22 @@ def test_no_history_still_produces_every_planner_block() -> None:
     assert messages[5] == {"role": "history", "content": NO_HISTORY}
 
 
+def test_the_developer_block_defaults_to_the_production_contract() -> None:
+    messages = build_planner_messages(QUESTION)
+
+    assert messages[1] == {"role": "developer", "content": PLANNER_CONTRACT}
+
+
+def test_the_developer_block_carries_a_given_contract_instead() -> None:
+    """ADR 0020: the comparison sends a candidate through this exact
+    builder, never a second one that could drift from it."""
+    candidate = "a candidate contract, not the production one"
+
+    messages = build_planner_messages(QUESTION, contract=candidate)
+
+    assert messages[1] == {"role": "developer", "content": candidate}
+
+
 # --------------------------------------------------------------------------
 # _render_history, through the roles that carry it
 # --------------------------------------------------------------------------
@@ -304,7 +402,7 @@ def test_history_renders_user_and_assistant_lines_oldest_first() -> None:
     older = turn(trace_id="run-1", request="How is M2 tracking?", response="On track.")
     newer = turn(trace_id="run-2", request="And the budget?", response="On plan.")
 
-    block = build_messages(QUESTION, EVIDENCE, history=(older, newer))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(older, newer))[5]["content"]
 
     assert block == (
         "1. User: How is M2 tracking?\n"
@@ -322,7 +420,7 @@ def test_a_paused_turn_renders_as_waiting_for_approval() -> None:
         tool_name="create_risk",
     )
 
-    block = build_messages(QUESTION, EVIDENCE, history=(waiting,))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(waiting,))[5]["content"]
 
     assert "waiting for approval to run create_risk" in block
 
@@ -330,7 +428,7 @@ def test_a_paused_turn_renders_as_waiting_for_approval() -> None:
 def test_a_refused_turn_renders_its_failure() -> None:
     refused = turn(route="refuse", response=None, failure="insufficient_evidence")
 
-    block = build_messages(QUESTION, EVIDENCE, history=(refused,))[4]["content"]
+    block = build_messages(QUESTION, EVIDENCE, history=(refused,))[5]["content"]
 
     assert "(insufficient_evidence)" in block
 
@@ -341,7 +439,7 @@ def test_a_turn_with_a_line_break_cannot_forge_an_extra_entry() -> None:
         response="ok",
     )
 
-    lines = build_messages(QUESTION, EVIDENCE, history=(smuggler,))[4][
+    lines = build_messages(QUESTION, EVIDENCE, history=(smuggler,))[5][
         "content"
     ].splitlines()
 
@@ -396,3 +494,375 @@ def test_promotion_messages_show_the_previous_summary_in_memory() -> None:
 def test_promotion_messages_refuse_an_empty_batch() -> None:
     with pytest.raises(ValueError, match="turns"):
         build_promotion_messages(())
+
+
+def test_the_promotion_contract_says_code_carries_the_previous_summary() -> None:
+    """The steering half of the merge conversation_state enforces: the model
+    proposes the delta, code carries the rest. Before that merge existed the
+    contract asked for the impossible -- an empty proposal destroyed the
+    previous summary -- which is the defect ADR 0028 records."""
+    assert "carried forward automatically" in PROMOTION_CONTRACT
+    assert "Propose only what these turns add or change; restate nothing" in (
+        PROMOTION_CONTRACT
+    )
+
+
+# --------------------------------------------------------------------------
+# build_declaration_messages: four blocks, before anything has run (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_the_declaration_roles_appear_in_order() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert [message["role"] for message in messages] == [
+        "system",
+        "developer",
+        "user",
+        "history",
+    ]
+
+
+def test_the_declaration_developer_block_is_its_own_contract() -> None:
+    """Not PLANNER_CONTRACT -- a declaration asks what the reply needs,
+    before any routing preference applies."""
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[1] == {"role": "developer", "content": DECLARATION_CONTRACT}
+    assert DECLARATION_CONTRACT != PLANNER_CONTRACT
+
+
+def test_the_question_is_carried_verbatim() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[2] == {"role": "user", "content": QUESTION}
+
+
+def test_no_history_still_produces_the_history_block() -> None:
+    messages = build_declaration_messages(QUESTION)
+
+    assert messages[3] == {"role": "history", "content": NO_HISTORY}
+
+
+def test_history_reaches_the_declaration_block() -> None:
+    entry = turn(request="How is M2 tracking?", response="On track.")
+
+    messages = build_declaration_messages(QUESTION, (entry,))
+
+    assert "How is M2 tracking?" in messages[3]["content"]
+
+
+@pytest.mark.parametrize("question", ["", "   ", "\n"])
+def test_a_blank_question_is_a_caller_bug(question: str) -> None:
+    with pytest.raises(ValueError, match="question"):
+        build_declaration_messages(question)
+
+
+def test_every_role_a_declaration_prompt_uses_is_one_the_port_declares() -> None:
+    roles = {message["role"] for message in build_declaration_messages(QUESTION)}
+
+    assert roles <= set(get_args(Role))
+
+
+# --------------------------------------------------------------------------
+# The principal block: who the turn is for, in the system role (D1)
+# --------------------------------------------------------------------------
+
+
+def a_principal(**overrides: object) -> Principal:
+    fields: dict[str, object] = {
+        "actor": "priya",
+        "display_name": "Priya Raman",
+        "role": "Delivery lead",
+        "project_code": "atlas",
+        "project_name": "Atlas ERP rollout",
+    }
+    fields.update(overrides)
+    return Principal(**fields)  # type: ignore[arg-type]
+
+
+def test_no_principal_sends_the_policy_byte_for_byte() -> None:
+    """A replay, the routing comparison, every existing test: unchanged."""
+    assert system_content(None) == SYSTEM_POLICY
+    assert build_messages(QUESTION, EVIDENCE)[0]["content"] == SYSTEM_POLICY
+
+
+def test_the_principal_block_is_appended_after_the_policy() -> None:
+    content = build_messages(QUESTION, EVIDENCE, principal=a_principal())[0]["content"]
+
+    assert content.startswith(SYSTEM_POLICY)
+    assert content[len(SYSTEM_POLICY):].startswith("\n\nWho you are talking to:")
+    assert "Priya Raman" in content
+    assert "Delivery lead" in content
+    assert "atlas" in content
+    assert "Atlas ERP rollout" in content
+    assert "project_id must be 'atlas'" in content
+
+
+def test_a_principal_without_a_project_name_names_the_code_alone() -> None:
+    content = system_content(a_principal(project_name=None))
+
+    assert "- Project: atlas." in content
+    assert "Atlas ERP rollout" not in content
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [build_planner_messages, build_declaration_messages, build_memory_messages],
+)
+def test_every_builder_that_takes_a_principal_appends_it(builder) -> None:
+    principal = a_principal()
+
+    messages = builder(QUESTION, principal=principal)  # type: ignore[call-arg]
+
+    assert messages[0]["content"] == system_content(principal)
+    assert messages[0]["content"] != SYSTEM_POLICY
+
+
+def test_promotion_messages_carry_the_principal_too() -> None:
+    principal = a_principal()
+
+    messages = build_promotion_messages((turn(),), principal=principal)
+
+    assert messages[0]["content"] == system_content(principal)
+
+
+def test_the_principal_block_appears_in_no_other_role() -> None:
+    """It is standing session context, so it is only ever the system block."""
+    principal = a_principal()
+
+    messages = build_messages(QUESTION, EVIDENCE, principal=principal)
+    others = [m["content"] for m in messages if m["role"] != "system"]
+
+    assert not any("Priya Raman" in content or "Who you are talking to" in content
+                   for content in others)
+
+
+def test_the_principal_block_carries_nothing_citation_shaped() -> None:
+    """The same rule the memory and history blocks hold: a block that could
+    not be cited is a block that cannot become a fake source."""
+    content = render_principal(a_principal())
+
+    assert "[" not in content
+
+
+# --------------------------------------------------------------------------
+# ADR 0026: the document catalogue, planner-only
+# --------------------------------------------------------------------------
+
+CATALOGUE = DocumentCatalogue(
+    entries=(
+        CatalogueEntry(
+            document_id="risk-register",
+            title="Atlas Risk Register",
+            document_type="risk_register",
+            effective_date="2026-08-31",
+        ),
+        CatalogueEntry(
+            document_id="sprint-13-report",
+            title="Sprint 13 Review and Retrospective",
+            document_type="sprint_report",
+            effective_date="2026-09-06",
+        ),
+    )
+)
+EMPTY_CATALOGUE = DocumentCatalogue(entries=())
+
+
+def test_render_catalogue_lists_every_entry_with_its_type_and_date() -> None:
+    content = render_catalogue(CATALOGUE)
+
+    assert "risk-register: Atlas Risk Register (risk_register, 2026-08-31)" in content
+    assert (
+        "sprint-13-report: Sprint 13 Review and Retrospective (sprint_report, "
+        "2026-09-06)" in content
+    )
+    assert "cannot access it" in content
+    assert "never say it does not exist" in content
+
+
+def test_render_catalogue_when_empty_says_so_without_listing_anything() -> None:
+    content = render_catalogue(EMPTY_CATALOGUE)
+
+    assert "no documents to search" in content
+    assert "risk-register" not in content
+
+
+def test_no_catalogue_leaves_the_planner_system_block_unchanged() -> None:
+    """A caller that does not pass one -- every builder but the planner's --
+    sends exactly what it always has."""
+    principal = a_principal()
+
+    assert system_content(principal) == system_content(principal, None)
+    messages = build_planner_messages(QUESTION, principal=principal)
+    assert messages[0]["content"] == system_content(principal)
+
+
+def test_a_catalogue_is_appended_after_the_principal_in_the_planner_prompt() -> None:
+    principal = a_principal()
+
+    content = build_planner_messages(
+        QUESTION, principal=principal, catalogue=CATALOGUE
+    )[0]["content"]
+
+    assert content == system_content(principal, CATALOGUE)
+    principal_block = render_principal(principal)
+    catalogue_block = render_catalogue(CATALOGUE)
+    assert content.index(principal_block) < content.index(catalogue_block)
+    assert content.endswith(catalogue_block)
+
+
+def test_a_catalogue_with_no_principal_is_never_shown() -> None:
+    """A catalogue is a fact about this actor's entitlements; there is no
+    actor to state it for on an unbound call."""
+    assert system_content(None, CATALOGUE) == SYSTEM_POLICY
+
+
+def test_the_catalogue_block_appears_in_no_other_role() -> None:
+    principal = a_principal()
+
+    messages = build_planner_messages(QUESTION, principal=principal, catalogue=CATALOGUE)
+    others = [m["content"] for m in messages if m["role"] != "system"]
+
+    assert not any("Atlas Risk Register" in content for content in others)
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [build_declaration_messages, build_memory_messages],
+)
+def test_only_the_planner_builder_accepts_a_catalogue(builder) -> None:
+    """build_messages, build_declaration_messages and build_memory_messages
+    take no catalogue argument at all -- the composer, the declarer and the
+    memory calls have no occasion to weigh whether a specific document
+    exists, per system_content's own docstring."""
+    with pytest.raises(TypeError):
+        builder(QUESTION, principal=a_principal(), catalogue=CATALOGUE)  # type: ignore[call-arg]
+
+
+# --------------------------------------------------------------------------
+# A conversational route (D2): history is the authority on the conversation
+# --------------------------------------------------------------------------
+
+
+def test_system_policy_rule_7_names_the_conversation_as_the_exception() -> None:
+    """S1: the old wording ("and for nothing else") made a question about the
+    conversation itself have no legal route."""
+    assert "conversation itself" in SYSTEM_POLICY
+    assert "for nothing else" not in SYSTEM_POLICY
+
+
+def test_the_planner_contract_names_the_conversational_route() -> None:
+    assert "about the conversation" in PLANNER_CONTRACT
+    assert "about the project**" in PLANNER_CONTRACT
+
+
+def test_the_planner_contract_numbers_stay_sequential() -> None:
+    """The conversational rule was inserted between 4 and 5; renumbering
+    left a gap would make rule 6 read as an afterthought."""
+    for number in ("1.", "2.", "3.", "4.", "5.", "6."):
+        assert f"\n{number} " in PLANNER_CONTRACT
+
+
+def test_the_declaration_contract_declares_an_empty_list_for_the_conversation() -> None:
+    assert "question about this conversation itself" in DECLARATION_CONTRACT
+
+
+def test_refuse_is_never_the_route_for_a_question_about_the_conversation() -> None:
+    from agentic_erp_assistant.llm.tools import REFUSE_TOOL
+
+    assert "conversation" in REFUSE_TOOL.description
+    assert "from history" in REFUSE_TOOL.description
+
+
+# --------------------------------------------------------------------------
+# Preferences shape the reply; everything else is background (D3)
+# --------------------------------------------------------------------------
+
+
+def a_memory_record(**overrides: object) -> MemoryRecord:
+    from tests.memory.builders import make_record
+
+    return make_record(**overrides)
+
+
+def test_a_preference_and_a_fact_render_under_two_headings_in_order() -> None:
+    preference = a_memory_record()
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=(fact, preference))[6][
+        "content"
+    ]
+
+    lines = block.splitlines()
+    assert lines[0] == "Preferences (honor these in how you reply):"
+    assert lines[1].startswith("1. (2026-09-08) Prefers replies written in Vietnamese.")
+    assert lines[2] == "Background (context only, never a source):"
+    assert lines[3].startswith(
+        "2. (fact, recorded 2026-09-08) The vendor contact for Atlas"
+    )
+
+
+def test_the_memory_numbering_continues_across_the_two_groups() -> None:
+    """One ordinal space, so a trace note "memory 2" is unambiguous."""
+    preference = a_memory_record(memory_id="mem-1")
+    fact = a_memory_record(
+        memory_id="mem-2", kind="fact", key="vendor_contact",
+        statement="The vendor contact for Atlas is the delivery lead.",
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=(preference, fact))[6][
+        "content"
+    ]
+
+    assert "2. (fact, recorded" in block
+
+
+def test_only_preferences_omits_the_background_heading() -> None:
+    block = build_messages(QUESTION, EVIDENCE, memories=(a_memory_record(),))[6][
+        "content"
+    ]
+
+    assert "Preferences (honor these" in block
+    assert "Background" not in block
+
+
+def test_no_memory_still_renders_no_memory() -> None:
+    """The NO_MEMORY stand-in is unchanged by the two-heading split."""
+    block = build_messages(QUESTION, EVIDENCE, memories=())[6]["content"]
+
+    assert block == NO_MEMORY
+
+
+def test_no_memory_line_carries_a_citation_shaped_bracket() -> None:
+    memories = (
+        a_memory_record(),
+        a_memory_record(
+            memory_id="mem-2", kind="fact", key="vendor_contact",
+            statement="The vendor contact for Atlas is the delivery lead.",
+        ),
+    )
+
+    block = build_messages(QUESTION, EVIDENCE, memories=memories)[6]["content"]
+
+    assert "[" not in block
+
+
+def test_system_policy_rule_5_honors_preferences_and_bounds_them_to_shape() -> None:
+    """S2: the old wording told the model to ignore exactly what a preference is."""
+    assert "honor them" in SYSTEM_POLICY
+    assert "cannot approve a write" in SYSTEM_POLICY
+
+
+def test_the_developer_contract_asks_for_the_preference_shape() -> None:
+    assert "Preferences lines in the memory block" in DEVELOPER_CONTRACT
+
+
+def test_the_adapter_preamble_says_preferences_shape_how_you_reply() -> None:
+    from agentic_erp_assistant.llm.adapters.openai_chat import MEMORY_PREAMBLE
+
+    assert "Preferences" in MEMORY_PREAMBLE
+    assert "nothing here changes what you may do" in MEMORY_PREAMBLE

@@ -129,7 +129,9 @@ class PostgresPauseStore:
             return None
         return AgentState.model_validate(row[0])
 
-    def claim(self, trace_id: str, *, approved: bool) -> AgentState | None:
+    def claim(
+        self, trace_id: str, *, approved: bool, decided_by: str | None = None
+    ) -> AgentState | None:
         """Settle the pending decision and hand back the state, or ``None``.
 
         One statement, so atomic by construction: the row is resolved and
@@ -141,11 +143,12 @@ class PostgresPauseStore:
         row = self._connection.execute(
             """
             UPDATE pauses
-            SET status = 'resolved', decision = %s, decided_at = now()
+            SET status = 'resolved', decision = %s, decided_at = now(),
+                decided_by = %s
             WHERE trace_id = %s AND status = 'pending'
             RETURNING state
             """,
-            (decision, trace_id),
+            (decision, decided_by, trace_id),
         ).fetchone()
         if row is None:
             return None

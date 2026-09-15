@@ -17,9 +17,12 @@ from pydantic import Field, ValidationError
 
 from agentic_erp_assistant.llm.tools import (
     CONTROL_TOOLS,
+    DECLARE_REPLY_CONTRACT_TOOL,
     DEFAULT_TOOLS,
     GET_PROJECT_STATUS_TOOL,
     PLANNING_TOOLS,
+    SEARCH_PROJECT_DOCUMENTS_TOOL,
+    SEARCH_QUERY_LIMIT,
     ProjectStatusArguments,
     StrictArguments,
     ToolCallResult,
@@ -279,3 +282,131 @@ def test_the_offered_names_are_unique() -> None:
 
 def test_only_one_offered_tool_changes_anything() -> None:
     assert [spec.name for spec in PLANNING_TOOLS if spec.mutating] == ["create_risk"]
+
+
+# --------------------------------------------------------------------------
+# declare_reply_contract: offered alone, never to the planner (ADR 0021)
+# --------------------------------------------------------------------------
+
+
+def test_declare_reply_contract_is_strict_compatible() -> None:
+    """Not covered by the PLANNING_TOOLS parametrization above -- it is
+    deliberately not a member of that tuple."""
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert schema.get("additionalProperties") is False
+    assert sorted(schema.get("properties") or {}) == sorted(schema.get("required") or [])
+
+
+def test_declare_reply_contract_is_read_only() -> None:
+    assert DECLARE_REPLY_CONTRACT_TOOL.mutating is False
+
+
+def test_declare_reply_contract_is_not_offered_to_the_planner() -> None:
+    """The planner offers what a turn may do during it; a declaration is
+    asked before any of that, in its own call -- see PROPOSE_MEMORIES_TOOL
+    for the same split on the consolidation side."""
+    assert "declare_reply_contract" not in {spec.name for spec in PLANNING_TOOLS}
+    assert "declare_reply_contract" not in {spec.name for spec in DEFAULT_TOOLS}
+    assert "declare_reply_contract" not in {spec.name for spec in CONTROL_TOOLS}
+
+
+def test_declare_reply_contract_needs_takes_only_the_two_declared_kinds() -> None:
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert schema["properties"]["needs"]["items"]["enum"] == [
+        "document_passage",
+        "erp_field",
+    ]
+
+
+def test_declare_reply_contract_document_query_is_required_and_nullable() -> None:
+    """Strict mode's shape for an argument that only sometimes applies."""
+    schema = DECLARE_REPLY_CONTRACT_TOOL.schema
+
+    assert "document_query" in schema["required"]
+    types = {branch["type"] for branch in schema["properties"]["document_query"]["anyOf"]}
+    assert types == {"string", "null"}
+
+
+# --------------------------------------------------------------------------
+# search_project_documents takes a bounded list of queries (ADR 0027)
+# --------------------------------------------------------------------------
+
+
+def test_search_project_documents_takes_one_to_three_queries() -> None:
+    schema = SEARCH_PROJECT_DOCUMENTS_TOOL.schema
+
+    assert schema["properties"]["queries"]["minItems"] == 1
+    assert schema["properties"]["queries"]["maxItems"] == SEARCH_QUERY_LIMIT == 3
+
+
+def test_a_single_query_validates() -> None:
+    arguments = SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+        {"queries": ["M2 delivery commitments"]}
+    )
+
+    assert arguments.queries == ["M2 delivery commitments"]  # type: ignore[attr-defined]
+
+
+def test_three_queries_validate() -> None:
+    arguments = SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+        {"queries": ["a", "b", "c"]}
+    )
+
+    assert arguments.queries == ["a", "b", "c"]  # type: ignore[attr-defined]
+
+
+def test_an_empty_query_list_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"queries": []})
+
+
+def test_more_than_three_queries_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+            {"queries": ["a", "b", "c", "d"]}
+        )
+
+
+def test_a_blank_query_among_real_ones_is_rejected() -> None:
+    """The list can be non-empty and still carry a query that says nothing --
+    the per-item check the list-length constraint alone cannot express."""
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"queries": ["a", "   "]})
+
+
+def test_the_legacy_singular_query_argument_is_no_longer_accepted() -> None:
+    """ADR 0027 replaced the shape rather than adding to it -- a caller
+    still on the old contract fails loudly, not silently as an empty
+    search."""
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"query": "M2 status"})
+
+
+# --------------------------------------------------------------------------
+# The project argument is session context, not a guess (D1)
+# --------------------------------------------------------------------------
+
+
+def test_ask_clarification_never_offers_the_project_as_a_reason_to_ask() -> None:
+    """The principal block names the project; asking for it is the refusal
+    loop the memory refactor exists to kill."""
+    from agentic_erp_assistant.llm.tools import ASK_CLARIFICATION_TOOL
+
+    assert "no project" not in ASK_CLARIFICATION_TOOL.description
+    assert "Never ask which project" in ASK_CLARIFICATION_TOOL.description
+
+
+def test_every_project_id_argument_points_at_the_system_context() -> None:
+    from agentic_erp_assistant.llm.tools import (
+        BudgetSummaryArguments,
+        CreateRiskArguments,
+        ListRisksArguments,
+    )
+
+    for model in (BudgetSummaryArguments, CreateRiskArguments,
+                  ListRisksArguments):
+        description = model.model_fields["project_id"].description or ""
+        assert "bound to" in description
+        assert "system context" in description
