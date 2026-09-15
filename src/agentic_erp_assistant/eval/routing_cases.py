@@ -1,11 +1,18 @@
-"""Six fixed cases, held constant across every candidate contract.
+"""Eight fixed cases, held constant across every candidate contract.
 
-Chosen from `docs/manual-test.md` so each is already reviewed, and so the
-run order in that handbook is exactly where a human re-checking a number by
-hand would look. Two of the six ask for a write -- the reference project's
-own proportion -- because a fix aimed at the R1 finding must not quietly
-cost the approval path, and a routing report that only ever asked read
-questions could not tell.
+The original six are chosen from `docs/manual-test.md` so each is already
+reviewed, and so the run order in that handbook is exactly where a human
+re-checking a number by hand would look. Two of the six ask for a write --
+the reference project's own proportion -- because a fix aimed at the R1
+finding must not quietly cost the approval path, and a routing report that
+only ever asked read questions could not tell.
+
+R12/R13 were added for ADR 0025/0026/0027: the compound, multi-document
+request that produced a false refusal, run once as priya (who cannot read
+the Q3 budget summary) and once as wei (who can) -- the same request, two
+entitlement snapshots, so a routing report can show the pair scores
+identically on routing and declaration while `docs/manual-test.md` is
+where the citation-level difference between them is actually checked.
 """
 
 from dataclasses import dataclass
@@ -132,5 +139,69 @@ DEFAULT_CASES: tuple[RoutingCase, ...] = (
             "`refuse` here has started doing the gateway's job. Not scored on "
             "declaration, for the same reason A1 is not."
         ),
+    ),
+    RoutingCase(
+        case_id="R12",
+        actor="priya",
+        request=(
+            "Atlas project: pull the current budget and open risks from the ERP, "
+            "then cross-check each open risk against the risk register CSV for "
+            "its severity, check the Q3 budget summary PDF for whether "
+            "contingency has been allocated for high-severity risks, and check "
+            "the latest sprint report to see if any of those risks are already "
+            "causing schedule slip. Summarize the full picture with sources for "
+            "each claim."
+        ),
+        accepted_first_routes=frozenset(
+            {
+                ("call_tool", "get_budget_summary"),
+                ("call_tool", "list_risks"),
+                ("retrieve_project_documents", None),
+            }
+        ),
+        note=(
+            "The trace that motivated ADR 0025/0026/0027 (run-"
+            "e4feb394274f42c288be90ed37ad8c8e): a compound, multi-document "
+            "request that produced a false refusal claiming two of the three "
+            "named documents -- both actually within priya's own scope -- were "
+            "inaccessible. Live re-runs after the fix consistently open with an "
+            "ERP tool; a search-first order that satisfies PLANNER_CONTRACT rule "
+            "1's own reading is accepted too, since the request also names "
+            "document work. Not scored on whether the reply correctly declines "
+            "the Q3 budget summary (priya lacks project.docs.finance.read) -- "
+            "this harness scores routing and declaration, not citation content; "
+            "see docs/manual-test.md for that assertion."
+        ),
+        expected_needs=frozenset({"document_passage", "erp_field"}),
+    ),
+    RoutingCase(
+        case_id="R13",
+        actor="wei",
+        request=(
+            "Atlas project: pull the current budget and open risks from the ERP, "
+            "then cross-check each open risk against the risk register CSV for "
+            "its severity, check the Q3 budget summary PDF for whether "
+            "contingency has been allocated for high-severity risks, and check "
+            "the latest sprint report to see if any of those risks are already "
+            "causing schedule slip. Summarize the full picture with sources for "
+            "each claim."
+        ),
+        accepted_first_routes=frozenset(
+            {
+                ("call_tool", "get_budget_summary"),
+                ("call_tool", "list_risks"),
+                ("retrieve_project_documents", None),
+            }
+        ),
+        note=(
+            "R12's own case, as wei -- who holds project.docs.finance.read, so "
+            "the Q3 budget summary PDF is genuinely in scope this time. Routing "
+            "and declaration are expected to match R12's shape exactly; what "
+            "differs is downstream of this harness -- wei's reply should cite "
+            "budget-summary-q3 where priya's correctly cannot, a distinction "
+            "the catalogue (ADR 0026) is what makes possible, and one this "
+            "harness does not score. See docs/manual-test.md."
+        ),
+        expected_needs=frozenset({"document_passage", "erp_field"}),
     ),
 )

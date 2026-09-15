@@ -219,6 +219,11 @@ node_entered retrieve_project_documents · evidence_retrieved N passage(s) for '
 memory_written? / memory_rejected?
 ```
 
+Since ADR 0027, `search_project_documents` may carry more than one query (a
+compound, multi-document request such as R12/R13): the `evidence_retrieved`
+detail then reads `N+N+N passage(s) for 3 queries: '<q1>', '<q2>', '<q3>'`,
+one raw count per query, before dedup.
+
 | ID | Request | Expected reply and citations | Verify |
 |---|---|---|---|
 | R1 | `Why is milestone M2 late and by how much?` | Two days late; 41 reconciliation exceptions / cost-centre mapping; cites e.g. `[status-report-2026-09#§2.2]`, `[steering-minutes-2026-08#§3.1]`. Text streamed, then replaced by the same text plus `Sources: [...]`. | `evidence` = 4 rows, all `status-report-2026-09` / `steering-minutes-2026-08`; every chip in the reply is one of those 4 (the grounding check makes this a hard rule). `model_calls`: `routed` then `answered`. |
@@ -232,6 +237,8 @@ memory_written? / memory_rejected?
 | R9 | `Why is milestone M2 late?` — **as `guest`** | Route `refused`: "I could not find anything in the project documents that answers that, so I am not going to guess." | `evidence_retrieved 0 passage(s)`; `failed: no passages`; `failure = insufficient_evidence`; `model_calls` has only the `routed` row (no synthesis call was paid for). |
 | R10 | `What is the weather forecast in Hanoi next week?` | Route `refused`. Either the planner called `refuse` directly (`route_selected refuse: called refuse`) or it searched and the similarity floor gated it (`evidence_retrieved 0 passage(s)`). | Whichever path: no `answered` model call; `failure` is `none` (planner refusal) or `insufficient_evidence` (gate). |
 | R11 | Click any document chip from R1. | The source opens in a new tab; the locator (`§2.2`) is a real heading in the document. That is the whole citation rule (ADR 0009): checkable by a person holding the document. | — |
+| R12 | `Atlas project: pull the current budget and open risks from the ERP, then cross-check each open risk against the risk register CSV for its severity, check the Q3 budget summary PDF for whether contingency has been allocated for high-severity risks, and check the latest sprint report to see if any of those risks are already causing schedule slip. Summarize the full picture with sources for each claim.` | ADR 0025/0026/0027's own case. Two tool calls (`get_budget_summary`, `list_risks`), then `search_project_documents` with **three** queries, one per named document -- **not** a refusal. Reply cites `[risk-register#row R-1]`, `[risk-register#row R-2]`, `[sprint-13-report#§1.2]`/`[#§2]` and correctly attributes the schedule slip to R-2, not R-1. Contingency for high-severity risks: answered from what priya *can* read (not the PDF) -- acceptable either as a grounded claim from `status-report-2026-09`/`steering-minutes-2026-08` or as an explicit "I cannot access the Q3 budget summary." **Model-dependent** on the exact wording of that last sentence; not acceptable is citing `budget-summary-q3`. | `evidence_retrieved` event reads `N+N+N passage(s) for 3 queries: '...', '...', '...'`; `budget-summary-q3` absent from `evidence` and from every chip; `GET /api/documents/budget-summary-q3?actor=priya` → 403; no `refuse` event anywhere in the trace. |
+| R13 | Same request **as `wei`** | Same shape as R12, except wei holds `project.docs.finance.read`: the reply **must** cite `budget-summary-q3` (e.g. `[budget-summary-q3#p.2 part 1]`, "3.3 Contingency") for the contingency claim. | evidence contains `budget-summary-q3`; chip opens `/api/documents/budget-summary-q3?actor=wei` (200). |
 
 ### 4.3 ERP tools (T)
 
@@ -403,6 +410,8 @@ start at R-3 again.
 | 2026-09-11 | bf574d3 | R9 | guest | run-12e1316ea8ec42c2a75c22ade9e3f5e1 | pass | `evidence_retrieved 0 passage(s)`, refused, only the `routed` model call was paid for. |
 | 2026-09-11 | bf574d3 | R10 | priya | run-6713f3d07a1546aa8735a341b30bb453 | pass | refused, `failure=none` (planner-refusal branch). |
 | 2026-09-11 | bf574d3 | R11 | priya | (R1's chip) | pass | chip opened the source doc in a new tab at a real `§2.2` heading. |
+| 2026-09-15 | 4377d20 | R12 | priya | run-e7ec7ec5d2d6463d9025a8ca64364128 | pass | Browser run, `sess-ba74e3c1d057`. `get_budget_summary` → `list_risks` → `search_project_documents` (3 queries) → answer, no refusal. `evidence_retrieved 4+4+4 passage(s) for 3 queries`. Cites `[risk-register#row R-1]`, `[risk-register#row R-2]`, `[sprint-13-report#§1.2]`, `[sprint-13-report#§2]`; correctly attributes the schedule slip to R-2. `budget-summary-q3` absent from evidence and from every chip. Citation chips render as clickable buttons; console clean. This is the trace that motivated ADR 0025/0026/0027 (`run-e4feb394274f42c288be90ed37ad8c8e`, which had refused), re-run after all three fixes. |
+| 2026-09-15 | 4377d20 | R13 | wei | run-970a1c4cc2454d99a964a6c9b55e49f1 | pass | `scripts/run_turn.py`. Same shape as R12, and cites `[budget-summary-q3#p.2 part 1]` for the contingency claim, as R13 requires ("contingency has been fully allocated, leaving no cover for additional rehearsals"). Also cites `[risk-register#row R-1]`, `[risk-register#row R-2]`, `[status-report-2026-09#§1]`. |
 | 2026-09-11 | bf574d3 | T1 | priya | run-9c1a407d397743daa679c2f5ac32971e | pass | at risk, 2 days late, due 2026-09-11, `Sources: milestone-m2`. |
 | 2026-09-11 | bf574d3 | T2 | priya | run-ee3babcf1ca44768bda817ca63b8f38c | pass | SPR-13, 22/40 points, 4 days remaining. |
 | 2026-09-11 | bf574d3 | T3 | priya | run-3fe293602144444e84bd46fea68e828b | pass | 292,800/480,000 (61%), forecast 515,000. |

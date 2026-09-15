@@ -275,10 +275,13 @@ follow-up, not folded into this change.
 
 ### Step 4 -- `eval:`/`docs:` the evidence
 
-- `eval/routing_cases.py`: add **A12** (this request, actor priya, accepted first routes
+- `eval/routing_cases.py`: add **R12** (this request, actor priya, accepted first routes
   `call_tool:get_budget_summary` / `call_tool:list_risks` / `retrieve_project_documents`,
-  `expected_needs={document_passage, erp_field}`) and **A13** (same request as wei -- the
-  PDF is in scope, so the reply must cite `budget-summary-q3`).
+  `expected_needs={document_passage, erp_field}`) and **R13** (same request as wei -- the
+  PDF is in scope, so the reply must cite `budget-summary-q3`). Named `R12`/`R13`, not
+  `A12`/`A13`: `docs/manual-test.md` already has an unrelated `A12` (an approval-gating
+  scenario) -- the eval case ids are meant to mirror the manual-test scenario a case is
+  drawn from, and these are retrieval cases.
 - Re-run `scripts/run_routing_comparison.py`; the contract text changed in steps 2 and 3,
   so ADR 0020's comparison must be re-recorded, not assumed.
 - `docs/manual-test.md`: one row for the priya path (reply cites `risk-register#row R-1`,
@@ -286,6 +289,37 @@ follow-up, not folded into this change.
   contingency answered from `status-report-2026-09#§4`) and one for wei.
 - Browser check per CLAUDE.md: send the request as priya, watch it stream, click the
   citations, console clean.
+
+**Done.** All four pieces run for real:
+
+- **Browser check** (priya, `sess-ba74e3c1d057`, trace `run-e7ec7ec5d2d6463d9025a8ca64364128`):
+  streamed, ended with clickable citation buttons, console clean. `get_budget_summary` →
+  `list_risks` → `search_project_documents` (3 queries) → answer. Cites
+  `[risk-register#row R-1]`, `[risk-register#row R-2]`, `[sprint-13-report#§1.2]`, `[#§2]`;
+  `budget-summary-q3` correctly absent.
+- **CLI check as wei** (trace `run-970a1c4cc2454d99a964a6c9b55e49f1`): same shape, and cites
+  `[budget-summary-q3#p.2 part 1]` for the contingency claim, as it should now that wei holds
+  the finance scope.
+- **`docs/manual-test.md`**: R12 (priya) and R13 (wei) added to §4.2, with real trace ids in
+  the §6 results log.
+- **`scripts/run_routing_comparison.py --repeats 5`** (real, `evidence/routing/
+  routing-comparison-2026-09-15.json`, commit `4377d20`, cost ~$0.95, 160 calls, some
+  429-retried under load): production `PLANNER_CONTRACT` (`v1-direct`) still wins --
+  87.5% match rate vs. 82.5%/82.5% for the two ADR 0020 candidates, confirming ADR 0020's
+  finding still holds after steps 1-3's wording changes. The only v1-direct mismatches are
+  R1's own pre-existing, already-documented routing inconsistency (ADR 0020/0021's original
+  finding, unrelated to this plan -- ADR 0021 already compensates for it structurally, not
+  by routing). The new multi-document case (recorded in this run under its pre-rename id
+  `A12`/`A13`; `eval/routing_cases.py` now calls it `R12`/`R13` -- same requests, cosmetic
+  label difference only) matched its accepted first routes and its declared needs in every
+  successful repeat, across all three contracts: **40/40 declarations matched (100%),
+  zero hallucinated tool calls** across all 120 routing rows. Two rows failed to
+  transient 429s after exhausting the retry budget (recorded honestly as error rows, not
+  papered over).
+- `eval/routing_cases.py`'s own docstring updated (six cases -> eight); `tests/eval/
+  test_routing.py`'s hardcoded six-case/eighteen-row counts updated to eight/twenty-four,
+  and R12/R13 given a scripted response and declaration so the harness's own tests still
+  pass without a live call.
 
 ### Expected trace after the fix (priya)
 
@@ -307,13 +341,18 @@ refuses), the trace shows `contract_enforced: document_passage: refuse withheld,
 
 ## 4. Order and estimate
 
-| step | area | size | unblocks |
-|---|---|---|---|
-| 1 | engine | small (one branch + 4 tests + ADR) | the false refusal can no longer end a turn silently |
-| 2 | context, llm, composition | medium (new module, prompt block, 3 description edits, tests) | the model knows the CSV/PDF are searchable and what to say about the one it cannot read |
-| 3 | rag boundary, engine, llm | medium (argument shape, node, tests, ADR) | the request can actually be completed |
-| 4 | eval, docs | small-medium (2 cases, re-run, 2 manual rows, browser check) | the defence |
+| step | area | size | unblocks | status |
+|---|---|---|---|---|
+| 1 | engine | small (one branch + 4 tests + ADR) | the false refusal can no longer end a turn silently | done, `aeb87f1` |
+| 2 | context, llm, composition | medium (new module, prompt block, 3 description edits, tests) | the model knows the CSV/PDF are searchable and what to say about the one it cannot read | done, `7b61db6` |
+| 3 | rag boundary, engine, llm | medium (argument shape, node, tests, ADR) | the request can actually be completed | done, `4377d20` |
+| 4 | eval, docs | small-medium (2 cases, re-run, 2 manual rows, browser check) | the defence | done |
 
 Steps 1 and 2 are independent of each other; 3 depends on nothing but is only *visible*
-once 1-2 stop the refusal. Do 1 -> 2 -> 3 -> 4, one commit each, on
-`fpt-bao/memory-refactor` or a new branch off `dev`.
+once 1-2 stop the refusal. Done 1 -> 2 -> 3 -> 4, one commit each, on
+`fpt-bao/memory-refactor`.
+
+**All four steps complete as of 2026-09-15.** The trace that opened this plan
+(`run-e4feb394274f42c288be90ed37ad8c8e`) no longer refuses: live-verified through the
+browser, the CLI, and a real 160-call routing comparison. See ADR 0025, ADR 0026, ADR 0027,
+and this file's Step 4 section above for the full evidence trail.

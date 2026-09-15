@@ -90,6 +90,18 @@ WELL_BEHAVED_RESPONSES = {
     "confirmed for the M2 cutover.": called("list_risks", project_id="atlas"),
     "Record a medium risk on atlas: warehouse depot hardware refresh is "
     "unfunded.": called("list_risks", project_id="atlas"),
+    # R12 and R13 share this exact request text (priya vs. wei) -- the
+    # scripted client keys on the question alone, so one entry answers
+    # both cases, which is correct: they are expected to route identically.
+    "Atlas project: pull the current budget and open risks from the ERP, "
+    "then cross-check each open risk against the risk register CSV for "
+    "its severity, check the Q3 budget summary PDF for whether "
+    "contingency has been allocated for high-severity risks, and check "
+    "the latest sprint report to see if any of those risks are already "
+    "causing schedule slip. Summarize the full picture with sources for "
+    "each claim.": called(
+        "get_budget_summary", project_id="atlas", include_forecast=False
+    ),
 }
 
 
@@ -105,7 +117,7 @@ def gateway_factory_for(client) -> "callable":
     return factory
 
 
-def test_three_prompts_six_cases_one_repeat_produce_eighteen_rows() -> None:
+def test_three_prompts_eight_cases_one_repeat_produce_twenty_four_rows() -> None:
     client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES)
     prompts = (
         RouterPrompt("p1", "contract one"),
@@ -117,7 +129,7 @@ def test_three_prompts_six_cases_one_repeat_produce_eighteen_rows() -> None:
         prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1
     )
 
-    assert len(report.results) == 18
+    assert len(report.results) == 24
 
 
 def test_every_row_carries_chosen_accepted_matched_and_hallucinated() -> None:
@@ -162,7 +174,7 @@ def test_list_risks_matches_the_write_cases_but_not_documents() -> None:
     assert by_case["R1"].matched is True  # documents, not list_risks -- a different case entirely
 
 
-def test_a_client_that_raises_on_one_pair_yields_one_error_row_and_seventeen_others() -> None:
+def test_a_client_that_raises_on_one_pair_yields_one_error_row_and_twenty_one_others() -> None:
     raising_question = "How is the sprint going?"
     client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, raise_for=raising_question)
     prompts = (
@@ -176,7 +188,7 @@ def test_a_client_that_raises_on_one_pair_yields_one_error_row_and_seventeen_oth
     errored = [row for row in report.results if row.error is not None]
     clean = [row for row in report.results if row.error is None]
     assert len(errored) == 3  # one per prompt: T9/1 raises under every contract
-    assert len(clean) == 15
+    assert len(clean) == 21
     assert all(row.matched is False for row in errored)
     assert all("scripted transport failure" in row.error for row in errored)
 
@@ -210,9 +222,9 @@ def test_the_report_round_trips_through_json() -> None:
 
     dumped = json.dumps(report.to_dict())
     reloaded = json.loads(dumped)
-    assert len(reloaded["results"]) == 6
+    assert len(reloaded["results"]) == 8
     assert reloaded["summary"][0]["prompt"] == "p1"
-    assert reloaded["summary"][0]["total"] == 6
+    assert reloaded["summary"][0]["total"] == 8
 
 
 def test_summary_reports_match_rate_and_cost_per_prompt() -> None:
@@ -223,7 +235,7 @@ def test_summary_reports_match_rate_and_cost_per_prompt() -> None:
 
     (summary,) = report.summary()
     assert summary.prompt == "p1"
-    assert summary.total == 6
+    assert summary.total == 8
     assert 0.0 <= summary.match_rate <= 1.0
     assert summary.contract_length == len("contract one")
 
@@ -238,10 +250,20 @@ WELL_BEHAVED_DECLARATIONS = {
     ),
     "What is the status of milestone M2?": declared(["erp_field"]),
     "How is the sprint going?": declared(["erp_field"]),
+    # R12/R13's shared request text -- see WELL_BEHAVED_RESPONSES.
+    "Atlas project: pull the current budget and open risks from the ERP, "
+    "then cross-check each open risk against the risk register CSV for "
+    "its severity, check the Q3 budget summary PDF for whether "
+    "contingency has been allocated for high-severity risks, and check "
+    "the latest sprint report to see if any of those risks are already "
+    "causing schedule slip. Summarize the full picture with sources for "
+    "each claim.": declared(
+        ["document_passage", "erp_field"], "risk severity and schedule slip"
+    ),
 }
 
 
-def test_six_cases_one_repeat_produce_six_declaration_rows_beside_eighteen_routing_rows() -> None:
+def test_eight_cases_one_repeat_produce_eight_declaration_rows_beside_twenty_four_routing_rows() -> None:
     client = ScriptedRoutingClient(WELL_BEHAVED_RESPONSES, declarations=WELL_BEHAVED_DECLARATIONS)
     prompts = (
         RouterPrompt("p1", "contract one"),
@@ -251,8 +273,8 @@ def test_six_cases_one_repeat_produce_six_declaration_rows_beside_eighteen_routi
 
     report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
 
-    assert len(report.results) == 18
-    assert len(report.declarations) == 6
+    assert len(report.results) == 24
+    assert len(report.declarations) == 8
 
 
 def test_a_declaration_is_not_repeated_per_prompt() -> None:
@@ -267,7 +289,7 @@ def test_a_declaration_is_not_repeated_per_prompt() -> None:
 
     run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
 
-    assert len(client.declaration_calls) == 6
+    assert len(client.declaration_calls) == 8
 
 
 def test_a_matching_declaration_is_scored_by_set_equality() -> None:
@@ -313,7 +335,8 @@ def test_unscored_cases_are_excluded_from_the_declaration_match_rate() -> None:
     assert all(
         row.matched is None for row in report.declarations if row.case_id in unscored
     )
-    # Three scored cases (R1, T1, T9/1), all matching the well-behaved map.
+    # Five scored cases (R1, T1, T9/1, R12, R13), all matching the
+    # well-behaved map.
     assert report.declaration_match_rate() == 1.0
 
 
@@ -342,5 +365,5 @@ def test_the_report_round_trips_through_json_with_declarations() -> None:
     report = run_comparison(prompts, DEFAULT_CASES, gateway_factory_for(client), USERS, repeats=1)
 
     reloaded = json.loads(json.dumps(report.to_dict()))
-    assert len(reloaded["declarations"]) == 6
+    assert len(reloaded["declarations"]) == 8
     assert reloaded["declaration_match_rate"] == 1.0

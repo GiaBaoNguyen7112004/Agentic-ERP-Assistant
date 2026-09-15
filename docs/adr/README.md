@@ -36,6 +36,9 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0022](0022-the-model-is-told-the-principal-and-history-is-the-authority-on-the-conversation.md) | The model is told the principal, and history is the authority on the conversation | Accepted |
 | [0023](0023-memory-is-what-the-user-established.md) | Memory is what the user established; a turn that established nothing writes nothing | Accepted |
 | [0024](0024-a-preference-is-replaced-by-topic-not-by-key.md) | A preference is replaced by topic, not only by key | Accepted |
+| [0025](0025-a-refusal-is-held-to-the-reply-contract-too.md) | A refusal is held to the reply contract too | Accepted |
+| [0026](0026-the-model-is-told-which-documents-it-may-search.md) | The model is told which documents it may search | Accepted |
+| [0027](0027-retrieval-takes-a-bounded-list-of-queries.md) | Retrieval takes a bounded list of queries | Accepted |
 
 ## Format
 

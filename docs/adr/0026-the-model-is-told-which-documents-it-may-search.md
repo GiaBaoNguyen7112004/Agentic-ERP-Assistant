@@ -123,7 +123,7 @@ it does not change how many searches one turn gets to run.
 them name a document by file format -- but `PLANNER_CONTRACT`'s text
 changed (rule 1 and rule 4), so the ADR 0020 routing comparison needs a
 re-run before its numbers can be trusted again; that re-run belongs with
-`multi-document-turn-plan.md` step 4, alongside the new A12/A13 cases and
+`multi-document-turn-plan.md` step 4, alongside the new R12/R13 cases and
 step 3's own contract change.
 
 ## Tests
