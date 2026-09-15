@@ -9,6 +9,7 @@ from tests.memory.builders import RECORDED, make_record, make_scope, make_turn
 
 from agentic_erp_assistant.memory.audit import InMemoryMemoryAudit
 from agentic_erp_assistant.memory.models import MemoryCandidate, MemoryScope
+from agentic_erp_assistant.memory.promotion import SessionSummaryProposal
 from agentic_erp_assistant.memory.service import MemoryService, SessionMemory
 from agentic_erp_assistant.memory.store import InMemoryMemoryStore
 from agentic_erp_assistant.memory.vector_store import InMemoryMemoryVectorStore
@@ -59,6 +60,26 @@ class Proposes:
 class Refuses:
     def propose(self, state, *, required_scope):
         raise RuntimeError("the provider is down")
+
+
+class SummaryProposer:
+    """Returns one scripted answer per promotion, recording what it was shown.
+
+    A raise is a scripted outage, not a scripted "nothing to add" -- the
+    service treats the two the same, and both must leave the previous summary
+    standing.
+    """
+
+    def __init__(self, *answers: object) -> None:
+        self.answers = list(answers)
+        self.shown: list[object] = []
+
+    def propose(self, turns, *, previous):
+        self.shown.append(previous)
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer  # type: ignore[return-value]
 
 
 def candidate(**overrides: object) -> MemoryCandidate:
@@ -480,6 +501,86 @@ def test_consecutive_promotions_extend_one_summary_with_no_proposer() -> None:
     # goal merely because it was evicted last.
     assert live[0].statement == "Goal: give me project status."
     assert live[0].supersedes == (first[0].memory_id,)
+
+
+def _promoted(memory: SessionMemory) -> str:
+    summaries = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(summaries) == 1
+    return summaries[0].statement
+
+
+def test_a_proposal_on_the_second_promotion_extends_the_carried_summary() -> None:
+    """With a proposer present: the proposal's goal wins over the carried one,
+    and what the batch contributes is folded beneath what the session already
+    wrote down."""
+    proposer = SummaryProposer(
+        None,  # first promotion: the model proposed nothing
+        SessionSummaryProposal(
+            user_goal="close out sprint 13",
+            decisions=["cutover moves to Thursday"],
+            unresolved_questions=[],
+            accepted_facts=[],
+        ),
+    )
+    memory = bound(summary_proposer=proposer)
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(
+            trace_id="run-1", route="clarify", request="who signs the cutover off?"
+        ),),
+    )
+
+    assert _promoted(memory) == (
+        "Goal: close out sprint 13. Decided: cutover moves to Thursday. "
+        "Open: who signs the cutover off?."
+    )
+    # And the proposer was shown the summary it was extending.
+    assert proposer.shown[1] is not None
+    assert proposer.shown[1].statement == "Goal: get the cutover scheduled."  # type: ignore[union-attr]
+
+
+def test_a_summary_proposer_failure_no_longer_wipes_the_summary() -> None:
+    """A proposer outage mid-session degrades to the structural fold, which
+    now includes the previous content: the summary no longer resets to one
+    sentence about the newest evicted turn."""
+    memory = bound(summary_proposer=SummaryProposer(RuntimeError("provider down")))
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="reschedule the cutover"),),
+    )
+
+    assert _promoted(memory) == "Goal: get the cutover scheduled."
+
+
+def test_the_decision_reason_tells_an_extension_from_a_first_write() -> None:
+    """A reviewer of the evidence can tell the two apart without reading code
+    -- the same move as ADR 0024's decision reasons."""
+    memory = bound()
+
+    first = memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="get the cutover scheduled"),)
+    )
+    second = memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="reschedule the cutover"),),
+    )
+
+    summary_rows = [d for d in [*first, *second] if d.decision in ("write", "update")]
+    assert [row.decision for row in summary_rows] == ["write", "update"]
+    assert summary_rows[0].reason == "session summary folded 1 evicted turn(s)"
+    # run-1 is the run that wrote the first summary; run-0 is only the turn
+    # it folded.
+    assert summary_rows[1].reason == (
+        "session summary folded 1 evicted turn(s) over the summary from run run-1"
+    )
 
 
 def test_nothing_evicted_means_no_summary_and_no_decision() -> None:

@@ -12,6 +12,7 @@ from agentic_erp_assistant.memory.summary import (
     ITEMS_PER_SECTION,
     SESSION_SUMMARY_KEY,
     SUMMARY_SECTIONS,
+    parse_summary,
     summarize_session,
 )
 from agentic_erp_assistant.state.memory import STATEMENT_MAX_CHARS
@@ -225,6 +226,91 @@ def test_only_the_first_few_items_of_a_section_are_rendered() -> None:
     for n in range(ITEMS_PER_SECTION):
         assert f"decision {n}" in record.statement
     assert f"decision {ITEMS_PER_SECTION}" not in record.statement
+
+
+# --------------------------------------------------------------------------
+# parse_summary: the inverse of the renderer, so a promotion can carry the
+# previous statement forward
+# --------------------------------------------------------------------------
+
+
+def test_parse_summary_round_trips_a_statement_the_renderer_itself_wrote() -> None:
+    """Built by summarize_session, not hand-written -- the round trip must
+    hold for the module's own output, not for strings that merely look like
+    it."""
+    record = summarize(
+        conversation=conversation(
+            pending_approvals=["create_risk awaiting approval (run run-0)"]
+        )
+    )
+
+    assert record is not None
+    parsed = parse_summary(record.statement)
+
+    assert parsed == {
+        "user_goal": ("understand why sprint 12 slipped",),
+        "decisions": ("carry the remaining scope into sprint 13",),
+        "unresolved_questions": ("was the delay staffing or scope?",),
+        "pending_approvals": ("create_risk awaiting approval (run run-0)",),
+        "accepted_facts": ("sprint 12 closed two weeks late",),
+    }
+
+
+def test_parse_summary_yields_the_five_sections_in_the_renderers_own_labels() -> None:
+    assert {label for _, label in SUMMARY_SECTIONS} == {
+        "Goal",
+        "Decided",
+        "Open",
+        "Approvals raised",
+        "Established",
+    }
+
+
+def test_an_item_containing_a_list_separator_splits_in_two() -> None:
+    """Bounded and cosmetic: every word survives, rendered as two facts
+    instead of one."""
+    parsed = parse_summary("Goal: g. Decided: cutover moves; budget follows.")
+
+    assert parsed["decisions"] == ("cutover moves", "budget follows")
+
+
+def test_a_label_inside_an_item_splits_early_but_keeps_every_fragment() -> None:
+    parsed = parse_summary(
+        "Goal: get the cutover scheduled. Decided: carry on; see Goal: above."
+    )
+
+    assert parsed["user_goal"] == ("get the cutover scheduled", "above")
+    assert parsed["decisions"] == ("carry on", "see")
+
+
+def test_a_statement_clipped_between_sections_loses_only_the_marker() -> None:
+    """_render appends " ..." when the room ran out; the final item was
+    complete, so the marker is all that is dropped."""
+    parsed = parse_summary("Goal: g. Decided: cutover moves to Thursday. ...")
+
+    assert parsed["user_goal"] == ("g",)
+    assert parsed["decisions"] == ("cutover moves to Thursday",)
+
+
+def test_a_statement_clipped_mid_item_loses_the_final_item() -> None:
+    """The first section overflowed and _render glued "..." onto text cut
+    mid-word. A possibly-incomplete fact is never carried as if it read as
+    complete."""
+    parsed = parse_summary(
+        "Goal: get the cutover scheduled; plan the budget review with the vendo..."
+    )
+
+    assert parsed["user_goal"] == ("get the cutover scheduled",)
+
+
+def test_a_foreign_statement_parses_to_nothing() -> None:
+    """A summary this repo did not render is not carried forward on a guess."""
+    assert parse_summary("I could not answer that.") == {}
+
+
+def test_an_empty_statement_parses_to_nothing() -> None:
+    assert parse_summary("") == {}
+    assert parse_summary("   ") == {}
 
 
 def test_one_enormous_item_is_clipped_rather_than_dropped() -> None:

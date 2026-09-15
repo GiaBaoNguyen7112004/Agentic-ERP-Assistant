@@ -268,6 +268,46 @@ def test_list_sections_merge_newest_first_and_drop_the_oldest_at_the_cap() -> No
     assert "is the budget approved?" not in state["unresolved_questions"]
 
 
+def test_a_carried_item_already_stored_is_not_duplicated() -> None:
+    """Deduplication preserves first occurrence: the carried copy of a fact
+    this batch re-proposes is the same fact, not a second one."""
+    turn = make_turn(trace_id="run-1", request="and the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(decisions=["cutover moves to Thursday"]),
+        previous=previous_summary("Decided: cutover moves to Thursday."),
+    )
+
+    assert state["decisions"] == ["cutover moves to Thursday"]
+
+
+def test_decisions_take_the_batch_first_then_the_newest_previous_items() -> None:
+    """The sliding window, on decisions: four carried items plus one proposed
+    keeps the proposed and the two newest carried -- the oldest previous
+    decision is what leaves."""
+    turn = make_turn(trace_id="run-1", request="and the budget?")
+
+    state = conversation_state(
+        (turn,),
+        proposal(decisions=["the budget was approved"]),
+        previous=previous_summary("Decided: d1; d2; d3; d4."),
+    )
+
+    assert state["decisions"] == ["the budget was approved", "d1", "d2"]
+
+
+def test_the_carried_goal_fills_in_where_the_structural_guess_sits_nowhere() -> None:
+    """previous=None keeps the structural behaviour every earlier test pins:
+    with no previous summary the goal is the oldest evicted request, which is
+    the right answer for a session's first promotion (ADR 0014's fallback)."""
+    turn = make_turn(trace_id="run-1", request="get the cutover scheduled")
+
+    state = conversation_state((turn,), None)
+
+    assert state["user_goal"] == "get the cutover scheduled"
+
+
 # --------------------------------------------------------------------------
 # LLMSessionSummaryProposer: every unusable answer means "propose nothing"
 # --------------------------------------------------------------------------

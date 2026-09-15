@@ -534,7 +534,7 @@ class SessionMemory:
             None,
         )
         proposal = self._summary_proposal(state, evicted, previous)
-        mapping = conversation_state(evicted, proposal)
+        mapping = conversation_state(evicted, proposal, previous=previous)
         summary = self._summarize(
             state, mapping, links=[turn.trace_id for turn in evicted]
         )
@@ -547,10 +547,17 @@ class SessionMemory:
             )
 
         decision = "update" if summary.supersedes else "write"
+        if previous is not None:
+            reason = (
+                f"session summary folded {len(evicted)} evicted turn(s) over "
+                f"the summary from run {previous.recorded_in_run}"
+            )
+        else:
+            reason = f"session summary folded {len(evicted)} evicted turn(s)"
         return summary, MemoryDecision(
             decision=decision,
             supersedes=summary.supersedes,
-            reason=f"session summary folded {len(evicted)} evicted turn(s)",
+            reason=reason,
         )
 
     def _summary_proposal(

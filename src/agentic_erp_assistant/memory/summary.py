@@ -46,6 +46,7 @@ with no mechanism that ever clears it.
 """
 
 import logging
+import re
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 
@@ -58,6 +59,7 @@ __all__ = [
     "ITEMS_PER_SECTION",
     "SESSION_SUMMARY_KEY",
     "SUMMARY_SECTIONS",
+    "parse_summary",
     "summarize_session",
 ]
 
@@ -115,6 +117,20 @@ list and push the goal out, which is exactly backwards.
 """
 
 _TRUNCATED = "..."
+
+_SECTION_START = re.compile(
+    r"(?:^| )(?=(?:"
+    + "|".join(re.escape(label) for _, label in SUMMARY_SECTIONS)
+    + r"): )"
+)
+"""Where a rendered statement's sections begin: the start, or a space ahead of
+a known label.
+
+The inverse of :func:`_render`'s join -- sections are separated by one space, so
+a new section announces itself at the space before ``Label:``. Building the
+alternation from :data:`SUMMARY_SECTIONS` rather than hand-writing the labels
+means the parser cannot drift from the renderer it is the inverse of.
+"""
 
 
 def _items(value: object) -> list[str]:
@@ -203,6 +219,63 @@ def _render(conversation: CompactedConversation, *, scope: MemoryScope) -> str:
             break
         line = candidate
     return line
+
+
+def parse_summary(statement: str) -> dict[str, tuple[str, ...]]:
+    """The inverse of :func:`_render`: a summary statement back into its sections.
+
+    Round-trips exactly for everything ``_render`` writes, with three named,
+    accepted deviations: an item containing ``"; "`` splits in two; a label
+    inside an item splits early; a statement clipped at
+    :data:`STATEMENT_MAX_CHARS` loses at most its final item, never carries a
+    half-fact. Foreign text (no known label) yields ``{}`` -- a summary this
+    repo did not render is not carried forward on a guess.
+    """
+    text = statement.strip()
+    if not text:
+        return {}
+
+    # _render marks a clipped statement in two shapes: " ..." appended when the
+    # room ran out between sections -- there the final item is complete, so
+    # only the marker is dropped -- and "..." glued onto text cut mid-item when
+    # the first section overflowed. There the possibly-incomplete final item is
+    # dropped as well, never carried as if it read as complete.
+    final_item_cut = False
+    if text.endswith(_TRUNCATED):
+        if text.endswith(f" {_TRUNCATED}"):
+            text = text[: len(text) - len(_TRUNCATED) - 1].rstrip()
+        else:
+            text = text[: len(text) - len(_TRUNCATED)].rstrip()
+            final_item_cut = True
+
+    known = {label: field for field, label in SUMMARY_SECTIONS}
+    sections: dict[str, tuple[str, ...]] = {}
+    for chunk in _SECTION_START.split(text):
+        label, separator, body = chunk.partition(": ")
+        field = known.get(label)
+        if not separator or field is None or not body:
+            continue
+        if body.endswith("."):
+            body = body[:-1]
+        items = tuple(
+            part for part in (item.strip() for item in body.split("; ")) if part
+        )
+        if items:
+            # Two chunks can carry the same label -- a label inside an item
+            # splits early. The fragments accumulate; nothing is dropped.
+            sections[field] = sections.get(field, ()) + items
+
+    if final_item_cut and sections:
+        # Only the first section is present when _render clipped that way, and
+        # its last item is the one the cap may have cut mid-word.
+        first = next(field for field, _ in SUMMARY_SECTIONS if field in sections)
+        remaining = sections[first][:-1]
+        if remaining:
+            sections[first] = remaining
+        else:
+            del sections[first]
+
+    return sections
 
 
 def summarize_session(

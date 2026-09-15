@@ -83,7 +83,7 @@ from agentic_erp_assistant.memory.store import (
     IntentStorePort,
     MemoryStorePort,
 )
-from agentic_erp_assistant.memory.summary import summarize_session
+from agentic_erp_assistant.memory.summary import parse_summary, summarize_session
 from agentic_erp_assistant.memory.vector_store import (
     InMemoryMemoryVectorStore,
     MemoryVectorStorePort,
@@ -130,6 +130,7 @@ __all__ = [
     "decide",
     "in_bounds",
     "memory_id",
+    "parse_summary",
     "structural_state",
     "summarize_session",
     "unsafe_to_store",
