@@ -95,7 +95,16 @@ function holds every attempt to answer or search to that declaration.**
   necessary was never fetched) — rather than a bare refusal of a question
   the ERP had already half-answered. A model-chosen search that finds
   nothing still refuses exactly as it always has; the softer landing is
-  only for a redirect the check itself made.
+  only for a redirect the check itself made. *(Extended 2026-09-15, same
+  rule, two more paths: a redirected search that finds passages which do
+  not ground a reply -- the composer refuses, cites something never
+  retrieved, or breaks its own schema by answering "grounded" with no
+  citation, which is what a model that answered from memory or history
+  rather than the passages sends back -- lands the same way. Session
+  `sess-25f74ac93cd6` found the gap: a fact the user had established in
+  memory, absent from every document, ended as `provider_failure` after the
+  redirect instead of the memory-backed reply the planner already had. A
+  provider that never answered is still a provider failure.)*
 - **The composer sees this turn's own observations.** `llm/prompts.py::
   build_messages` grows a seventh block, `observation`, between `evidence`
   and `history` — the same block `build_planner_messages` and

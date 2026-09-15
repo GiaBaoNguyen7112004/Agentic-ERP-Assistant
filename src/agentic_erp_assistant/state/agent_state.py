@@ -271,7 +271,8 @@ class AgentState(BaseModel):
     ``retrieve_project_documents`` for that redirect -- never by any other
     node, and never read by anyone but ``retrieve_and_answer``, which
     delivers it, marked ``incomplete_reply``, if the redirected search finds
-    nothing to compose from. A retrieval the *model* chose on its own never
+    nothing to compose from -- or finds passages the composer cannot ground
+    a reply on. A retrieval the *model* chose on its own never
     sets this: only the check's own redirect does, which is exactly how
     ``retrieve_and_answer`` tells "the model wanted to search anyway" apart
     from "the check made it search instead of answering".

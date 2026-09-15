@@ -36,6 +36,8 @@ import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from agentic_erp_assistant.reasoning.completeness import Completeness, assess, next_redirect
 from agentic_erp_assistant.reasoning.decision import DecisionRoute, ReasoningDecision
 from agentic_erp_assistant.engine.ports import (
@@ -588,37 +590,43 @@ class GraphNodes:
             ),
         )
 
+        # ADR 0021: when the check's own redirect sent this search out, the
+        # planner's withheld reply is delivered anyway -- never worse than
+        # the turn would have been without the check -- marked incomplete
+        # rather than refused or failed. A search the *model* chose ends
+        # exactly as it always has, below: only a redirect this check made
+        # gets the softer landing. Three ways a redirect can come back
+        # without a grounded reply, one landing for all of them: nothing
+        # retrieved; something retrieved that the composer could not
+        # ground a reply on (it refused, or cited something never
+        # retrieved); or a composer reply that broke its own schema --
+        # "grounded, and citing nothing" is what a model that answered
+        # from memory or history rather than the passages sends back.
+        redirected = "document_passage" in state.redirected_needs and state.draft is not None
+
+        def deliver_draft(why: str, evidence: Sequence[EvidenceSnippet]) -> AgentState:
+            return advance(
+                state,
+                "answer",
+                evidence=tuple(evidence),
+                response=_with_sources(state.draft, _observed_sources(state.observations)),
+                failure="incomplete_reply",
+                error_detail=_clip(
+                    f"contract needs a document passage; {why}", ERROR_DETAIL_MAX_CHARS
+                ),
+                events=events
+                + (
+                    _event(
+                        "retrieve",
+                        "contract_enforced",
+                        "unmet after redirect: document_passage",
+                    ),
+                ),
+            )
+
         if not snippets:
-            if "document_passage" in state.redirected_needs and state.draft is not None:
-                # ADR 0021: the check's own redirect sent this search out,
-                # and it found nothing. The planner's withheld reply is
-                # delivered anyway -- never worse than the turn would have
-                # been without the check -- marked incomplete rather than
-                # refused. A search the *model* chose that finds nothing
-                # still refuses exactly as it always has, below: only a
-                # redirect this check made gets the softer landing.
-                return advance(
-                    state,
-                    "answer",
-                    evidence=(),
-                    response=_with_sources(
-                        state.draft, _observed_sources(state.observations)
-                    ),
-                    failure="incomplete_reply",
-                    error_detail=_clip(
-                        f"contract needs a document passage; the redirected "
-                        f"search for {queries!r} found none",
-                        ERROR_DETAIL_MAX_CHARS,
-                    ),
-                    events=events
-                    + (
-                        _event(
-                            "retrieve",
-                            "contract_enforced",
-                            "unmet after redirect: document_passage",
-                        ),
-                    ),
-                )
+            if redirected:
+                return deliver_draft(f"the redirected search for {queries!r} found none", ())
             return advance(
                 state,
                 "refuse",
@@ -634,6 +642,17 @@ class GraphNodes:
             )
         except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
             logger.warning("composer failed on %s: %s", state.trace_id, error)
+            if redirected and isinstance(error, ValidationError):
+                # The provider answered and the reply broke the schema: the
+                # passages did not ground a reply, the same landing as
+                # finding none. A provider that never answered (network,
+                # auth, budget) is a real failure and stays one below.
+                return deliver_draft(
+                    f"the redirected search for {queries!r} found "
+                    f"{len(snippets)} passage(s) that did not ground a reply "
+                    f"(composer raised ValidationError)",
+                    snippets,
+                )
             return advance(
                 state,
                 "fail",
@@ -652,6 +671,12 @@ class GraphNodes:
 
         problem = _ungrounded(answer, snippets)
         if problem is not None:
+            if redirected:
+                return deliver_draft(
+                    f"the redirected search for {queries!r} found "
+                    f"{len(snippets)} passage(s) that did not ground a reply ({problem})",
+                    snippets,
+                )
             return advance(
                 state,
                 "refuse",

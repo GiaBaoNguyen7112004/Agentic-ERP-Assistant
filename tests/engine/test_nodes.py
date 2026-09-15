@@ -8,6 +8,7 @@ source nobody retrieved never reaches a user.
 
 from datetime import UTC, datetime
 
+import pydantic
 import pytest
 
 from agentic_erp_assistant.llm.schemas import Citation, GroundedAnswer
@@ -568,6 +569,105 @@ def test_a_redirected_search_finding_nothing_delivers_the_withheld_draft() -> No
         and "unmet after redirect: document_passage" in event.detail
         for event in result.events
     )
+
+
+def _schema_violation() -> Exception:
+    """What the gateway raises when the composer answered from memory or
+    history rather than the passages: grounded, and citing nothing."""
+    try:
+        GroundedAnswer.model_validate(
+            {"answer": "It meets every second Thursday.", "grounded": True, "confidence": 0.8}
+        )
+    except pydantic.ValidationError as error:
+        return error
+    raise AssertionError("expected a schema violation")  # pragma: no cover
+
+
+def test_a_redirected_search_whose_reply_breaks_the_schema_delivers_the_draft() -> None:
+    """The gap sess-25f74ac93cd6 fell through (2026-09-15): the planner
+    answered from a recalled memory, the check withheld it and searched, the
+    search found passages that never state the fact, and the composer --
+    answering from memory again -- came back grounded with no citation. The
+    gateway raises on that, and the turn used to end as provider_failure:
+    strictly worse than it would have been without the check, which is the
+    one thing ADR 0021 promised a redirect would never be."""
+    graph = nodes(composer=FakeComposer(raises=_schema_violation()))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("It meets every second Thursday.")
+    assert result.evidence == (snippet(),)
+    assert "did not ground a reply" in (result.error_detail or "")
+    assert "ValidationError" in (result.error_detail or "")
+    assert any(
+        event.kind == "contract_enforced"
+        and "unmet after redirect: document_passage" in event.detail
+        for event in result.events
+    )
+
+
+def test_a_redirected_search_the_composer_refuses_delivers_the_draft() -> None:
+    """Same landing when the composer plays by the rules and refuses: the
+    passages the redirect found do not support the reply, so the withheld
+    draft is delivered marked incomplete rather than the question refused."""
+    graph = nodes(
+        composer=FakeComposer(
+            GroundedAnswer(
+                answer="",
+                grounded=False,
+                confidence=0.2,
+                refusal_reason="The minutes do not state a weekday.",
+            )
+        )
+    )
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert result.route == "answer"
+    assert result.failure == "incomplete_reply"
+    assert result.response.startswith("It meets every second Thursday.")
+    assert "the composer refused" in (result.error_detail or "")
+
+
+def test_a_redirected_search_that_the_provider_fails_is_still_a_provider_failure() -> None:
+    """The softer landing is for a reply that came back and did not ground;
+    a provider that never answered is a real failure, redirect or not."""
+    graph = nodes(composer=FakeComposer(raises=ConnectionError("reset")))
+
+    result = graph.retrieve_and_answer(
+        state(
+            route="retrieve_project_documents",
+            draft="It meets every second Thursday.",
+            redirected_needs=frozenset({"document_passage"}),
+        )
+    )
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+
+
+def test_a_model_chosen_search_whose_reply_breaks_the_schema_still_fails() -> None:
+    """No draft, no landing: a search the model chose that comes back with a
+    schema-breaking reply is the contract failure it always was."""
+    graph = nodes(composer=FakeComposer(raises=_schema_violation()))
+
+    result = graph.retrieve_and_answer(state(route="retrieve_project_documents"))
+
+    assert (result.route, result.failure) == ("fail", "provider_failure")
+    assert "ValidationError" in (result.error_detail or "")
 
 
 def test_a_model_chosen_search_finding_nothing_still_refuses() -> None:
