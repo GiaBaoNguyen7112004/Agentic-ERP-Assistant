@@ -138,6 +138,9 @@ shows is a rendering of the SSE events in `web/protocol.py` (the reducer in
 **Chat column.** Each assistant bubble carries a route badge:
 `documents` (retrieve → grounded answer), `tool` (think → call_tool → … → answer),
 `clarify`, `refused`, `failed` (red block with `failure` and `error_detail`),
+`incomplete` (an answer delivered after ADR 0021's redirected search could
+not confirm it -- amber "not confirmed by project documents" note under the
+text, with `error_detail`, never the red block),
 `waiting for approval` (card with tool, arguments, Approve/Deny). Text streams
 in, then is **replaced** by the authoritative reply when the `answer` event
 arrives (the grounding check runs on the full reply). Citation chips:

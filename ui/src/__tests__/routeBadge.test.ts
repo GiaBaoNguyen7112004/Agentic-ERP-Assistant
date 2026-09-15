@@ -95,6 +95,26 @@ describe('routeBadge', () => {
     })
   })
 
+  it("'incomplete' for a delivered answer the redirected search could not confirm (ADR 0021)", () => {
+    const answer = (route: string | null, failure: string) => ({
+      type: 'answer' as const,
+      text: 'The steering committee meets every second Thursday.',
+      route,
+      failure,
+      error_detail: 'contract needs a document passage; ...',
+      citations: [],
+    })
+    expect(routeBadge(turn({ status: 'done', answer: answer('answer', 'incomplete_reply') }))).toEqual({
+      label: 'incomplete',
+      tone: 'warning',
+    })
+    // only a delivered answer gets the caveat; the same failure on any other route is still 'failed'
+    expect(routeBadge(turn({ status: 'done', answer: answer('fail', 'incomplete_reply') }))).toEqual({
+      label: 'failed',
+      tone: 'destructive',
+    })
+  })
+
   it("'error' status before any answer", () => {
     expect(routeBadge(turn({ status: 'error', error: 'boom' }))).toEqual({
       label: 'error',

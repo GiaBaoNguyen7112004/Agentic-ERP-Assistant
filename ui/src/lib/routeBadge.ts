@@ -20,6 +20,11 @@ export function routeBadge(turn: TurnView): RouteBadgeView {
   }
   const { route, failure } = turn.answer
   if (route === 'refuse') return { label: 'refused', tone: 'warning' }
+  // ADR 0021: the planner's reply was delivered after a redirected search
+  // could not confirm it -- an answer with a caveat, never 'failed'.
+  if (route === 'answer' && failure === 'incomplete_reply') {
+    return { label: 'incomplete', tone: 'warning' }
+  }
   if (route === 'fail' || failure !== 'none') return { label: 'failed', tone: 'destructive' }
   if (route === 'clarify') return { label: 'clarify', tone: 'neutral' }
   if (route === 'answer') {
