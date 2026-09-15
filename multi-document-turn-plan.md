@@ -254,7 +254,24 @@ passages from whichever document matches best and starves the rest."
 event; a replayed state with legacy `{"query": ...}` still runs); `tests/rag/` unchanged
 (the retriever itself does not change).
 
-**ADR 0027** -- "retrieval takes a bounded list of queries".
+**ADR 0027** -- "retrieval takes a bounded list of queries". **Done** (commit
+pending): `SearchProjectDocumentsArguments.queries` (1-3, no blanks),
+`ReasoningDecision.search_queries`, `GraphNodes._queries`/`_dedupe_by_tag`, the
+`evidence_retrieved` event reporting per-query counts and every query string.
+
+Live-verified end to end against the real corpus and a real model call, same
+request as `run-e4feb394274f42c288be90ed37ad8c8e`: the model now declares three
+queries ("severity of risks R-1 and R-2", "contingency allocated for
+high-severity risks", "risks causing schedule slip in latest sprint report"),
+retrieves `4+4+4` passages in one node, and answers citing `risk-register#row
+R-1`, `#row R-2`, `sprint-13-report#§1.2`, `#§2` -- correctly identifying R-2 as
+the risk already causing schedule slip. Six model calls, no refusal, well under
+the step budget. One residual gap noted in ADR 0027's own Consequences: the
+reply says contingency "is not explicitly mentioned in the Q3 budget summary"
+rather than "I cannot access the Q3 budget summary" -- RC4 is closed at the
+retrieval boundary (priya is never shown the PDF's passages) but not yet in how
+the composer phrases a claim about a document it was never shown; left for a
+follow-up, not folded into this change.
 
 ### Step 4 -- `eval:`/`docs:` the evidence
 

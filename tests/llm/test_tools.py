@@ -21,6 +21,8 @@ from agentic_erp_assistant.llm.tools import (
     DEFAULT_TOOLS,
     GET_PROJECT_STATUS_TOOL,
     PLANNING_TOOLS,
+    SEARCH_PROJECT_DOCUMENTS_TOOL,
+    SEARCH_QUERY_LIMIT,
     ProjectStatusArguments,
     StrictArguments,
     ToolCallResult,
@@ -325,6 +327,61 @@ def test_declare_reply_contract_document_query_is_required_and_nullable() -> Non
     assert "document_query" in schema["required"]
     types = {branch["type"] for branch in schema["properties"]["document_query"]["anyOf"]}
     assert types == {"string", "null"}
+
+
+# --------------------------------------------------------------------------
+# search_project_documents takes a bounded list of queries (ADR 0027)
+# --------------------------------------------------------------------------
+
+
+def test_search_project_documents_takes_one_to_three_queries() -> None:
+    schema = SEARCH_PROJECT_DOCUMENTS_TOOL.schema
+
+    assert schema["properties"]["queries"]["minItems"] == 1
+    assert schema["properties"]["queries"]["maxItems"] == SEARCH_QUERY_LIMIT == 3
+
+
+def test_a_single_query_validates() -> None:
+    arguments = SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+        {"queries": ["M2 delivery commitments"]}
+    )
+
+    assert arguments.queries == ["M2 delivery commitments"]  # type: ignore[attr-defined]
+
+
+def test_three_queries_validate() -> None:
+    arguments = SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+        {"queries": ["a", "b", "c"]}
+    )
+
+    assert arguments.queries == ["a", "b", "c"]  # type: ignore[attr-defined]
+
+
+def test_an_empty_query_list_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"queries": []})
+
+
+def test_more_than_three_queries_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments(
+            {"queries": ["a", "b", "c", "d"]}
+        )
+
+
+def test_a_blank_query_among_real_ones_is_rejected() -> None:
+    """The list can be non-empty and still carry a query that says nothing --
+    the per-item check the list-length constraint alone cannot express."""
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"queries": ["a", "   "]})
+
+
+def test_the_legacy_singular_query_argument_is_no_longer_accepted() -> None:
+    """ADR 0027 replaced the shape rather than adding to it -- a caller
+    still on the old contract fails loudly, not silently as an empty
+    search."""
+    with pytest.raises(ValidationError):
+        SEARCH_PROJECT_DOCUMENTS_TOOL.validate_arguments({"query": "M2 status"})
 
 
 # --------------------------------------------------------------------------

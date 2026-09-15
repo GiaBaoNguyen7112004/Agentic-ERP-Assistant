@@ -68,8 +68,12 @@ class ReplyContract(BaseModel):
     otherwise -- the same "a field that means something only on the routes
     that use it" rule
     :class:`~agentic_erp_assistant.reasoning.decision.ReasoningDecision`
-    already applies to ``search_query``. A contract that needs a passage but
-    names no query would leave the redirect
+    already applies to ``search_queries``. Kept as a single string, unlike
+    that field, because this is the one-query redirect fallback for a model
+    that did not search at all -- see ``engine/nodes.py::think``'s
+    ``document_passage`` branch (ADR 0021, widened by ADR 0025 to cover a
+    refusal too) -- and one query is the honest size of a fallback. A
+    contract that needs a passage but names no query would leave the redirect
     (:mod:`agentic_erp_assistant.reasoning.completeness`) nothing to search
     for; a contract that names one without needing a passage is an input no
     check will ever read.

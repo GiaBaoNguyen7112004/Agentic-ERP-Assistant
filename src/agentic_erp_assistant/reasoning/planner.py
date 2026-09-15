@@ -369,7 +369,7 @@ class Planner:
             return ReasoningDecision(
                 route=route,
                 confidence=UNSCORED_CONFIDENCE,
-                search_query=validated.query,
+                search_queries=tuple(validated.queries),  # type: ignore[attr-defined]
                 rationale=f"called {spec.name}",
             )
         return ReasoningDecision(

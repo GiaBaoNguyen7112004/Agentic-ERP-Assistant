@@ -275,18 +275,26 @@ class ReasoningDecision(BaseModel):
     write always needs approval.
     """
 
-    search_query: str | None = Field(default=None, min_length=1)
-    """What to search for, on the one route that searches.
+    search_queries: tuple[str, ...] = ()
+    """What to search for, on the one route that searches (ADR 0027).
 
-    The model picks retrieval by calling a function with a query argument, and
-    that query is usually a better one than the raw request -- it is the part
-    of the question that has to be looked up. Carried in its own field rather
-    than in ``required_tool``/arguments because retrieval is not executed by
-    the tool gateway: it has no registry entry, and a name plus a loose
+    The model picks retrieval by calling a function with a ``queries``
+    argument, one entry per document its own reply will need -- a single
+    blended query returns passages from whichever document matches best
+    and starves the rest, which is exactly the shape a compound,
+    multi-document request takes. Carried in its own field rather than in
+    ``required_tool``/arguments because retrieval is not executed by the
+    tool gateway: it has no registry entry, and a name plus a loose
     argument bag here would imply it did.
 
-    Required on ``retrieve_project_documents`` and rejected everywhere else, so
-    a search can never be routed without saying what it searches for.
+    Non-empty on ``retrieve_project_documents`` and empty everywhere else,
+    so a search can never be routed without saying what it searches for.
+    The upper bound (three) is not enforced here, deliberately, on the same
+    grounds the module docstring gives for not validating ``required_tool``
+    against the registry: it is
+    :class:`~agentic_erp_assistant.llm.tools.SearchProjectDocumentsArguments`'s
+    own schema constraint, checked once at the boundary that actually
+    receives it from the wire, not a second copy of that check here.
     """
 
     message: str | None = Field(default=None, min_length=1)
@@ -355,16 +363,19 @@ class ReasoningDecision(BaseModel):
                 "straight past the gate"
             )
 
-        if self.route == _RETRIEVAL_ROUTE and self.search_query is None:
+        if self.route == _RETRIEVAL_ROUTE and not self.search_queries:
             raise ValueError(
-                "search_query: a retrieval decision must say what it searches "
-                "for; the route alone leaves the query to be invented later"
+                "search_queries: a retrieval decision must say what it "
+                "searches for; the route alone leaves the query to be "
+                "invented later"
             )
-        if self.search_query is not None and self.route != _RETRIEVAL_ROUTE:
+        if self.search_queries and self.route != _RETRIEVAL_ROUTE:
             raise ValueError(
-                f"search_query: route {self.route!r} searches nothing, so a "
-                f"query here is an input no branch will ever read"
+                f"search_queries: route {self.route!r} searches nothing, so "
+                f"a query here is an input no branch will ever read"
             )
+        if any(not query.strip() for query in self.search_queries):
+            raise ValueError("search_queries: entries must not be blank")
 
         if self.route in _MESSAGE_REQUIRED_ROUTES and self.message is None:
             raise ValueError(

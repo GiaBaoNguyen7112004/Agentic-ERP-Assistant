@@ -77,7 +77,7 @@ class ScriptedRoutingClient:
 
 WELL_BEHAVED_RESPONSES = {
     "Why is milestone M2 late and by how much?": called(
-        "search_project_documents", query="M2 delay"
+        "search_project_documents", queries=["M2 delay"]
     ),
     "What is the status of milestone M2?": called("get_project_status", milestone_id="M2"),
     "What is the weather forecast in Hanoi next week?": called(

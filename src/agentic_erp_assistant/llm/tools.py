@@ -53,6 +53,7 @@ __all__ = [
     "REFUSE_TOOL",
     "RefuseArguments",
     "SEARCH_PROJECT_DOCUMENTS_TOOL",
+    "SEARCH_QUERY_LIMIT",
     "SearchProjectDocumentsArguments",
     "SprintProgressArguments",
     "StrictArguments",
@@ -233,16 +234,47 @@ class ListRisksArguments(StrictArguments):
     )
 
 
-class SearchProjectDocumentsArguments(StrictArguments):
-    """Arguments for ``search_project_documents``."""
+SEARCH_QUERY_LIMIT = 3
+"""How many queries one search call may carry (ADR 0027).
 
-    query: str = Field(
+A question naming more documents than this in one turn is not a shape this
+project is built to answer in one retrieval pass -- the corpus in this
+repo has seven documents, and a bound here is what lets ``engine/
+nodes.py::retrieve_and_answer`` run every query in one node with a step
+cost that does not grow with how many the model asks for. Enforced once,
+in this schema: strict function calling rejects a call over the limit
+before it ever reaches Python, and :class:`SearchProjectDocumentsArguments`
+rejects it again for anything that reaches ``validate_arguments`` some
+other way.
+"""
+
+
+class SearchProjectDocumentsArguments(StrictArguments):
+    """Arguments for ``search_project_documents`` (ADR 0027).
+
+    One query per document a compound question needs, not one blended
+    query for the whole request: a single query returns passages from
+    whichever document matches it best and starves the rest, which is
+    exactly the failure a multi-document request produces against a
+    single-query search.
+    """
+
+    queries: list[str] = Field(
         min_length=1,
+        max_length=SEARCH_QUERY_LIMIT,
         description=(
             "What to look for in the project documents, in the user's own "
-            "terms. Prefer the words the question used over a paraphrase."
+            "terms -- prefer the words the question used over a "
+            "paraphrase. One entry per document the question needs; a "
+            "question about only one document still gets a list of one."
         ),
     )
+
+    @model_validator(mode="after")
+    def _no_blank_queries(self) -> "SearchProjectDocumentsArguments":
+        if any(not query.strip() for query in self.queries):
+            raise ValueError("queries: entries must not be blank")
+        return self
 
 
 class AskClarificationArguments(StrictArguments):
@@ -386,7 +418,10 @@ SEARCH_PROJECT_DOCUMENTS_TOOL = ToolSpec(
         "tools do not hold as a field: decisions, commitments, explanations, "
         "and any question whose answer has to be quoted rather than looked up "
         "-- whatever the document's own file format is (a spreadsheet, a PDF, "
-        "a report): every listed document is searched the same way."
+        "a report): every listed document is searched the same way. Takes a "
+        "list of queries, one per document a compound question needs -- a "
+        "single query blended across documents returns passages from "
+        "whichever one matches best and finds nothing in the rest."
     ),
     arguments=SearchProjectDocumentsArguments,
     mutating=False,

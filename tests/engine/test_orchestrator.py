@@ -194,7 +194,7 @@ def a_write(title: str = "vendor risk") -> ToolCallResult:
 
 def test_a_finished_turn_is_filed_as_one_terminal_run() -> None:
     orchestrator, traces, pauses, _, _ = an_orchestrator(
-        called("search_project_documents", query="M2 cutover")
+        called("search_project_documents", queries=["M2 cutover"])
     )
 
     final = orchestrator.handle(start())

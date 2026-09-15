@@ -33,7 +33,7 @@ happen.
 """
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from agentic_erp_assistant.reasoning.completeness import Completeness, assess, next_redirect
@@ -140,6 +140,27 @@ def _with_sources(body: str, sources: Sequence[str]) -> str:
     if not sources:
         return body
     return f"{body}\n\n{SOURCES_PREFIX}{', '.join(sources)}"
+
+
+def _dedupe_by_tag(snippets: Iterable[EvidenceSnippet]) -> tuple[EvidenceSnippet, ...]:
+    """The union of several searches' hits, each passage kept once (ADR 0027).
+
+    Order preserved, first occurrence wins -- so a passage two queries both
+    match is shown to the composer once, at the rank the earlier query gave
+    it, rather than once per query it happened to satisfy.
+    :attr:`~agentic_erp_assistant.state.evidence.EvidenceSnippet.tag` is the
+    identity: the same string the composer is told to cite, so two snippets
+    that would render the same citation are the same passage for this
+    purpose regardless of which search produced the copy.
+    """
+    seen: set[str] = set()
+    deduped: list[EvidenceSnippet] = []
+    for snippet in snippets:
+        if snippet.tag in seen:
+            continue
+        seen.add(snippet.tag)
+        deduped.append(snippet)
+    return tuple(deduped)
 
 
 @dataclass(frozen=True)
@@ -366,7 +387,7 @@ class GraphNodes:
                     state,
                     "retrieve_project_documents",
                     tool_name=RETRIEVAL_TOOL,
-                    tool_arguments={"query": state.contract.document_query},
+                    tool_arguments={"queries": [state.contract.document_query]},
                     tool_mutating=False,
                     draft=decision.message if withheld_route == "answer" else None,
                     redirected_needs=state.redirected_needs | {"document_passage"},
@@ -378,7 +399,7 @@ class GraphNodes:
                 state,
                 decision.route,
                 tool_name=RETRIEVAL_TOOL,
-                tool_arguments={"query": decision.search_query},
+                tool_arguments={"queries": list(decision.search_queries)},
                 tool_mutating=False,
                 events=events,
             )
@@ -529,9 +550,12 @@ class GraphNodes:
         evidence and had not yet decided whether it was enough, and something
         would eventually answer from it.
         """
-        query = self._query(state)
+        queries = self._queries(state)
         try:
-            snippets = tuple(self.retriever.search(query, limit=self.evidence_limit))
+            hits_by_query = tuple(
+                tuple(self.retriever.search(query, limit=self.evidence_limit))
+                for query in queries
+            )
         except Exception as error:  # noqa: BLE001 - a failed turn, not a crash
             logger.warning("retriever failed on %s: %s", state.trace_id, error)
             return advance(
@@ -548,11 +572,19 @@ class GraphNodes:
                     ),
                 ),
             )
+        # ADR 0027: one query per document, unioned and deduped by citation
+        # tag rather than composed one query at a time -- retrieval and
+        # composition stay one obligation (see this method's own docstring),
+        # and a document two queries both happen to match is shown to the
+        # composer once, not twice.
+        snippets = _dedupe_by_tag(snippet for hits in hits_by_query for snippet in hits)
         events = state.events + (
             _event(
                 "retrieve",
                 "evidence_retrieved",
-                f"{len(snippets)} passage(s) for {query!r}",
+                f"{'+'.join(str(len(hits)) for hits in hits_by_query)} passage(s) "
+                f"for {len(queries)} quer{'y' if len(queries) == 1 else 'ies'}: "
+                f"{', '.join(repr(query) for query in queries)}",
             ),
         )
 
@@ -575,7 +607,7 @@ class GraphNodes:
                     failure="incomplete_reply",
                     error_detail=_clip(
                         f"contract needs a document passage; the redirected "
-                        f"search for {query!r} found none",
+                        f"search for {queries!r} found none",
                         ERROR_DETAIL_MAX_CHARS,
                     ),
                     events=events
@@ -671,17 +703,34 @@ class GraphNodes:
             events=events,
         )
 
-    def _query(self, state: AgentState) -> str:
-        """What to search for: the planner's query, or the request behind it.
+    def _queries(self, state: AgentState) -> tuple[str, ...]:
+        """What to search for: the planner's queries, or the request behind
+        them (ADR 0027).
 
-        The planner's query is preferred because it is the part of the question
-        that has to be looked up. Falling back to the raw request rather than
-        failing keeps a hand-built state -- a replay, a test, a resumed run --
-        runnable without a planner having been involved.
+        The planner's own ``queries`` are preferred because each is the part
+        of the question that has to be looked up for one document. The
+        legacy singular ``query`` key is read too, wrapped as one-entry
+        tuple -- a state built or replayed before ADR 0027 (a redirect from
+        an older trace, a hand-built test state) still runs. Falling back to
+        the raw request rather than failing keeps a hand-built state -- a
+        replay, a test, a resumed run -- runnable without a planner having
+        been involved at all.
         """
         arguments = state.tool_arguments or {}
+
+        queries = arguments.get("queries")
+        if isinstance(queries, list):
+            cleaned = tuple(
+                q for q in queries if isinstance(q, str) and q.strip()
+            )
+            if cleaned:
+                return cleaned
+
         query = arguments.get("query")
-        return query if isinstance(query, str) and query.strip() else state.request
+        if isinstance(query, str) and query.strip():
+            return (query,)
+
+        return (state.request,)
 
     # -- act: tools --------------------------------------------------------
 

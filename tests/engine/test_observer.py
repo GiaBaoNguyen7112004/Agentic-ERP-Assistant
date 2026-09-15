@@ -102,7 +102,7 @@ def test_observer_receives_one_state_per_node_in_order_ending_on_the_returned_st
 ):
     seen: list[AgentState] = []
     engine = runtime(
-        called("search_project_documents", query="M2 cutover"),
+        called("search_project_documents", queries=["M2 cutover"]),
         observer=seen.append,
     )
 
@@ -120,7 +120,7 @@ def test_a_raising_observer_does_not_change_the_outcome() -> None:
         raise RuntimeError("screen went away")
 
     engine = runtime(
-        called("search_project_documents", query="M2 cutover"),
+        called("search_project_documents", queries=["M2 cutover"]),
         observer=boom,
     )
 
@@ -138,7 +138,7 @@ def test_an_observer_that_raised_once_is_dropped_for_the_rest_of_the_run() -> No
         raise RuntimeError("boom")
 
     engine = runtime(
-        called("search_project_documents", query="M2 cutover"),
+        called("search_project_documents", queries=["M2 cutover"]),
         observer=boom_once,
     )
 
@@ -153,7 +153,7 @@ def test_out_of_budget_state_is_observed_before_it_is_returned() -> None:
     engine = WorkflowRuntime(
         retriever=FakeRetriever(SNIPPET),
         tools=FailingTools(),
-        planner=Planner(ScriptedModel(called("search_project_documents", query="x"))),
+        planner=Planner(ScriptedModel(called("search_project_documents", queries=["x"]))),
         composer=FakeComposer(grounded_answer()),
         max_steps=2,
         nodes={None: lambda state: state},

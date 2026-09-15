@@ -245,9 +245,16 @@ Not yet chosen; ask before assuming, and update this file once settled.
   never a guess from a tool description alone. A document outside the
   catalogue is never named to the model; the wording only tells it to say a
   named-but-absent document is inaccessible, never that it does not exist.
-  `retrieve_and_answer` still runs exactly one query per turn regardless of
-  how many documents the request names — a request naming several is
-  `multi-document-turn-plan.md`'s open step 3.
+  Since ADR 0027, `search_project_documents` takes `queries: list[str]` (one
+  to three, `SEARCH_QUERY_LIMIT` in `llm/tools.py`) instead of a single
+  `query`, and `retrieve_and_answer` runs every one of them in the same node
+  — `EVIDENCE_LIMIT` stays a per-query budget, not a total — unions the hits
+  in query order and dedupes by citation tag (`GraphNodes._dedupe_by_tag`)
+  before composing once. `ReplyContract.document_query` stays a single
+  string: it is only the redirect fallback for a model that never searched
+  at all (ADR 0021/0025), and one query is the honest size of that
+  fallback. A state built before ADR 0027 still runs — `GraphNodes._queries`
+  falls back to the legacy singular `query` key, then to the request itself.
 - ~~Memory topology~~ — settled: Postgres holds the records (`memories`,
   `intents`, `memory_audit`), a second Qdrant collection indexes them for
   semantic recall, and graph memory is rejected because the required queries are

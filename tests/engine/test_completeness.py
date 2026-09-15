@@ -112,7 +112,7 @@ def refused(reason: str) -> ReasoningDecision:
 
 def searched(query: str) -> ReasoningDecision:
     return ReasoningDecision(
-        route="retrieve_project_documents", confidence=0.5, search_query=query
+        route="retrieve_project_documents", confidence=0.5, search_queries=(query,)
     )
 
 
@@ -247,7 +247,7 @@ def test_an_unmet_passage_redirects_an_answer_to_search() -> None:
 
     assert len(planner.calls) == 1
     assert result.route == "retrieve_project_documents"
-    assert result.tool_arguments == {"query": "why"}
+    assert result.tool_arguments == {"queries": ["why"]}
     assert result.draft == "Two days late."
     assert result.redirected_needs == frozenset({"document_passage"})
     assert any(
@@ -278,7 +278,7 @@ def test_an_unmet_passage_redirects_a_refusal_to_search() -> None:
 
     assert len(planner.calls) == 1
     assert result.route == "retrieve_project_documents"
-    assert result.tool_arguments == {"query": "why"}
+    assert result.tool_arguments == {"queries": ["why"]}
     assert result.draft is None
     assert result.redirected_needs == frozenset({"document_passage"})
     assert any(
@@ -337,7 +337,7 @@ def test_a_model_chosen_search_is_left_alone_even_with_a_passage_missing() -> No
 
     assert len(planner.calls) == 1
     assert result.route == "retrieve_project_documents"
-    assert result.tool_arguments == {"query": "finance module delay"}
+    assert result.tool_arguments == {"queries": ["finance module delay"]}
     assert result.draft is None
     assert "contract_enforced" not in kinds(result)
 

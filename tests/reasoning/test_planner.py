@@ -113,12 +113,29 @@ def test_the_write_decision_names_the_tool_an_approver_will_be_asked_about() -> 
 
 def test_choosing_search_routes_to_retrieval_and_carries_the_query() -> None:
     decision, _ = plan_for(
-        called("search_project_documents", query="M2 delivery commitments")
+        called("search_project_documents", queries=["M2 delivery commitments"])
     )
 
     assert decision.route == "retrieve_project_documents"
-    assert decision.search_query == "M2 delivery commitments"
+    assert decision.search_queries == ("M2 delivery commitments",)
     assert decision.required_tool is None
+
+
+def test_choosing_search_carries_one_query_per_document() -> None:
+    """ADR 0027: a compound question names one query per document, and the
+    decision keeps every one of them, in order."""
+    decision, _ = plan_for(
+        called(
+            "search_project_documents",
+            queries=["risk register severity", "sprint 13 schedule slip"],
+        )
+    )
+
+    assert decision.route == "retrieve_project_documents"
+    assert decision.search_queries == (
+        "risk register severity",
+        "sprint 13 schedule slip",
+    )
 
 
 def test_choosing_clarification_routes_to_clarify_with_the_question() -> None:
@@ -249,7 +266,7 @@ def test_a_call_to_a_withheld_tool_fails_rather_than_routes() -> None:
     """The real provider cannot call a function it was not offered; seeing
     this means whatever is standing in for the client did not honor the
     withheld set."""
-    model = ScriptedModel(called("search_project_documents", query="M2 delay"))
+    model = ScriptedModel(called("search_project_documents", queries=["M2 delay"]))
 
     decision = Planner(model).plan(
         state(), withhold=frozenset({"search_project_documents"})
