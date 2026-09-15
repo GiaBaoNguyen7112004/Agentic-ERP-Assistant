@@ -39,6 +39,7 @@ Routine choices (a variable name, a helper's shape) belong in the commit message
 | [0025](0025-a-refusal-is-held-to-the-reply-contract-too.md) | A refusal is held to the reply contract too | Accepted |
 | [0026](0026-the-model-is-told-which-documents-it-may-search.md) | The model is told which documents it may search | Accepted |
 | [0027](0027-retrieval-takes-a-bounded-list-of-queries.md) | Retrieval takes a bounded list of queries | Accepted |
+| [0028](0028-the-session-summary-is-extended-not-replaced.md) | The session summary is extended, not replaced | Accepted |
 
 ## Format
 

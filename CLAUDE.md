@@ -279,7 +279,12 @@ Not yet chosen; ask before assuming, and update this file once settled.
   turns, so `_resolve_conflict` supersedes a live preference whose statement
   shares enough content words with a new one (`TOPIC_OVERLAP_RATIO`,
   preference-only) and keeps the record under the key already stored rather
-  than the one just proposed (ADR 0024).
+  than the one just proposed (ADR 0024). Since ADR 0028, a promotion
+  *extends* the session summary rather than replacing it: code carries the
+  previous statement forward by parsing it
+  (`summary.py::parse_summary`, the inverse of the renderer), the goal
+  resolves as proposal > carried > structural, the per-section cap acts as a
+  sliding window, and the model is asked only for the delta.
   Still open behind that: nothing infers when the task in flight has changed —
   `SessionMemory.start_intent`/`advance_intent`/`close_intent` are complete and
   are driven by the caller. The `think -> answer` route is held to the reply
