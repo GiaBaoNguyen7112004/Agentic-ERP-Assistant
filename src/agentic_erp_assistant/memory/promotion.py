@@ -272,7 +272,9 @@ def structural_state(turns: Sequence[ConversationTurn]) -> dict[str, object]:
 
 
 def conversation_state(
-    turns: Sequence[ConversationTurn], proposal: SessionSummaryProposal | None
+    turns: Sequence[ConversationTurn],
+    proposal: SessionSummaryProposal | None,
+    previous: MemoryRecord | None = None,
 ) -> dict[str, object]:
     """The mapping :func:`~agentic_erp_assistant.context.compact.compact_conversation`
     will narrow to its allow-list: structure first, a proposal overlaid on top.
@@ -283,6 +285,12 @@ def conversation_state(
     items are appended to whatever structure already supplied, so a model's
     own facts do not push a code-derived one out silently past the point both
     are meant to be trimmed to.
+
+    Args:
+        previous: The session's current summary, if it has one. Not merged in
+            yet -- the parameter exists so the carry-forward tests can be
+            written against the final signature; merging it is the change that
+            follows.
     """
     state = structural_state(turns)
     if proposal is None:

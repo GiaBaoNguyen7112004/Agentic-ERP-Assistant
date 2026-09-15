@@ -455,6 +455,33 @@ def test_a_second_promotion_supersedes_the_first_summary() -> None:
     assert len(memory.service.store.live(make_scope(), kinds=("session_summary",))) == 1
 
 
+def test_consecutive_promotions_extend_one_summary_with_no_proposer() -> None:
+    """The dev-database defect, pinned as a test. Six promotions in one session
+    each wrote a summary that was only the newest evicted turn's request -- the
+    user's words: "it seems just get the latest sentence". A promotion extends
+    the session's summary; it never restarts it."""
+    memory = bound(proposer=None)
+
+    memory.consolidate(
+        state(), evicted=(make_turn(trace_id="run-0", request="give me project status"),)
+    )
+    first = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert [record.statement for record in first] == ["Goal: give me project status."]
+
+    memory.consolidate(
+        state(trace_id="run-2"),
+        evicted=(make_turn(trace_id="run-1", request="currrent status of milestone 1"),),
+    )
+
+    live = memory.service.store.live(make_scope(), kinds=("session_summary",))
+    assert len(live) == 1
+    # Today this reads "Goal: currrent status of milestone 1." -- the dev-DB
+    # row. The carried goal wins, and turn 2's request is not the session's
+    # goal merely because it was evicted last.
+    assert live[0].statement == "Goal: give me project status."
+    assert live[0].supersedes == (first[0].memory_id,)
+
+
 def test_nothing_evicted_means_no_summary_and_no_decision() -> None:
     memory = bound()
 
