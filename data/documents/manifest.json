@@ -1,0 +1,93 @@
+{
+  "_readme": "The document control plane for retrieval. Every row names a real file in this directory and carries the access policy for it; the files themselves carry only content, with no marker of who may read them. That split is deliberate: policy lives in exactly one place a reviewer can audit, and adding a document is one file plus one row here, with no code change. Synthetic data about one fictional programme -- no real customer content belongs here.",
+  "_fields": {
+    "document_id": "Stable identifier, and the source_id every citation carries. Where a document backs a field the mock ERP also serves, this reuses that record's source_id from data/erp/project.json, so a tool answer and a retrieved passage name the same artifact.",
+    "path": "Relative to this manifest. A row whose file is missing raises ManifestEntryError; documents are never silently skipped.",
+    "document_type": "What class of document this is. Used for reporting and by any future index routing; never used to decide access.",
+    "project_code": "Which project the content belongs to. Half of the authorization check.",
+    "required_scope": "The one entitlement an actor must hold to read this document. Exactly one, so the rule is expressible as a vector-store filter and auditable as a single comparison. Namespaced by what it grants, matching the tool scopes in tools/registry.py.",
+    "classification": "The human-facing sensitivity label. Recorded and shown, never the thing that grants or denies access -- required_scope is."
+  },
+  "documents": [
+    {
+      "document_id": "status-report-2026-09",
+      "path": "status-report-2026-09.md",
+      "title": "Atlas ERP Rollout - Delivery Status Report, September 2026",
+      "document_type": "status_report",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-09-02"
+    },
+    {
+      "document_id": "sprint-13-report",
+      "path": "sprint-13-report.md",
+      "title": "Sprint 13 Review and Retrospective - Atlas",
+      "document_type": "sprint_report",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-09-06"
+    },
+    {
+      "document_id": "steering-minutes-2026-08",
+      "path": "steering-minutes-2026-08.md",
+      "title": "Atlas Steering Committee - Minutes, 2026-08-27",
+      "document_type": "minutes",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-08-28"
+    },
+    {
+      "document_id": "support-policy",
+      "path": "support-policy.md",
+      "title": "Atlas Post-Go-Live Support and Escalation Policy, version 2.1",
+      "document_type": "policy",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-07-01"
+    },
+    {
+      "document_id": "architecture-notes",
+      "path": "architecture-notes.html",
+      "title": "Atlas ERP - Solution Architecture Notes, revision 7",
+      "document_type": "architecture",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-08-20"
+    },
+    {
+      "document_id": "risk-register",
+      "path": "risk-register.csv",
+      "title": "Atlas Risk Register",
+      "document_type": "risk_register",
+      "project_code": "atlas",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-08-31"
+    },
+    {
+      "document_id": "budget-summary-q3",
+      "path": "budget-summary-q3.pdf",
+      "title": "Atlas ERP Rollout - Q3 2026 Budget Summary",
+      "document_type": "budget_summary",
+      "project_code": "atlas",
+      "required_scope": "project.docs.finance.read",
+      "classification": "confidential",
+      "effective_date": "2026-08-31"
+    },
+    {
+      "document_id": "orion-status-report-2026-09",
+      "path": "orion-status-report-2026-09.md",
+      "title": "Orion CRM Migration - Delivery Status Report, September 2026",
+      "document_type": "status_report",
+      "project_code": "orion",
+      "required_scope": "project.docs.read",
+      "classification": "internal",
+      "effective_date": "2026-09-02"
+    }
+  ]
+}

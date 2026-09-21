@@ -1,0 +1,171 @@
+# The two pieces of infrastructure this project does not run in-process.
+#
+# Everything else here is Python that starts with the interpreter: the graph,
+# the tool gateway, the lexical index. Vectors are the exception -- they need a
+# store that can filter on payload while it ranks, which is the property the
+# access rule depends on, and hand-rolling that would be writing a database
+# rather than an assistant. And evidence is the second exception: a trace, an
+# audit row and a pending approval must survive the process that produced them,
+# which an in-process store cannot promise.
+#
+# One command brings up the whole system:
+#
+#   docker compose up --build
+#
+# ...which builds the app image from the repo-root Dockerfile (multi-stage:
+# the React UI, a uv.lock-resolved venv, a slim runtime -- see ADR 0029),
+# starts qdrant and postgres, applies the schema and ingests the corpus
+# through two one-shot services, and only then starts the app, which serves
+# the built UI at http://localhost:8000. The one-shots are idempotent, so
+# every later `up` re-runs them as cheap no-ops. The per-piece commands
+# below remain the dev loop -- during development the thing being changed
+# every minute should not be behind an image rebuild.
+#
+#   docker compose up -d qdrant
+#   uv run python scripts/ingest_documents.py
+#
+#   docker compose up -d postgres
+#   uv run python scripts/init_postgres.py         # the dev database the server writes to
+#   uv run python scripts/init_postgres.py --test  # a second, _test database -- see ADR 0018
+#   uv run pytest -m postgres
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.15.5
+    container_name: agentic-erp-qdrant
+    restart: unless-stopped
+    ports:
+      # 6333 is the REST API the client uses; 6334 is gRPC, published so the
+      # same compose file serves a client configured either way.
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      # A named volume, so the corpus survives `docker compose down` and a
+      # re-ingest after a restart re-embeds nothing. Deleting it is the
+      # deliberate act that makes the next ingest a cold one.
+      - qdrant_storage:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__ENABLE_STATIC_CONTENT: "true"
+      QDRANT__LOG_LEVEL: INFO
+    healthcheck:
+      # Qdrant images carry no curl or wget, so the check is the readiness probe
+      # the binary itself exposes. Without a healthcheck, `up -d` returns before
+      # the service can answer and the first ingest fails on connection refused.
+      test: ["CMD", "/qdrant/qdrant", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres:
+    # The evidence store: runs, trace events, audit rows, model-call telemetry
+    # and pending approvals. Plain Postgres, not a vector-capable variant --
+    # the queries it answers are joins and filters over typed columns, and the
+    # schema is hand-written DDL applied by scripts/init_postgres.py rather
+    # than anything that migrates on connect.
+    image: postgres:17.5
+    container_name: agentic-erp-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      # Local development throwaways, and deliberately not secret-shaped: they
+      # exist so the connection default in persistence/connection.py can be
+      # `postgresql://agentic_erp:agentic_erp@localhost:5432/agentic_erp` and a
+      # fresh checkout works with no .env at all. A real deployment overrides
+      # POSTGRES_URL with real credentials and these values never leave the
+      # compose file.
+      POSTGRES_USER: agentic_erp
+      POSTGRES_PASSWORD: agentic_erp
+      POSTGRES_DB: agentic_erp
+    volumes:
+      # A named volume, so evidence and pending approvals survive
+      # `docker compose down` and a restart. Deleting it is the deliberate act
+      # that makes the next run a cold start with an empty queue.
+      - postgres_storage:/var/lib/postgresql/data
+    healthcheck:
+      # pg_isready is in the image, and checking the specific database -- not
+      # just the port -- is what makes `up -d` return only when init_postgres
+      # can actually connect.
+      test: ["CMD-SHELL", "pg_isready -U agentic_erp -d agentic_erp"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # -- One-shot services -------------------------------------------------------
+  #
+  # Two idempotent setup steps that must run before the app starts. Each exits
+  # when done; `depends_on` with `condition: service_completed_successfully`
+  # is what orders them, and every later `up` re-runs them as cheap no-ops
+  # (init_postgres' schema is CREATE TABLE IF NOT EXISTS; ingest skips
+  # unchanged documents by content hash). They share the app image -- the
+  # scripts and the venv they run against already ship in it -- so there is no
+  # second image to keep in step with the first.
+  postgres-init:
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # In-network addresses. These override any localhost-flavoured value an
+      # .env carries (compose: `environment` wins over `env_file`), because a
+      # URL pointed at the host's published port is unreachable from inside
+      # the compose network's DNS.
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    command: ["python", "scripts/init_postgres.py"]
+
+  ingest:
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: "no"
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+    env_file:
+      # The one-shot that spends money: it needs OPENAI_API_KEY and
+      # OPENAI_EMBEDDING_MODEL. `required: false` so a checkout without a key
+      # still brings up qdrant and postgres and can run the ingest --dry-run
+      # inside the container -- the same "skips itself gracefully when the
+      # resource it needs is not there" contract the live marker follows.
+      - path: .env
+        required: false
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    command: python scripts/ingest_documents.py
+
+  app:
+    # The web layer, as a built image. The multi-stage Dockerfile builds the
+    # React UI, resolves the venv from uv.lock and ships a slim runtime -- see
+    # ADR 0029. workers=1 stays (ADR 0004: the rate limiter, the flaky-tool
+    # counter and the ERP lock are in-process state), and restart:
+    # unless-stopped matches the two stores it depends on.
+    image: agentic-erp-assistant:latest
+    build: .
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-init:
+        condition: service_completed_successfully
+      ingest:
+        condition: service_completed_successfully
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      POSTGRES_URL: postgresql://agentic_erp:agentic_erp@postgres:5432/agentic_erp
+    ports:
+      - "8000:8000"
+
+volumes:
+  qdrant_storage:
+  postgres_storage:

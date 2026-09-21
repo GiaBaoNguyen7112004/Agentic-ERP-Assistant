@@ -1,0 +1,175 @@
+{
+  "_readme": "Synthetic delivery data for two fictional, unrelated projects -- Atlas and Orion, mirroring data/documents/. Small enough to read in review, and the only dataset the mock ERP serves. No real customer data belongs here. Mirroring rule: data/documents/ is the record of truth for everything it states -- risk-register.csv (effective 2026-08-31) owns the risk rows this file mirrors (every row here must match its register row on id, title, severity and status; tests/erp/test_fixture_consistency.py fails loudly if the two drift), the status reports own the milestone dates, the sprint report owns the sprint numbers, and the budget summaries own the budget figures. Orion has no sprint and no pre-seeded risk row on purpose: the report narrates one open risk (O-1) that nobody has recorded in the tracker yet, so a project-bound actor recording it is a real write, not a duplicate -- and create_risk mints it O-1, the id the report already names. Sprint 11 and the M2 forecast detail (two days late is a forecast slip as of the report date, not an actual overrun) live only in the documents on purpose; the tools serve the tracker's current rows. Orion's milestones mirror its status report, including the completed O1 and the future O3.",
+  "projects": [
+    {
+      "project_id": "atlas",
+      "name": "Atlas ERP rollout",
+      "risk_id_prefix": "R",
+      "source_id": "project-atlas"
+    },
+    {
+      "project_id": "orion",
+      "name": "Orion CRM migration",
+      "risk_id_prefix": "O",
+      "source_id": "project-orion"
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "M1",
+      "project_id": "atlas",
+      "title": "Discovery and scope sign-off",
+      "due_on": "2026-05-29",
+      "schedule_status": "done",
+      "days_late": 0,
+      "source_id": "milestone-m1"
+    },
+    {
+      "milestone_id": "M2",
+      "project_id": "atlas",
+      "title": "Finance module cutover",
+      "due_on": "2026-09-11",
+      "schedule_status": "at_risk",
+      "days_late": 2,
+      "source_id": "milestone-m2"
+    },
+    {
+      "milestone_id": "M3",
+      "project_id": "atlas",
+      "title": "Warehouse module cutover",
+      "due_on": "2026-11-06",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-m3"
+    },
+    {
+      "milestone_id": "O1",
+      "project_id": "orion",
+      "title": "Contact data consolidation",
+      "due_on": "2026-06-12",
+      "schedule_status": "done",
+      "days_late": 0,
+      "source_id": "milestone-o1"
+    },
+    {
+      "milestone_id": "O2",
+      "project_id": "orion",
+      "title": "Pipeline migration",
+      "due_on": "2026-10-02",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-o2"
+    },
+    {
+      "milestone_id": "O3",
+      "project_id": "orion",
+      "title": "Decommission of the legacy CRM",
+      "due_on": "2027-01-15",
+      "schedule_status": "on_track",
+      "days_late": 0,
+      "source_id": "milestone-o3"
+    }
+  ],
+  "sprints": [
+    {
+      "sprint_id": "SPR-12",
+      "project_id": "atlas",
+      "points_committed": 34,
+      "points_completed": 34,
+      "days_remaining": 0,
+      "source_id": "sprint-12-report"
+    },
+    {
+      "sprint_id": "SPR-13",
+      "project_id": "atlas",
+      "points_committed": 40,
+      "points_completed": 22,
+      "days_remaining": 4,
+      "source_id": "sprint-13-report"
+    }
+  ],
+  "budgets": [
+    {
+      "project_id": "atlas",
+      "approved_usd": 480000.0,
+      "spent_usd": 292800.0,
+      "forecast_at_completion_usd": 515000.0,
+      "as_of": "2026-08-31",
+      "source_id": "budget-summary-q3"
+    },
+    {
+      "project_id": "orion",
+      "approved_usd": 260000.0,
+      "spent_usd": 118400.0,
+      "forecast_at_completion_usd": 249000.0,
+      "as_of": "2026-08-31",
+      "source_id": "budget-orion-q3"
+    }
+  ],
+  "risks": [
+    {
+      "risk_id": "R-1",
+      "project_id": "atlas",
+      "title": "Finance data migration may exceed the cutover window",
+      "severity": "high",
+      "status": "open",
+      "source_id": "risk-r-1"
+    },
+    {
+      "risk_id": "R-2",
+      "project_id": "atlas",
+      "title": "Second integration vendor has not confirmed the test window",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-2"
+    },
+    {
+      "risk_id": "R-3",
+      "project_id": "atlas",
+      "title": "Forecast overrun exceeds delegated tolerance",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-3"
+    },
+    {
+      "risk_id": "R-4",
+      "project_id": "atlas",
+      "title": "Hypercare staffing is not confirmed",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-4"
+    },
+    {
+      "risk_id": "R-5",
+      "project_id": "atlas",
+      "title": "Warehouse test environment availability",
+      "severity": "medium",
+      "status": "closed",
+      "source_id": "risk-r-5"
+    },
+    {
+      "risk_id": "R-6",
+      "project_id": "atlas",
+      "title": "Training room availability",
+      "severity": "low",
+      "status": "closed",
+      "source_id": "risk-r-6"
+    },
+    {
+      "risk_id": "R-7",
+      "project_id": "atlas",
+      "title": "Legacy payments bridge is retained beyond two weeks",
+      "severity": "low",
+      "status": "open",
+      "source_id": "risk-r-7"
+    },
+    {
+      "risk_id": "R-8",
+      "project_id": "atlas",
+      "title": "Cost centre mapping fix introduces new defects",
+      "severity": "medium",
+      "status": "open",
+      "source_id": "risk-r-8"
+    }
+  ]
+}

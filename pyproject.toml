@@ -7,7 +7,17 @@ authors = [
     { name = "BaoDev", email = "giabao7112004@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "psycopg[binary]>=3.3.5",
+    "pydantic>=2.13.5",
+    "pypdf>=6.17.0",
+    "python-dotenv>=1.2.3",
+    "qdrant-client>=1.19.0",
+    "tiktoken>=0.14.0",
+    "uvicorn>=0.52.4",
+]
 
 [project.scripts]
 agentic-erp-assistant = "agentic_erp_assistant:main"
@@ -15,3 +25,29 @@ agentic-erp-assistant = "agentic_erp_assistant:main"
 [build-system]
 requires = ["uv_build>=0.12.0,<0.13.0"]
 build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+# Two test files may share a basename -- tests/llm/test_gateway.py and
+# tests/tools/test_gateway.py both describe "the gateway" for their own layer,
+# and renaming one to avoid a collision would make the suite's layout stop
+# mirroring the package's. importlib import mode gives each file its own module
+# identity, so the mirror can stay exact.
+addopts = "--import-mode=importlib"
+consider_namespace_packages = true
+# Integration tests that talk to the real Postgres from docker-compose.yml are
+# marked `postgres`. They skip themselves when the database is not up, so the
+# default `uv run pytest` stays green on any machine -- and stays honest about
+# what it proved: only `uv run pytest -m postgres` claims the SQL adapters work.
+# `live` is the same idea for a real OpenAI call: skipped without
+# OPENAI_API_KEY, so `uv run pytest -m live` is what claims the estimate
+# actually tracks the invoice (ADR-adjacent to gap-plan.md's Phase K).
+markers = [
+    "postgres: needs the Postgres service from docker-compose.yml; skipped when it is not reachable",
+    "live: makes a real call to the configured OpenAI account; skipped without OPENAI_API_KEY",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "reportlab>=5.0.1",
+]

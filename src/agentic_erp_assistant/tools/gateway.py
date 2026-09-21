@@ -1,0 +1,514 @@
+"""One ordered path from a request to an outcome, and the order is the safety.
+
+:meth:`ToolGateway.execute` is eight steps, in this order and no other:
+
+1. find the tool in the registry
+2. validate the arguments against its declaration
+3. check the actor holds the tool's scope
+3b. check the call's own project argument, if it names one, against the
+    actor's project
+4. check the actor has budget left for this tool
+5. stop for approval, if the tool needs one
+6. write the audit row for a gated call
+7. count the call and run the handler, inside its retry budget and its timeout
+8. emit a trace event
+
+Steps 1-5 are also exposed alone, as :meth:`ToolGateway.preflight`: everything
+that would refuse a call, with nothing that runs it. ADR 0016 is why it
+exists -- a write must be put to a human only after the checks that would
+refuse it anyway have already passed, not before.
+
+Steps 3, 4 and 5 come before step 7, and that is the whole point of writing
+this as one function. A gateway that checked permission after execution, asked
+for approval after calling the handler, or counted a call against a limit it
+had already served, would have already changed ERP data by the time it refused
+-- and every test of the refusal would still pass, because the refusal is
+returned either way. The order is the invariant, so it is written once, in one
+place a reader can follow top to bottom, and the tests assert on what did
+*not* happen as much as on what came back.
+
+Why the limit is checked before approval and counted after it
+-------------------------------------------------------------
+
+Checking and counting are the same policy at two different moments, and
+splitting them is deliberate. The check sits above the approval gate so a human
+is never asked to decide a call that policy will refuse whatever they say --
+spending an approver's attention on a foregone refusal is the expensive
+mistake. The count sits below it, at the moment the handler is about to run, so
+that a call which merely stops for a human costs no budget, and the
+approve-then-resubmit round trip is charged once rather than twice.
+
+Retries do not count either. One call is one unit however many attempts it
+takes, because :class:`~agentic_erp_assistant.tools.registry.RetryPolicy`
+already bounds attempts, and charging per attempt would make an actor's real
+budget a function of how flaky the backend was that minute -- which is the one
+thing a limit described as deterministic must not be.
+
+No branching on tool names
+--------------------------
+
+There is no ``if tool_name == "create_risk"`` here and there never should be.
+Every policy this function applies is read off the
+:class:`~agentic_erp_assistant.tools.registry.ToolDefinition`, so adding a tool
+is a row in the registry and changing a rule is an edit a reviewer sees. A
+special case written here would be a policy that exists in exactly one code
+path and in no document.
+
+Nothing escapes
+---------------
+
+Every failure comes back as a :class:`~agentic_erp_assistant.state.tool_outcome.ToolOutcome`,
+including a handler that raised and a tool that does not exist. The turn has to
+record that the attempt happened; an exception unwinding into the graph would
+leave that record unwritten, and the one call nobody can account for would be a
+call that may or may not have changed something.
+"""
+
+import logging
+import random
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+
+from agentic_erp_assistant.llm.retry import retry_with_backoff
+from agentic_erp_assistant.state.events import EVENT_DETAIL_MAX_CHARS, TraceEvent
+from agentic_erp_assistant.state.tool_outcome import ToolOutcome
+from agentic_erp_assistant.state.tool_request import ToolRequest, summarize_tool_call
+from agentic_erp_assistant.tools.audit import AuditSink, InMemoryAuditLog
+from agentic_erp_assistant.tools.limits import InMemoryRateLimiter, RateLimiter
+from agentic_erp_assistant.tools.models import (
+    AuditRow,
+    ExecutionContext,
+    ToolError,
+    ToolStatus,
+    TransientToolError,
+)
+from agentic_erp_assistant.tools.registry import ToolDefinition, ToolRegistry, UnknownTool
+
+__all__ = ["GATEWAY_NODE", "ToolGateway"]
+
+logger = logging.getLogger(__name__)
+
+GATEWAY_NODE = "tool_gateway"
+"""What this layer calls itself in a trace event.
+
+A name, not a class reference, so the trace stays readable after a refactor
+renames the class.
+"""
+
+_REFUSAL_EVENT: dict[ToolStatus, str] = {
+    "approval_required": "approval_requested",
+    "rate_limited": "rate_limited",
+}
+"""Which trace event a refusal before execution emits, by the status it carries.
+
+A table rather than a chain of conditionals, and the fallback is ``"failed"``
+only for the statuses that really are failures. The two named here are the
+safety layer working, and a reviewer counting outages must not be counting
+them -- the same distinction
+:data:`~agentic_erp_assistant.state.tool_outcome.ToolStatus` draws between
+``denied`` and ``failed``.
+"""
+
+
+@dataclass
+class ToolGateway:
+    """The one place a tool call becomes a tool execution.
+
+    Satisfies :class:`~agentic_erp_assistant.engine.ports.ToolGatewayPort`
+    structurally, without importing it -- see that module for why.
+
+    Every collaborator is injected and defaulted, which is not politeness: the
+    clock, the sleep and the jitter are what make "it retried twice and waited"
+    something a test can assert on instead of live through.
+    """
+
+    registry: ToolRegistry
+    """What may be called, and under what policy."""
+
+    audit: AuditSink = field(default_factory=InMemoryAuditLog)
+    """Where the record of a gated call goes."""
+
+    limiter: RateLimiter = field(default_factory=InMemoryRateLimiter)
+    """Where the count of what an actor has already called is kept.
+
+    Injected for the reason the audit sink is: the in-process default is right
+    for one worker and wrong for four, and the gateway should not have to know
+    which it is running in. It reads its window off the injected clock below,
+    so a limit and the wait it reports are both assertable.
+    """
+
+    on_event: Callable[[TraceEvent], object] | None = None
+    """Called with each trace event as it happens.
+
+    A hook rather than a trace store, for the reason
+    :func:`~agentic_erp_assistant.llm.retry.retry_with_backoff` takes one: the
+    event log lives on
+    :class:`~agentic_erp_assistant.state.agent_state.AgentState`, and a gateway
+    that wrote to it directly would need to import the runtime and would be
+    holding a state object it has no business editing.
+    """
+
+    now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
+    """The clock, injectable so an audit row is assertable."""
+
+    sleep: Callable[[float], object] = time.sleep
+    """How to wait between attempts. A test passes a no-op."""
+
+    jitter: Callable[[], float] = random.random
+    """The backoff jitter factor. A test pins it."""
+
+    # -- the policy order --------------------------------------------------
+
+    def execute(self, request: ToolRequest) -> ToolOutcome:
+        """Run one call through every check, in order, and report what happened.
+
+        Args:
+            request: The call, with the actor, their scopes and the approval
+                decision that the checks below consult.
+
+        Returns:
+            A :class:`ToolOutcome`. Never raises for a failed call -- see the
+            module docstring.
+        """
+        checked = self._checks(request)
+        if isinstance(checked, ToolOutcome):
+            return checked
+        definition, arguments = checked
+
+        # 6, 7, 8. Run it, record it, trace it.
+        outcome = self._run(definition, arguments, request)
+        self._write_audit_row(request, definition, outcome)
+        self._emit(
+            "tool_called" if outcome.status == "ok" else "failed",
+            f"{definition.name} -> {outcome.status} in {outcome.attempts} "
+            f"attempt{'s' if outcome.attempts != 1 else ''}",
+        )
+        return outcome
+
+    def preflight(self, request: ToolRequest) -> ToolOutcome:
+        """Every check that precedes execution, and nothing that is execution.
+
+        Steps 1-5 of :meth:`execute`, with the handler never reached and the
+        budget never counted (counted at execution, not at the check -- see
+        the module docstring). The answer a caller wants is the status:
+        ``"approval_required"`` means the call may be put to a human;
+        anything else is the refusal that human would otherwise have been
+        asked to rule on.
+
+        Exists so a write is put to a human only after the checks that would
+        refuse it anyway have already passed -- see ADR 0016. Called by
+        :meth:`~agentic_erp_assistant.engine.nodes.GraphNodes.think` on the
+        ``request_approval`` route, where the tool is mutating and therefore
+        gated by the registry's own invariant
+        (:meth:`~agentic_erp_assistant.tools.registry.ToolDefinition.__post_init__`).
+
+        Raises:
+            ValueError: The call is not one that would stop for a human --
+                either the tool needs no approval, or ``request.approval`` was
+                already ``"approved"``. Neither has an honest ``ToolOutcome``
+                to return: an ``"ok"`` would claim a call ran, and
+                ``"approval_required"`` would claim a gate that does not
+                exist or has already been passed.
+        """
+        checked = self._checks(request)
+        if isinstance(checked, ToolOutcome):
+            return checked
+        raise ValueError(
+            "preflight is for calls that will stop for a human; run ungated "
+            "tools with execute()"
+        )
+
+    # -- the shared checks ---------------------------------------------------
+
+    def _checks(
+        self, request: ToolRequest
+    ) -> tuple[ToolDefinition, BaseModel] | ToolOutcome:
+        """Steps 1-5, shared by :meth:`execute` and :meth:`preflight`.
+
+        Returns the definition and the validated arguments when every check
+        passes -- meaning the call is either ungated or already approved, and
+        is ready to run -- or the :class:`ToolOutcome` a refusal already
+        produced. A caller tells the two apart with ``isinstance``.
+        """
+        # 1. Find the tool. A model naming one that does not exist is a routed,
+        #    recorded failure, not a crash: the registry is the authority, and
+        #    the turn still has to say what it tried.
+        try:
+            definition = self.registry.get(request.tool_name)
+        except UnknownTool:
+            return self._refused(
+                request,
+                status="failed",
+                error=f"no tool named {request.tool_name!r} is registered",
+            )
+
+        # 2. Validate the arguments, before anything else looks at the call.
+        #    ToolSpec's model forbids extras, so an argument the model invented
+        #    raises here and no handler is ever reached.
+        try:
+            arguments = definition.spec.validate_arguments(request.arguments)
+        except ValidationError as error:
+            return self._refused(
+                request,
+                definition=definition,
+                status="invalid_arguments",
+                error=self._first_problem(error),
+            )
+
+        # 3. Permission: scope, then project. Before approval, deliberately --
+        #    approval decides whether a permitted call should happen now, and
+        #    it can never grant an entitlement its holder never had, nor bind
+        #    a call to a project its holder is not on. One attempt, no retry
+        #    for either -- neither fact changes on a second try.
+        if definition.required_scope not in request.scopes:
+            return self._refused(
+                request,
+                definition=definition,
+                status="denied",
+                error=(
+                    f"actor {request.actor!r} does not hold "
+                    f"{definition.required_scope!r}"
+                ),
+            )
+
+        if definition.project_argument is not None:
+            named = getattr(arguments, definition.project_argument)
+            if named != request.project_code:
+                return self._refused(
+                    request,
+                    definition=definition,
+                    status="denied",
+                    error=(
+                        f"call names project {named!r}; actor "
+                        f"{request.actor!r} is bound to "
+                        f"{request.project_code!r}"
+                    ),
+                )
+
+        # 4. Budget. Above the approval gate on purpose: a human should never
+        #    be asked to decide a call that will be refused whatever they say.
+        #    Nothing is counted here -- see the module docstring.
+        wait = self.limiter.check(
+            request.actor, definition.name, definition.rate_limit, self.now()
+        )
+        if wait is not None:
+            return self._refused(
+                request,
+                definition=definition,
+                status="rate_limited",
+                error=(
+                    f"actor {request.actor!r} has spent its budget of "
+                    f"{definition.rate_limit.max_calls} calls to "
+                    f"{definition.name!r} per "
+                    f"{definition.rate_limit.per_seconds:g}s"
+                ),
+                retry_after_seconds=wait,
+            )
+
+        # 5. Approval, for the tools that need one, before the handler exists
+        #    in this function's future at all.
+        if definition.approval_required and request.approval != "approved":
+            asked = request.approval == "denied"
+            return self._refused(
+                request,
+                definition=definition,
+                status="denied" if asked else "approval_required",
+                error=(
+                    "a human denied this call"
+                    if asked
+                    else f"{definition.side_effect} calls to "
+                    f"{definition.name!r} need a recorded approval first"
+                ),
+            )
+
+        return definition, arguments
+
+    # -- execution ---------------------------------------------------------
+
+    def _run(
+        self,
+        definition: ToolDefinition,
+        arguments: BaseModel,
+        request: ToolRequest,
+    ) -> ToolOutcome:
+        """Call the handler inside its budget, and turn any raise into a status."""
+        # One call, one unit, whatever the retry budget goes on to spend.
+        # Counted here rather than at the check above so a call stopped for a
+        # human costs nothing -- see the module docstring.
+        self.limiter.record(
+            request.actor, definition.name, definition.rate_limit, self.now()
+        )
+        arguments_summary = summarize_tool_call(request.tool_name, request.arguments)
+        attempts = 0
+        context = ExecutionContext(
+            trace_id=request.trace_id,
+            actor=request.actor,
+            project_code=request.project_code,
+        )
+
+        def attempt() -> Any:
+            nonlocal attempts
+            attempts += 1
+            # The timeout bounds how long this gateway waits, not how long the
+            # handler runs -- a thread cannot be cancelled. A real backend
+            # client would carry the deadline itself; this stops one slow tool
+            # from holding a turn open indefinitely, and says so in the outcome.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(definition.handler, arguments, context)
+                try:
+                    return future.result(timeout=definition.timeout_seconds)
+                except FutureTimeout:
+                    raise TransientToolError(
+                        f"{definition.name} did not answer within "
+                        f"{definition.timeout_seconds:g}s"
+                    ) from None
+
+        def on_retry(attempt_number: int, delay: float, error: Exception) -> None:
+            self._emit(
+                "retry_scheduled",
+                f"{definition.name} attempt {attempt_number} failed "
+                f"({type(error).__name__}); waiting {delay:.2f}s",
+            )
+
+        try:
+            result = retry_with_backoff(
+                attempt,
+                max_attempts=definition.retry.max_attempts,
+                base_delay_seconds=definition.retry.base_delay_seconds,
+                max_delay_seconds=definition.retry.max_delay_seconds,
+                sleep=self.sleep,
+                jitter=self.jitter,
+                on_retry=on_retry,
+                retry_on=TransientToolError,
+            )
+        except TransientToolError as error:
+            return ToolOutcome(
+                tool_name=definition.name,
+                arguments_summary=arguments_summary,
+                status="transient_failure",
+                error=str(error),
+                attempts=attempts,
+            )
+        except ToolError as error:
+            # Permanent by construction: the handler said this will fail the
+            # same way next time, so the budget is not spent proving it.
+            return ToolOutcome(
+                tool_name=definition.name,
+                arguments_summary=arguments_summary,
+                status="failed",
+                error=str(error),
+                attempts=attempts,
+            )
+
+        return ToolOutcome(
+            tool_name=definition.name,
+            arguments_summary=arguments_summary,
+            status="ok",
+            summary=result.summary,
+            source_ids=result.source_ids,
+            attempts=attempts,
+        )
+
+    # -- recording ---------------------------------------------------------
+
+    def _write_audit_row(
+        self,
+        request: ToolRequest,
+        definition: ToolDefinition,
+        outcome: ToolOutcome,
+    ) -> None:
+        """Record a gated call, whatever became of it.
+
+        Tools that require approval produce rows, and so does any call refused
+        for a spent budget. An audit trail with one row per read is one where
+        the writes are buried, and the writes are the reason it exists -- but a
+        limit that fires silently on reads hides exactly the runaway pattern it
+        was added to catch, and that pattern is worth a row wherever it shows
+        up.
+
+        The row is written after execution because it carries the real status,
+        and a row saying "approved, then unknown" is not evidence. Nothing can
+        execute and skip this: every path out of :meth:`_run` returns an
+        outcome rather than raising.
+        """
+        if not (definition.approval_required or outcome.status == "rate_limited"):
+            return
+
+        self.audit.record(
+            AuditRow(
+                trace_id=request.trace_id,
+                occurred_at=self.now(),
+                actor=request.actor,
+                tool_name=definition.name,
+                arguments_summary=outcome.arguments_summary,
+                approval=request.approval,
+                status=outcome.status,
+                source_ids=outcome.source_ids,
+            )
+        )
+        self._emit(
+            "approval_recorded",
+            f"{definition.name}: approval {request.approval}, "
+            f"outcome {outcome.status}",
+        )
+
+    def _refused(
+        self,
+        request: ToolRequest,
+        *,
+        status: ToolStatus,
+        error: str,
+        definition: ToolDefinition | None = None,
+        retry_after_seconds: float | None = None,
+    ) -> ToolOutcome:
+        """Build the outcome for a call that never reached a handler.
+
+        One attempt, always: nothing was tried more than once because nothing
+        was tried at all, and an attempts count above one here would read as a
+        retry that never happened.
+        """
+        outcome = ToolOutcome(
+            tool_name=request.tool_name,
+            arguments_summary=summarize_tool_call(request.tool_name, request.arguments),
+            status=status,
+            error=error,
+            attempts=1,
+            retry_after_seconds=retry_after_seconds,
+        )
+        if definition is not None:
+            self._write_audit_row(request, definition, outcome)
+        detail = f"{request.tool_name} refused before execution: {status}"
+        if retry_after_seconds is not None:
+            detail += f"; retry in {retry_after_seconds:.2f}s"
+        self._emit(_REFUSAL_EVENT.get(status, "failed"), detail)
+        return outcome
+
+    def _emit(self, kind: str, detail: str) -> None:
+        """Hand one trace event to whoever is listening, if anyone is."""
+        if self.on_event is None:
+            return
+        self.on_event(
+            TraceEvent(
+                node=GATEWAY_NODE,
+                kind=kind,  # type: ignore[arg-type]
+                detail=detail[:EVENT_DETAIL_MAX_CHARS],
+            )
+        )
+
+    @staticmethod
+    def _first_problem(error: ValidationError) -> str:
+        """One line naming the first thing wrong with the arguments.
+
+        The whole pydantic report is several lines of schema paths, and it
+        would land in an outcome that a model reads back. One field and one
+        reason is what a caller can act on.
+        """
+        problem = error.errors()[0]
+        where = ".".join(str(part) for part in problem["loc"]) or "arguments"
+        return f"{where}: {problem['msg']}"

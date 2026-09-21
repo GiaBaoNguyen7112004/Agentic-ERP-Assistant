@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Atlas ERP — Solution Architecture Notes</title>
+</head>
+<body>
+<h1>Atlas ERP — Solution Architecture Notes</h1>
+
+<p>Revision 7, 2026-08-20. Maintained by the solution architect. This page is
+exported from the programme wiki and is the reference description of how Atlas
+is put together. Where it disagrees with an interface specification, the
+interface specification wins.</p>
+
+<h2>1. Context</h2>
+
+<p>Atlas replaces two systems: the finance ledger in use since 2014 and the
+warehouse management system in use since 2011. Both are retired at their
+respective cutovers. Nothing else in the estate is replaced by this programme,
+and in particular the CRM platform is out of scope and is being migrated
+separately under the Orion programme.</p>
+
+<h3>1.1 Deployment model</h3>
+
+<p>Atlas is a vendor-hosted single-tenant deployment in the eu-west region, with
+an application tier the vendor operates and a reporting replica the delivery
+organisation operates. The reporting replica is read-only and lags the
+transactional store by up to fifteen minutes.</p>
+
+<h2>2. Modules</h2>
+
+<h3>2.1 Finance</h3>
+
+<p>General ledger, accounts payable, accounts receivable, and fixed assets.
+Period close runs against the transactional store, never the replica, which is
+why replica lag does not affect the close. Cutover is milestone M2.</p>
+
+<h3>2.2 Warehouse</h3>
+
+<p>Inbound receipting, putaway, picking, and stock adjustment. The warehouse
+module shares the journal import path with finance, so a change to that path is
+a change to both modules. Cutover is milestone M3.</p>
+
+<h2>3. Integration architecture</h2>
+
+<h3>3.1 Inbound interfaces</h3>
+
+<p>Seven inbound interfaces are in scope: supplier master, purchase orders,
+goods receipts, payments, payroll journals, bank statements, and the daily FX
+rate feed. All seven are file-based except payments, which is a synchronous API
+provided by the second integration vendor.</p>
+
+<p>Payments is the only interface with a real-time dependency on a third party,
+and it is therefore the only interface whose failure mode is an outage rather
+than a delayed batch. That is why the payments regression harness is treated as
+cutover-critical and why the unconfirmed vendor test window is carried as a
+delivery risk rather than a scheduling inconvenience.</p>
+
+<h3>3.2 Outbound interfaces</h3>
+
+<p>Three outbound interfaces: the consolidated trial balance to the group
+reporting tool, the stock position to the demand planning tool, and an audit
+extract to the archive. All three are nightly batch files.</p>
+
+<h3>3.3 The legacy payments bridge</h3>
+
+<p>A bridge that accepts the legacy payment file format and translates it to the
+Atlas payments API. It exists so that cutover does not depend on the payments
+interface being ready, and it is licensed separately at approximately 6,000 USD
+per month. The plan is to retain it for two weeks after the M2 cutover and then
+decommission it.</p>
+
+<h2>4. Data migration</h2>
+
+<h3>4.1 Approach</h3>
+
+<p>A full historical migration of seven years of ledger data, run as a sequence
+of rehearsals against a copy of production, followed by a final run inside the
+cutover freeze. Each rehearsal produces a reconciliation report; the acceptance
+tolerance is 10 unresolved exceptions.</p>
+
+<h3>4.2 The cost centre mapping problem</h3>
+
+<p>Cost centres retired in the 2024 restructure were never added to the
+migration ruleset, so historic journal entries carrying them fail
+reconciliation. This is the root cause of 31 of the 41 exceptions produced by
+the second rehearsal and is fixed by an extension to the mapping table rather
+than by a change to the migration engine.</p>
+
+<h2>5. Non-functional requirements</h2>
+
+<table>
+  <tr><th>Requirement</th><th>Target</th><th>Verified by</th></tr>
+  <tr><td>Availability, core hours</td><td>99.7%</td><td>Vendor SLA report</td></tr>
+  <tr><td>Period close duration</td><td>Under 6 hours</td><td>Rehearsal timing</td></tr>
+  <tr><td>Payments API response</td><td>Under 400 ms at p95</td><td>Regression harness</td></tr>
+  <tr><td>Replica lag</td><td>Under 15 minutes</td><td>Monitoring</td></tr>
+</table>
+
+<h2>6. Open architecture decisions</h2>
+
+<p>One decision remains open: whether the audit extract is produced by the
+application tier or by the reporting replica. Producing it from the replica is
+cheaper and is the current assumption, but it makes the extract subject to
+replica lag, which the internal audit function has not yet accepted.</p>
+
+</body>
+</html>
