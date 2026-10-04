@@ -134,29 +134,118 @@ uv run python scripts/demo_pause_across_restart.py  # a pause survives a restart
 
 ## Architecture
 
+### 1. A request, end to end
+
+```mermaid
+flowchart TD
+    U([Actor in the browser<br/>ui/ · React + TS]) -->|POST message| W
+
+    subgraph EDGE[" Edge "]
+        W[web/<br/>FastAPI · turn runs on a worker thread]
+        C[composition/<br/>.env → typed Settings<br/>ports assembled per request]
+    end
+    W --> C --> R
+
+    subgraph CORE[" Core runtime — project code, no agent framework "]
+        R[engine/ WorkflowRuntime<br/>apply nodes until terminal,<br/>paused, or out of budget]
+        P[reasoning/ planner<br/>function calling + reply contract]
+        X[context/<br/>budget · history · memory · catalogue]
+        R <--> P
+        P --> X
+    end
+
+    X -->|typed prompt| L[llm/ gateway<br/>retry · tokens · cost]
+    L -->|provider port| O[(OpenAI<br/>llm/adapters/ only)]
+
+    R -->|search| RAG[rag/<br/>Qdrant dense + BM25 → RRF<br/>access checked before ranking]
+    R -->|tool call| T[tools/ gateway<br/>scope · rate limit · approval · retry]
+    T --> E[(erp/<br/>mock ERP, project-bound)]
+    RAG --> Q[(Qdrant)]
+
+    T -.->|write needs approval| H{{Human<br/>approve / deny}}
+    H -.->|decision recorded| R
+
+    R -->|after the turn| M[memory/<br/>pure write gate · default refuse]
+    R -.->|every transition| TR[trace/<br/>prompts · tool calls · retries · approvals · tokens]
+
+    M --> PG[(Postgres<br/>persistence/)]
+    TR --> PG
+    TR -.->|SSE preview| U
+    R -->|answer + citations| U
 ```
-browser (ui/, React + TS)
-   │  SSE: typed events (web/protocol.py ⇄ ui/src/protocol.ts, drift-tested)
-   ▼
-web/          FastAPI, thin async shell; a turn runs on a worker thread
-   ▼
-composition/  .env -> typed Settings; process-wide clients built once;
-              one turn's ports assembled per request
-   ▼
-engine/       WorkflowRuntime: apply nodes until terminal, paused, or out of budget
-   ├── reasoning/   planner (function calling), reply contract, failure classification
-   ├── context/     what enters the prompt and why: budget, history, memory, catalogue
-   ├── llm/         provider port + gateway (retry, tokens, cost); adapters/ names OpenAI
-   ├── rag/         manifest, chunking, Qdrant + BM25, RRF fusion, access, citations
-   ├── tools/       typed specs, registry, gateway (scope, rate limit, approval, retry)
-   │     └── erp/   mock ERP over data/erp/project.json, bound to the actor's project
-   ├── memory/      write gate (pure policy), session window, summary, intents
-   └── trace/       structured records, run telemetry
-   ▼
-persistence/  Postgres adapters behind the trace/memory ports + EvidenceQueries
-state/        AgentState and every typed value that crosses a boundary
-eval/         retrieval and routing harnesses; scripts/ write evidence/
+
+SSE events are typed on both sides (`web/protocol.py` ⇄ `ui/src/protocol.ts`,
+drift-tested). The streamed trace is a preview; the row filed in Postgres is
+the record.
+
+### 2. Inside one turn — the bounded graph
+
+```mermaid
+stateDiagram-v2
+    [*] --> think
+    think --> retrieve_project_documents: needs documents
+    think --> call_tool: ERP read
+    think --> request_approval: ERP write
+    think --> answer
+    think --> clarify
+    think --> refuse
+    retrieve_project_documents --> think: passages reveal a tool is needed
+    retrieve_project_documents --> answer: grounded, with citations
+    retrieve_project_documents --> clarify
+    retrieve_project_documents --> refuse: insufficient evidence
+    call_tool --> think: result feeds the next thought
+    call_tool --> answer
+    call_tool --> request_approval: escalated read
+    request_approval --> call_tool: approved
+    request_approval --> refuse: denied
+    answer --> [*]
+    clarify --> [*]
+    refuse --> [*]
+    fail --> [*]
+    note right of think
+        Any node may end in fail.
+        Eight-step budget, then
+        max_steps_exceeded with
+        the full trace attached.
+    end note
 ```
+
+`engine/transitions.py` is the source of truth: a move not in that table
+raises, and a mutating tool cannot reach execution unless `approval ==
+"approved"`.
+
+### 3. Layers and who may depend on whom
+
+```mermaid
+flowchart LR
+    web --> composition --> engine
+    engine --> reasoning & context & memory & tools & rag & trace
+    reasoning --> llm
+    context --> llm
+    tools --> erp
+    memory --> persistence
+    trace --> persistence
+    llm --> adapters["llm/adapters<br/>(only place OpenAI is named)"]
+    state[["state/ — typed AgentState<br/>crosses every boundary"]]
+    eval["eval/ + scripts/ → evidence/"]
+```
+
+Dependencies point inward: the engine never imports `web/`, and every
+outward edge (LLM, retriever, ERP, trace and memory stores) is a Protocol
+with a fake used in tests.
+
+| module | responsibility |
+|---|---|
+| `reasoning/` | planner (function calling), reply contract, failure classification |
+| `context/` | what enters the prompt and why: budget, history, memory, catalogue |
+| `llm/` | provider port + gateway (retry, tokens, cost); `adapters/` names OpenAI |
+| `rag/` | manifest, chunking, Qdrant + BM25, RRF fusion, access, citations |
+| `tools/` | typed specs, registry, gateway (scope, rate limit, approval, retry) |
+| `erp/` | mock ERP over `data/erp/project.json`, bound to the actor's project |
+| `memory/` | write gate (pure policy), session window, summary, intents |
+| `trace/` | structured records, run telemetry |
+| `persistence/` | Postgres adapters behind the trace/memory ports + `EvidenceQueries` |
+| `eval/` | retrieval and routing harnesses; `scripts/` write `evidence/` |
 
 Design rules the code follows, and the defense rests on:
 
